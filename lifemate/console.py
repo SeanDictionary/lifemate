@@ -74,5 +74,5 @@ class Console:
                     self._recorder.event("config_reload", changed=changed)
                 print(f"↻ 配置重载：{', '.join(changed) or '无变化'}")
                 continue
-            await self._kernel.notify(Envelope(text=text))
+            self._kernel.notify(Envelope(text=text))
         return "signal"
