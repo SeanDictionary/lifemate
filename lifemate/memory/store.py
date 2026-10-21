@@ -65,6 +65,15 @@ class Store:
         # WAL：读（replay/备份）与写并发不阻塞；进程崩溃自动恢复
         self._con.execute("PRAGMA journal_mode=WAL")
         self._con.execute("PRAGMA synchronous=NORMAL")
+        # 强杀残留吸收：上次非正常退出留下的 wal 在打开时主动合并进主库
+        # （崩溃一致性由 WAL 保证，这里避免工作文件无限期滞留）
+        try:
+            row = self._con.execute(
+                "PRAGMA wal_checkpoint(TRUNCATE)").fetchone()
+            if row and row[2] > 0:
+                log.info("上次残留的 WAL 已合并（%d 帧）", row[2])
+        except sqlite3.OperationalError:
+            pass
         self._con.executescript(_SCHEMA)
         self._con.commit()
 
