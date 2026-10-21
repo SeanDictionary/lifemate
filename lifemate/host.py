@@ -31,7 +31,7 @@ from .utils.config import Config
 from .utils.log import get_logger
 from .utils.recorder import Recorder
 from .console import Console
-from .plugins import PluginContext, load_plugins, stop_plugins
+from .plugins import PluginContext, stop_plugins
 
 log = get_logger("host")
 
@@ -268,13 +268,15 @@ class Host:
     """运行时服务（职责见模块 docstring）。run() 返回退出原因。"""
 
     def __init__(self, kernel: SelfKernel, store: Store, recorder: Recorder,
-                 cfg: Config, stop: asyncio.Event, *, no_stdin: bool = False,
+                 cfg: Config, stop: asyncio.Event, *,
+                 plugins: list | None = None, no_stdin: bool = False,
                  first_boot: bool = False, unclean_prev: bool = False) -> None:
         self._kernel = kernel
         self._store = store
         self._recorder = recorder
         self._cfg = cfg
         self._stop = stop
+        self._plugins = list(plugins or [])   # 组合根装载（与 server 共享）
         self._no_stdin = no_stdin
         self._first_boot = first_boot
         self._unclean_prev = unclean_prev
@@ -283,11 +285,7 @@ class Host:
         """运行至停止。返回退出原因（signal/quit/stdin_eof）。"""
         kernel, cfg = self._kernel, self._cfg
         kernel.subscribe(_console_printer())
-
-        # 插件自动发现装载（plugins/ 目录，零主代码改动）
-        plugins = await load_plugins(PluginContext(
-            kernel=kernel, store=self._store, cfg=cfg, recorder=self._recorder,
-            data_dir=Path(cfg.data_dir) / "plugins"))
+        plugins = self._plugins
 
         # 启动快照（含插件工具，复现它当时看到的世界）
         persona = Persona(cfg.soul_dir, cfg.skills_dir)

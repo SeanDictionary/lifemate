@@ -19,7 +19,8 @@ from pathlib import Path
 
 from .__version__ import __version__
 from .host import Host, build
-from .plugins import preset_plugin_defaults
+from .plugins import PluginContext, load_plugins, preset_plugin_defaults
+from .server import Server
 from .utils import instance
 from .utils.config import Config
 from .utils.log import (get_logger, install_excepthooks, install_loop_handler,
@@ -119,11 +120,21 @@ async def _orchestrate(silence: bool, log_level: str | None,
         stop = asyncio.Event()
         _install_signal_handlers(stop)
 
-        # 服务清单：当前只有运行时；将来 server 在此对等追加
-        host = Host(kernel, store, recorder, cfg, stop,
+        # 插件装载（共享准备：host 与 server 都消费——boot 信封/停机 vs 面板路由）
+        plugins = await load_plugins(PluginContext(
+            kernel=kernel, store=store, cfg=cfg, recorder=recorder,
+            data_dir=Path(cfg.data_dir) / "plugins"))
+
+        # 服务清单：host（运行时）+ server（网络），共享同一套上下文
+        host = Host(kernel, store, recorder, cfg, stop, plugins=plugins,
                     no_stdin=no_stdin, first_boot=first_boot,
                     unclean_prev=unclean_prev)
-        reason = await host.run()
+        server = Server(kernel, store, recorder, cfg, stop, plugins=plugins)
+
+        host_task = asyncio.create_task(host.run())
+        server_task = asyncio.create_task(server.serve())
+        reason = await host_task      # host 主导生命周期（console/信号决定停）
+        await server_task             # stop 置位后 server 自行收尾退出
 
         # 统一收尾（编排权在入口）：host 已中止思维与插件，此处记档关库
         recorder.event("host_stop", reason=reason)
