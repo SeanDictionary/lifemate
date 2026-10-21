@@ -107,8 +107,39 @@ class PluginConfig:
                 if isinstance(f, Field)}
 
 
+def preset_plugin_defaults(cfg: "Config") -> list[str]:
+    """扫描插件目录，把声明式默认配置段（enabled=false）写进 config.json。
+
+    只读 CONFIG 声明、不启动任何插件；已有段不碰（幂等）。
+    宿主在 build() 之前调用——首启 LLM 未配置会提前 SystemExit，
+    预设必须先行落盘，否则首启生成的 config.json 缺插件段，用户无从下手。
+    """
+    written: list[str] = []
+    for sub in sorted(PLUGIN_ROOT.iterdir()):
+        if not sub.is_dir() or sub.name.startswith("_"):
+            continue
+        if not (sub / "__init__.py").exists():
+            continue
+        try:
+            module = importlib.import_module(f"lifemate.plugins.{sub.name}")
+        except Exception:  # noqa: BLE001
+            log.exception("插件导入失败：%s", sub.name)
+            continue
+        conf_cls = getattr(module, "CONFIG", None)
+        if (isinstance(conf_cls, type)
+                and issubclass(conf_cls, PluginConfig)
+                and conf_cls.declared()):
+            if cfg.write_plugin_defaults(sub.name, conf_cls.declared()):
+                written.append(sub.name)
+    return written
+
+
 async def load_plugins(ctx: PluginContext) -> list[Plugin]:
     """扫描 plugins/ 目录，自动发现并装载全部插件。返回已装载列表。"""
+    # 首启预设：声明式配置的插件把默认段（enabled=false）写进 config.json，
+    # 用户直接可见可改（约定：模块导出 CONFIG = XxxConfig；幂等，宿主已
+    # 预写过则跳过——保留此调用使直接调用 load_plugins 的场景同样生效）
+    preset_plugin_defaults(ctx.cfg)
     loaded: list[Plugin] = []
     for sub in sorted(PLUGIN_ROOT.iterdir()):
         if not sub.is_dir() or sub.name.startswith("_"):
@@ -120,13 +151,6 @@ async def load_plugins(ctx: PluginContext) -> list[Plugin]:
         except Exception:  # noqa: BLE001
             log.exception("插件导入失败：%s", sub.name)
             continue
-        # 首启预设：声明式配置的插件把默认段（enabled=false）写进 config.json，
-        # 用户直接可见可改（约定：模块导出 CONFIG = XxxConfig）
-        conf_cls = getattr(module, "CONFIG", None)
-        if (isinstance(conf_cls, type)
-                and issubclass(conf_cls, PluginConfig)
-                and conf_cls.declared()):
-            ctx.cfg.write_plugin_defaults(sub.name, conf_cls.declared())
         create = getattr(module, "create", None)
         if not callable(create):
             log.warning("插件 %s 缺少 create(ctx) 入口，跳过", sub.name)

@@ -35,7 +35,7 @@ from .utils.log import (get_logger, install_excepthooks, install_loop_handler,
                         level_from_name, setup_logging)
 from .utils.recorder import Recorder
 from .console import Console
-from .plugins import PluginContext, load_plugins, stop_plugins
+from .plugins import PluginContext, load_plugins, preset_plugin_defaults, stop_plugins
 
 log = get_logger("host")
 
@@ -300,6 +300,9 @@ async def run(silence: bool = False, log_level: str | None = None,
         install_loop_handler(asyncio.get_event_loop())
         log.info("日志：%s（level=%s）", log_path, logging.getLevelName(level))
 
+        # 首启预设先于 build()：首启必然未配 LLM，build() 会 SystemExit，
+        # 插件默认段必须已落盘（否则首启生成的 config.json 缺插件段）
+        preset_plugin_defaults(cfg)
         kernel, store, recorder = build(cfg)
         kernel.subscribe(_console_printer())
 

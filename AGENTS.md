@@ -149,6 +149,9 @@ env 仅部署种子）；热重载靠字段原地更新——新组件必须持�
   -l/--log-level、-s/--silence）；config 新增 log_level 键（默认 info，
   CLI -l 覆盖 config）；等级名解析收口 utils/log.level_from_name
   （未知值告警回落）；版本号收口 __version__.py（importlib.metadata）
+- **首启预设时序修复（2026-10-21）**：preset_plugin_defaults 提取为装载器
+  独立函数，host 在 build() 之前调用——首启（无 config 必然无 LLM）
+  提前 SystemExit 时插件默认段也已落盘，config.json 不再出现空 plugins
 - **待开发**：attention（门控升格）→ sandbox → webui → video
 
 ## 验证方式
