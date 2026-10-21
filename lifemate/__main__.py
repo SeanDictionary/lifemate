@@ -31,6 +31,14 @@ ARGS = [
             "action": "store_true",
             "help": "Silence terminal logs (input/output still works)"
         }
+    },
+    {
+        "flags": ("--no-stdin",),
+        "params": {
+            "action": "store_true",
+            "help": "Service mode: no stdin console, signal-driven only "
+                    "(for background/containers/services)"
+        }
     }
 ]
 
@@ -45,7 +53,8 @@ def main() -> None:
     parser = argparse.ArgumentParser(prog="lifemate")
     add_arguments(parser)
     args = parser.parse_args()
-    host_main(silence=args.silence, log_level=args.log_level)
+    host_main(silence=args.silence, log_level=args.log_level,
+              no_stdin=args.no_stdin)
 
 
 if __name__ == "__main__":

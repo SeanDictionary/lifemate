@@ -265,7 +265,8 @@ async def _reminder_poller(cfg: Config, store: Store, kernel: SelfKernel,
                 log.exception("提醒轮询异常")
 
 
-async def run(silence: bool = False, log_level: str | None = None) -> None:
+async def run(silence: bool = False, log_level: str | None = None,
+             no_stdin: bool = False) -> None:
     cfg = None
     lock = None
     kernel = store = recorder = None
@@ -331,10 +332,16 @@ async def run(silence: bool = False, log_level: str | None = None) -> None:
             boot_text = RESUME_ENVELOPE
         kernel.notify(Envelope(text=boot_text, kind=BOOT))
 
-        # 开发控制台：stdin 调试信封 + /命令；信号经 stop 事件传入
-        console = Console(kernel, cfg, recorder)
-        console.start()
-        reason = await console.run(stop)
+        # 开发控制台：stdin 调试信封 + /命令；信号经 stop 事件传入。
+        # 服务模式（no_stdin）：无 stdin 依赖，纯信号驱动（后台/容器/服务化）
+        if no_stdin:
+            log.info("服务模式：无控制台，纯信号驱动")
+            await stop.wait()
+            reason = "signal"
+        else:
+            console = Console(kernel, cfg, recorder)
+            console.start()
+            reason = await console.run(stop)
 
         # 优雅停机：中止思维 → 停后台任务 → flush 档案 → 关库 → 释放锁
         log.info("开始优雅停机（reason=%s）", reason)
@@ -351,8 +358,9 @@ async def run(silence: bool = False, log_level: str | None = None) -> None:
         instance.release(lock)
  
 
-def main(silence: bool = False, log_level: str | None = None) -> None:
+def main(silence: bool = False, log_level: str | None = None,
+         no_stdin: bool = False) -> None:
     try:
-        asyncio.run(run(silence, log_level))
+        asyncio.run(run(silence, log_level, no_stdin))
     except KeyboardInterrupt:
         pass
