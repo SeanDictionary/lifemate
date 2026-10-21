@@ -58,8 +58,8 @@ lifemate/
 │   └── instance.py    #   单实例锁：OS 文件锁，防双开损坏数据
 ├── replay.py          # 回放查看器：python -m lifemate.replay（翻档案）
 ├── console.py         # 开发控制台：stdin→/命令+调试信封（宿主对话面，非器官）
-├── host.py            # 器官宿主：事件循环、装载器官、驱动感知面、挂载观测
-└── __main__.py        # 入口（当前：剥夺模式——无器官，stdin 为调试信封）
+├── host.py            # 运行时服务：思维循环驱动+基建任务+插件装载（Host 类）
+└── __main__.py        # 入口=组合根：共享准备（锁/日志/装配/stop）+服务编排
 tests/                 # 单测 + 剥夺测试（必须常绿）
 data/                  # 运行数据（gitignore）：config.json / memory.db /
                       #   sessions/ / observe/ / logs/*.log / backups/ /
@@ -73,15 +73,16 @@ data/                  # 运行数据（gitignore）：config.json / memory.db /
 ├── skills/            # skill 目录：**内置以外**的第三方/扩展功能知情层
 │                      # （器官说明书随器官走；用户自加扩展放这里即生效）
 ├── console.py         # 开发控制台：stdin→/命令+调试信封（宿主对话面，非器官）
-├── host.py            # 器官宿主：事件循环、装载器官、驱动感知面
-└── __main__.py        # 入口（CLI：-v/--version、-l/--log-level、-s/--silence；
+├── host.py            # 运行时服务：思维循环驱动+基建任务+插件装载（Host 类）
+└── __main__.py        # 入口=组合根（CLI：-v/-l/-s/--no-stdin）：共享准备+服务编排；
                       #   stdin 每行=调试信封）
 tests/                 # 单测 + 剥夺测试（必须常绿）
 data/                  # 运行数据（gitignore：memory.db / sessions/）
 .cache/                # 开发副产物 + v1 归档 + 设计文档（gitignore）
 ```
 
-依赖方向（唯一允许）：`host → plugins(经装载器) → kernel.contracts ← kernel`；
+依赖方向（唯一允许）：`__main__（组合根）→ host → plugins(经装载器) →
+kernel.contracts ← kernel`；
 `kernel/memory/organs/host → utils`（utils 不依赖任何上层）；器官之间零 import。
 配置体系：业务配置一律进 `utils/config.py` 白名单（即 config.json 键，
 env 仅部署种子）；热重载靠字段原地更新——新组件必须持活引用、用时读取，
@@ -152,6 +153,11 @@ env 仅部署种子）；热重载靠字段原地更新——新组件必须持�
 - **首启预设时序修复（2026-10-21）**：preset_plugin_defaults 提取为装载器
   独立函数，host 在 build() 之前调用——首启（无 config 必然无 LLM）
   提前 SystemExit 时插件默认段也已落盘，config.json 不再出现空 plugins
+- **宿主服务化（2026-10-21）**：编排上移入口——__main__ 成为组合根
+  （配置/锁/运行标记/日志/装配/停机信号/统一收尾），host 瘦身为 Host
+  运行时服务（插件装载/三态信封/控制台或服务模式/四基建任务/思维收尾）；
+  与将来 server 网络服务对等，两者只消费共享上下文
+  （kernel/store/recorder/cfg/stop），互不 import
 - **行动后审视链路（2026-10-21）**：builtin 新增 action-review（行为层通用：
   发觉不对→撤销/补救/铭记，不可逆动作出手前慢一拍）；出站回执复述动作
   事实（contracts 约定，qq 发送回执带 text）；qq 自发消息落 chat_log

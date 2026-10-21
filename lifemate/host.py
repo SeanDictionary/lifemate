@@ -1,22 +1,20 @@
-"""器官宿主：事件循环、装载器官、驱动感知面、把信封送进内核。
+"""运行时服务：驱动思维循环 + 基建任务 + 插件装载 + 控制台。
 
-当前为剥夺模式（无任何器官）：内核+记忆+人格的最小生命形态。
-后续器官逐件装载（schedule → qq → attention → …），宿主只做装配。
+与宿主侧其他服务（将来的 server 网络层）对等：只消费入口
+（__main__ 组合根）准备好的共享上下文（kernel/store/recorder/cfg/stop），
+不感知其他服务。进程级编排（锁/日志/标记/装配/停机顺序）在入口。
 
-基建职责（7×24 守护进程化）：
-- 单实例锁（防双开损坏数据）
-- 全局日志（.log 轮转 + 未捕获异常兜底）
-- 优雅停机（信号 → 中止思维 → flush 档案 → 关库）
-- watchdog（僵尸队列复活 / 卡死运行处置）
-- 磁盘治理（observe 保留期清理 / memory.db 定期备份）
+职责：
+- 插件自动发现装载（器官 = 身体，归运行时管）
+- 出生/重启信封（三态：首启/正常重启/崩溃重启）
+- 控制台（stdin 调试信封 + /命令）或服务模式（纯信号驱动）
+- 基建任务：配置热重载 / watchdog 自愈 / 磁盘治理 / 闹钟兑现
+- 收尾：中止思维 → 停基建任务 → 停插件（档案/关库由入口收尾）
 """
 from __future__ import annotations
 
 import asyncio
 import hashlib
-import logging
-import os
-import signal
 import time
 from pathlib import Path
 
@@ -29,13 +27,11 @@ from .kernel.persona import Persona
 from .kernel.session import Session
 from .memory.store import Store
 from .memory.tools import build_memory_tools
-from .utils import instance
 from .utils.config import Config
-from .utils.log import (get_logger, install_excepthooks, install_loop_handler,
-                        level_from_name, setup_logging)
+from .utils.log import get_logger
 from .utils.recorder import Recorder
 from .console import Console
-from .plugins import PluginContext, load_plugins, preset_plugin_defaults, stop_plugins
+from .plugins import PluginContext, load_plugins, stop_plugins
 
 log = get_logger("host")
 
@@ -268,121 +264,77 @@ async def _reminder_poller(cfg: Config, store: Store, kernel: SelfKernel,
                 log.exception("提醒轮询异常")
 
 
-async def run(silence: bool = False, log_level: str | None = None,
-             no_stdin: bool = False) -> None:
-    cfg = None
-    lock = None
-    kernel = store = recorder = None
-    try:
-        from .utils.config import Config as _C
-        cfg = _C()
-        # 单实例锁先于一切数据访问
-        lock = instance.acquire(cfg.data_dir)
-        # 运行标记：优雅停机时删除；下次启动若仍在 → 上次是非正常退出
-        run_marker = Path(cfg.data_dir) / "running"
-        unclean_prev = run_marker.exists()
-        if unclean_prev:
-            log.warning("检测到上次非正常退出（崩溃/强杀/断电）——"
-                        "WAL 残留将在库打开时自动吸收")
-        run_marker.write_text(f"{os.getpid()}\n", encoding="utf-8")
-        # 出生标记：首次启动判定（不依赖会话内容——首启即崩的场景会话也为空）
-        born_marker = Path(cfg.data_dir) / "born"
-        first_boot = not born_marker.exists()
-        if first_boot:
-            born_marker.write_text(time.strftime("%Y-%m-%d %H:%M:%S") + "\n",
-                                   encoding="utf-8")
-        level = level_from_name(log_level or cfg.log_level)
-        log_path = setup_logging(
-            cfg.data_dir, max_bytes=cfg.log_max_bytes,
-            backup_count=cfg.log_backup_count,
-            level=level, console=not silence)
-        install_excepthooks()
-        install_loop_handler(asyncio.get_event_loop())
-        log.info("日志：%s（level=%s）", log_path, logging.getLevelName(level))
+class Host:
+    """运行时服务（职责见模块 docstring）。run() 返回退出原因。"""
 
-        # 首启预设先于 build()：首启必然未配 LLM，build() 会 SystemExit，
-        # 插件默认段必须已落盘（否则首启生成的 config.json 缺插件段）
-        preset_plugin_defaults(cfg)
-        kernel, store, recorder = build(cfg)
+    def __init__(self, kernel: SelfKernel, store: Store, recorder: Recorder,
+                 cfg: Config, stop: asyncio.Event, *, no_stdin: bool = False,
+                 first_boot: bool = False, unclean_prev: bool = False) -> None:
+        self._kernel = kernel
+        self._store = store
+        self._recorder = recorder
+        self._cfg = cfg
+        self._stop = stop
+        self._no_stdin = no_stdin
+        self._first_boot = first_boot
+        self._unclean_prev = unclean_prev
+
+    async def run(self) -> str:
+        """运行至停止。返回退出原因（signal/quit/stdin_eof）。"""
+        kernel, cfg = self._kernel, self._cfg
         kernel.subscribe(_console_printer())
 
         # 插件自动发现装载（plugins/ 目录，零主代码改动）
-        from .kernel.persona import Persona
-        persona = Persona(cfg.soul_dir, cfg.skills_dir)
         plugins = await load_plugins(PluginContext(
-            kernel=kernel, store=store, cfg=cfg, recorder=recorder,
+            kernel=kernel, store=self._store, cfg=cfg, recorder=self._recorder,
             data_dir=Path(cfg.data_dir) / "plugins"))
 
         # 启动快照（含插件工具，复现它当时看到的世界）
-        recorder.event(
+        persona = Persona(cfg.soul_dir, cfg.skills_dir)
+        self._recorder.event(
             "boot", version=__version__, config=cfg.masked(),
             persona_hash=hashlib.sha256(
                 persona.system_prompt().encode("utf-8")).hexdigest()[:12],
             skills=sorted(persona.skills()), tools=kernel.tool_names())
-        recorder.event("session_load",
-                       msgs=len(kernel._session.messages),
-                       summary_chars=len(kernel._session.summary))
+        self._recorder.event("session_load",
+                             msgs=len(kernel._session.messages),
+                             summary_chars=len(kernel._session.summary))
 
-        log.info("剥夺模式启动（session=%s, 记忆=%s, 插件=%s）",
-                 kernel.session_id, store.stats(), [p.name for p in plugins])
-
-        stop = asyncio.Event()
-        for sig in ("SIGINT", "SIGTERM"):
-            if hasattr(signal, sig):
-                def _on_signal(s, _f, _loop=asyncio.get_event_loop()):
-                    _loop.call_soon_threadsafe(stop.set)
-                try:
-                    signal.signal(getattr(signal, sig), _on_signal)
-                except (ValueError, OSError):
-                    pass  # 非主线程/平台不支持时忽略
+        log.info("运行时启动（session=%s, 记忆=%s, 插件=%s）",
+                 kernel.session_id, self._store.stats(), [p.name for p in plugins])
 
         tasks = [
-            asyncio.create_task(_config_watcher(cfg, stop, recorder)),
-            asyncio.create_task(_watchdog(cfg, kernel, stop)),
-            asyncio.create_task(_maintenance(cfg, store, recorder, stop)),
-            asyncio.create_task(_reminder_poller(cfg, store, kernel, stop)),
+            asyncio.create_task(_config_watcher(cfg, self._stop, self._recorder)),
+            asyncio.create_task(_watchdog(cfg, kernel, self._stop)),
+            asyncio.create_task(_maintenance(cfg, self._store, self._recorder,
+                                             self._stop)),
+            asyncio.create_task(_reminder_poller(cfg, self._store, kernel,
+                                                 self._stop)),
         ]
 
         # 启动信封：首次启动 / 正常停机重启 / 非正常退出重启，三态客观陈述
-        if first_boot:
+        if self._first_boot:
             boot_text = _boot_envelope([p.name for p in plugins])
         else:
-            boot_text = _restart_envelope(unclean_prev)
+            boot_text = _restart_envelope(self._unclean_prev)
         kernel.notify(Envelope(text=boot_text, kind=BOOT, origin="host"))
 
         # 开发控制台：stdin 调试信封 + /命令；信号经 stop 事件传入。
         # 服务模式（no_stdin）：无 stdin 依赖，纯信号驱动（后台/容器/服务化）
-        if no_stdin:
+        if self._no_stdin:
             log.info("服务模式：无控制台，纯信号驱动")
-            await stop.wait()
+            await self._stop.wait()
             reason = "signal"
         else:
-            console = Console(kernel, cfg, recorder)
+            console = Console(kernel, cfg, self._recorder)
             console.start()
-            reason = await console.run(stop)
+            reason = await console.run(self._stop)
 
-        # 优雅停机：中止思维 → 停后台任务 → flush 档案 → 关库 → 释放锁
+        # 优雅停机：中止思维 → 停后台任务 → 停插件（档案/关库由入口收尾）
         log.info("开始优雅停机（reason=%s）", reason)
         await kernel.abort()
         await kernel.wait_idle()
-        stop.set()
+        self._stop.set()
         await asyncio.gather(*tasks, return_exceptions=True)
         await stop_plugins(plugins)
-        recorder.event("host_stop", reason=reason)
-        recorder.close()
-        store.close()
-        log.info("宿主退出")
-    finally:
-        instance.release(lock)
-        try:
-            run_marker.unlink(missing_ok=True)  # 优雅停机：移除运行标记
-        except OSError:
-            pass
- 
-
-def main(silence: bool = False, log_level: str | None = None,
-         no_stdin: bool = False) -> None:
-    try:
-        asyncio.run(run(silence, log_level, no_stdin))
-    except KeyboardInterrupt:
-        pass
+        return reason
