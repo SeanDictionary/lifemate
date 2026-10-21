@@ -7,10 +7,12 @@
 from __future__ import annotations
 
 import asyncio
+import hashlib
 import logging
 import sys
 from pathlib import Path
 
+from . import __version__
 from .kernel.compaction import Compactor
 from .kernel.contracts import BOOT, Envelope, Tool
 from .kernel.llm import OpenAILLM
@@ -20,6 +22,7 @@ from .kernel.session import Session
 from .memory.store import Store
 from .memory.tools import build_memory_tools
 from .utils.config import Config
+from .utils.recorder import Recorder
 
 log = logging.getLogger("host")
 
@@ -32,8 +35,8 @@ BOOT_ENVELOPE = (
 )
 
 
-def build(cfg: Config) -> tuple[SelfKernel, Store]:
-    """装配内核 + 记忆（剥夺模式：不装载任何器官）。"""
+def build(cfg: Config) -> tuple[SelfKernel, Store, Recorder]:
+    """装配内核 + 记忆 + 观测记录器（剥夺模式：不装载任何器官）。"""
     if not cfg.llm_base_url or not cfg.llm_model:
         raise SystemExit(
             "需要配置 llm_base_url 与 llm_model"
@@ -46,11 +49,28 @@ def build(cfg: Config) -> tuple[SelfKernel, Store]:
     kernel = SelfKernel(
         llm=llm, persona=persona, session=session, compactor=compactor, cfg=cfg)
 
+    # 观测记录器：项目级日志基础设施，常开不可拆（黑匣子原则）
+    recorder = Recorder(
+        Path(cfg.data_dir) / "observe",
+        sid_fn=lambda: kernel.session_id,
+        max_field_chars=cfg.observe_max_field_chars)
+    kernel.subscribe(recorder.on_kernel_event)
+
     # 内核自带：记忆工具 + read_skill（人格的按需读取面）
     for t in build_memory_tools(store):
         kernel.register_tool(t)
     kernel.register_tool(_read_skill_tool(persona))
-    return kernel, store
+
+    # 启动快照：复现"它当时看到的世界"（人格/技能/工具清单版本）
+    recorder.event(
+        "boot", version=__version__, config=cfg.masked(),
+        persona_hash=hashlib.sha256(
+            persona.system_prompt().encode("utf-8")).hexdigest()[:12],
+        skills=sorted(persona.skills()), tools=kernel.tool_names())
+    recorder.event("session_load", file=str(session.file),
+                   msgs=len(session.messages),
+                   summary_chars=len(session.summary))
+    return kernel, store, recorder
 
 
 def _read_skill_tool(persona: Persona) -> Tool:
@@ -93,14 +113,17 @@ def _console_printer() -> None:
     return _print
 
 
-async def _config_watcher(cfg: Config, stop: asyncio.Event) -> None:
+async def _config_watcher(cfg: Config, stop: asyncio.Event,
+                          recorder: Recorder | None = None) -> None:
     """配置热重载轮询：mtime 变化即原地重载（间隔自身也是配置项）。"""
     while not stop.is_set():
         try:
             await asyncio.wait_for(stop.wait(), timeout=cfg.config_poll_s)
         except TimeoutError:
             try:
-                cfg.reload()
+                changed = cfg.reload()
+                if changed and recorder is not None:
+                    recorder.event("config_reload", changed=changed)
             except Exception:  # noqa: BLE001
                 log.exception("配置重载异常")
 
@@ -110,13 +133,13 @@ async def run() -> None:
         level=logging.INFO,
         format="%(asctime)s %(name)s %(levelname)s %(message)s")
     cfg = Config()
-    kernel, store = build(cfg)
+    kernel, store, recorder = build(cfg)
     kernel.subscribe(_console_printer())
     log.info("剥夺模式启动（session=%s, 记忆=%s, 配置=%s）",
              kernel.session_id, store.stats(), cfg.masked())
 
     stop = asyncio.Event()
-    watcher = asyncio.create_task(_config_watcher(cfg, stop))
+    watcher = asyncio.create_task(_config_watcher(cfg, stop, recorder))
 
     # 出生/重启信封
     await kernel.prompt(Envelope(text=BOOT_ENVELOPE, kind=BOOT))
@@ -134,12 +157,16 @@ async def run() -> None:
             break
         if text == "/reload":
             changed = cfg.reload()
+            if changed:
+                recorder.event("config_reload", changed=changed)
             print(f"↻ 配置重载：{', '.join(changed) or '无变化'}")
             continue
         await kernel.prompt(Envelope(text=text))
     await kernel.wait_idle()
     stop.set()
     await asyncio.gather(watcher, return_exceptions=True)
+    recorder.event("host_stop", reason="exit")
+    recorder.close()
     store.close()
     log.info("宿主退出")
 
