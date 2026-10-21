@@ -37,7 +37,7 @@ class QQConfig(PluginConfig):
 
     _namespace = "qq"
     enabled = Field(False)                 # 工厂判断（改后需重启）
-    ws_url = Field("ws://127.0.0.1:3001")  # 建连时读（改后需重启）
+    ws_url = Field("ws://127.0.0.1:3001")  # 建连时读（改后需重启；NapCat 默认口）
     access_token = Field("")               # 建连时读（改后需重启）
     bot_uin = Field(0)                     # 每条消息读（热生效）
     owner_uin = Field(0)                   # 每条消息读（热生效）

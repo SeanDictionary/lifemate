@@ -14,9 +14,9 @@ from __future__ import annotations
 
 import asyncio
 import hashlib
+import os
 import signal
 import sys
-import threading
 import time
 from pathlib import Path
 
@@ -33,6 +33,7 @@ from .utils import instance
 from .utils.config import Config
 from .utils.log import get_logger, install_excepthooks, install_loop_handler, setup_logging
 from .utils.recorder import Recorder
+from .console import Console
 from .plugins import PluginContext, load_plugins, stop_plugins
 
 log = get_logger("host")
@@ -153,6 +154,16 @@ def _deep_sleep_tool(kernel: SelfKernel, store: Store) -> Tool:
         func=_fn, interruptible=False)
 
 
+def _silence_requested() -> bool:
+    """终端日志静默请求：-s/--silence 参数或 env LIFEMATE_SILENT（守护部署用）。
+
+    只静默日志的终端呈现（文件日志照写），不影响控制台对话与事件呈现。
+    """
+    if os.environ.get("LIFEMATE_SILENT", "").strip().lower() in ("1", "true", "yes"):
+        return True
+    return any(a in ("-s", "--silence") for a in sys.argv[1:])
+
+
 def _console_printer() -> None:
     """控制台呈现（开发调试用；正式观测走 observe 档案 + replay）。"""
     from .kernel.contracts import (ASSISTANT_MSG, REST, SESSION_ROTATED,
@@ -245,24 +256,7 @@ def _prune_backups(directory: Path, keep: int) -> None:
             pass
 
 
-# ── stdin（守护线程：停机不被阻塞行卡死） ─────────────
-
-def _start_stdin_reader(queue: asyncio.Queue) -> None:
-    def _reader() -> None:
-        loop = _reader._loop
-        while True:
-            try:
-                line = sys.stdin.readline()
-            except (OSError, ValueError):
-                line = ""
-            if not line:
-                loop.call_soon_threadsafe(queue.put_nowait, None)
-                return
-            loop.call_soon_threadsafe(queue.put_nowait, line)
-
-    t = threading.Thread(target=_reader, name="stdin", daemon=True)
-    _reader._loop = asyncio.get_event_loop()  # type: ignore[attr-defined]
-    t.start()
+# ── 闹钟兑现器 ─────────────────────────────────────────
 
 
 async def _reminder_poller(cfg: Config, store: Store, kernel: SelfKernel,
@@ -290,8 +284,9 @@ async def run() -> None:
         cfg = _C()
         # 单实例锁先于一切数据访问
         lock = instance.acquire(cfg.data_dir)
-        log_path = setup_logging(cfg.data_dir, max_bytes=cfg.log_max_bytes,
-                                 backup_count=cfg.log_backup_count)
+        log_path = setup_logging(
+            cfg.data_dir, max_bytes=cfg.log_max_bytes,
+            backup_count=cfg.log_backup_count, console=not _silence_requested())
         install_excepthooks()
         install_loop_handler(asyncio.get_event_loop())
         log.info("日志：%s", log_path)
@@ -344,37 +339,10 @@ async def run() -> None:
             boot_text = RESUME_ENVELOPE
         kernel.notify(Envelope(text=boot_text, kind=BOOT))
 
-        # stdin 调试信封（守护线程）；/reload /quit；信号/EOF 优雅退出
-        stdin_q: asyncio.Queue = asyncio.Queue()
-        _start_stdin_reader(stdin_q)
-        reason = "exit"
-        while not stop.is_set():
-            get = asyncio.create_task(stdin_q.get())
-            sig = asyncio.create_task(stop.wait())
-            done, pending = await asyncio.wait(
-                {get, sig}, return_when=asyncio.FIRST_COMPLETED)
-            if sig in done:
-                get.cancel()
-                reason = "signal"
-                break
-            sig.cancel()
-            line = get.result()
-            if line is None:
-                reason = "stdin_eof"
-                break
-            text = line.strip()
-            if not text:
-                continue
-            if text == "/quit":
-                reason = "quit"
-                break
-            if text == "/reload":
-                changed = cfg.reload()
-                if changed:
-                    recorder.event("config_reload", changed=changed)
-                print(f"↻ 配置重载：{', '.join(changed) or '无变化'}")
-                continue
-            await kernel.notify(Envelope(text=text))
+        # 开发控制台：stdin 调试信封 + /命令；信号经 stop 事件传入
+        console = Console(kernel, cfg, recorder)
+        console.start()
+        reason = await console.run(stop)
 
         # 优雅停机：中止思维 → 停后台任务 → flush 档案 → 关库 → 释放锁
         log.info("开始优雅停机（reason=%s）", reason)
