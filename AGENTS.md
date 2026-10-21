@@ -82,11 +82,16 @@ data/                  # 运行数据（gitignore：memory.db / sessions/）
 
 - **2026-10-21 v2 重构启动**：v1 全量归档至 `.cache/v1-archive/`（含旧 .git），
   仓库重 init；旧 .cache 与前端构建残留移至 `../_discard/`（可手动清空）
-- **内核阶段**：契约定型（信封/事件/OrganPack/MCP 工具形状）+ 思维循环 +
-  记忆系统 + 人格装配 + 剥夺模式宿主；借签 pi 的会话/压缩/steer 语义与
-  dsh 的生命周期思想，按器官化契约重新组织
+- **内核阶段完成**：契约定型（信封/事件/OrganPack/MCP 工具形状）+
+  思维循环（prompt/steer/follow_up 三语义、全链工具兜底、轮换播种、
+  空闲钩子）+ 记忆系统（SQLite 五表 + 记忆工具）+ 人格装配（identity +
+  skills 索引）+ 会话（JSONL 持久化/重启恢复/轮换）+ 压缩兜底 +
+  剥夺模式宿主。借签 pi 的会话/压缩/steer 语义，按器官化契约重组
+- **已验证**：18 项单测全绿；真实 LLM 剥夺运行通过（无器官下唤醒→
+  自省→记忆写入→诚实收敛，全链零断链）
 - **待开发器官顺序**：qq → attention → schedule → sleep → sandbox →
-  governance → video → webui
+  governance → video → webui（器官开发时同步引入生命周期器官：
+  轮换触发/重建包固化时机）
 
 ## 验证方式
 
