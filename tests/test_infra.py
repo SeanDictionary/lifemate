@@ -206,3 +206,31 @@ def test_log_console_off(tmp_path):
         h.flush()
     assert "静默测试" in (tmp_path / "logs" / "lifemate.log").read_text(
         encoding="utf-8")
+
+
+def test_restart_envelope_distinguishes_unclean():
+    """重启信封区分正常停机与意外中断。"""
+    from lifemate.host import _restart_envelope
+    clean = _restart_envelope(False)
+    crash = _restart_envelope(True)
+    assert "正常停机" in clean and "不是你的问题" not in clean
+    assert "意外中断" in crash and "不是你的问题" in crash
+
+
+def test_store_boots_with_wal_residue(tmp_path):
+    """强杀残留吸收：有残留连接时 Store 仍能正常打开并读到全部数据。"""
+    from lifemate.memory.store import Store
+    import sqlite3
+    s1 = Store(tmp_path / "m.db")
+    s1.record_episode("强杀前的记忆")
+    # 模拟另一个进程持库写入后未及关闭（wal 有已提交数据）
+    raw = sqlite3.connect(tmp_path / "m.db")
+    raw.execute("INSERT INTO episodes (ts, source, kind, summary, salience)"
+                " VALUES (?, '', 'life', '残留wal里的记忆', 1)", (time.time(),))
+    raw.commit()
+    # 不 close raw——进程内持有，模拟强杀现场
+    s2 = Store(tmp_path / "m.db")  # 启动吸收（checkpoint 可能 busy，但恢复不阻塞）
+    rows = {r["summary"] for r in s2.recent_episodes(n=10)}
+    assert "强杀前的记忆" in rows and "残留wal里的记忆" in rows
+    s2.close()
+    raw.close()

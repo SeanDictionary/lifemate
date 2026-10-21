@@ -15,6 +15,7 @@ from __future__ import annotations
 import asyncio
 import hashlib
 import logging
+import os
 import signal
 import time
 from pathlib import Path
@@ -47,9 +48,20 @@ BOOT_ENVELOPE = (
 )
 
 RESUME_ENVELOPE = (
-    "（进程重启了。你上次的活动被打断——会话与记忆已恢复，"
+    "（进程重启了。你上次正常停机时在休息——会话与记忆已恢复，"
     "从中断处继续即可。如果你正在等待什么，重新等。）"
 )
+
+CRASH_ENVELOPE = (
+    "（进程意外中断后重启了——可能是崩溃或被强制结束，不是你的问题。"
+    "会话与记忆已恢复到中断前的一致状态，从中断处继续即可。"
+    "如果你正在等待什么，重新等。）"
+)
+
+
+def _restart_envelope(unclean: bool) -> str:
+    """重启信封：区分正常停机与意外中断（强杀/崩溃/断电）。"""
+    return CRASH_ENVELOPE if unclean else RESUME_ENVELOPE
 
 
 def _boot_envelope(plugin_names: list[str]) -> str:
@@ -275,6 +287,13 @@ async def run(silence: bool = False, log_level: str | None = None,
         cfg = _C()
         # 单实例锁先于一切数据访问
         lock = instance.acquire(cfg.data_dir)
+        # 运行标记：优雅停机时删除；下次启动若仍在 → 上次是非正常退出
+        run_marker = Path(cfg.data_dir) / "running"
+        unclean_prev = run_marker.exists()
+        if unclean_prev:
+            log.warning("检测到上次非正常退出（崩溃/强杀/断电）——"
+                        "WAL 残留将在库打开时自动吸收")
+        run_marker.write_text(f"{os.getpid()}\n", encoding="utf-8")
         level = level_from_name(log_level or cfg.log_level)
         log_path = setup_logging(
             cfg.data_dir, max_bytes=cfg.log_max_bytes,
@@ -324,12 +343,12 @@ async def run(silence: bool = False, log_level: str | None = None,
             asyncio.create_task(_reminder_poller(cfg, store, kernel, stop)),
         ]
 
-        # 出生/重启信封（永续回合的第一声敲门；如实告知身体状态）
+        # 出生/重启信封（永续回合的第一声敲门；如实告知身体状态与上次退出方式）
         fresh = len(kernel._session.messages) == 0
         if fresh:
             boot_text = _boot_envelope([p.name for p in plugins])
         else:
-            boot_text = RESUME_ENVELOPE
+            boot_text = _restart_envelope(unclean_prev)
         kernel.notify(Envelope(text=boot_text, kind=BOOT, origin="host"))
 
         # 开发控制台：stdin 调试信封 + /命令；信号经 stop 事件传入。
@@ -356,6 +375,10 @@ async def run(silence: bool = False, log_level: str | None = None,
         log.info("宿主退出")
     finally:
         instance.release(lock)
+        try:
+            run_marker.unlink(missing_ok=True)  # 优雅停机：移除运行标记
+        except OSError:
+            pass
  
 
 def main(silence: bool = False, log_level: str | None = None,
