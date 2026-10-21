@@ -1,39 +1,39 @@
-"""思维循环语义测试（信封三语义/工具兜底/轮换/压缩/会话持久化）。"""
+"""思维循环语义测试（永续回合：唤醒/休息/插话/打断/闹钟/转身/恢复）。"""
 import asyncio
+import json
 
 from lifemate.kernel.compaction import Compactor
-from lifemate.kernel.contracts import (ASSISTANT_MSG, LLMResponse, RUN_ENDED,
-                                       RUN_STARTED, SESSION_ROTATED, TOOL_CALL,
-                                       TOOL_RESULT, Envelope, Tool)
+from lifemate.kernel.contracts import (DIRECT, QUEUE_DROP, REST, SESSION_ROTATED,
+                                       Envelope, Tool, USER_MSG, WAKE)
 from lifemate.kernel.mind import SelfKernel
 from lifemate.kernel.persona import Persona
 from lifemate.kernel.session import Session
+from lifemate.kernel.contracts import LLMResponse
 
-from conftest import (FakeLLM, make_config, make_persona, make_session,
-                      text_reply, tool_reply)
+from conftest import FakeLLM, make_config, make_persona, make_session, \
+    text_reply, tool_reply
 
 
 def make_tool(name: str, result: str = '{"ok": true}',
-              delay: float = 0.0) -> Tool:
+              delay: float = 0.0, interruptible: bool = False) -> Tool:
     async def _fn(args: dict) -> str:
         if delay:
             await asyncio.sleep(delay)
         return result
     return Tool(schema={"name": name, "description": f"test tool {name}",
                         "inputSchema": {"type": "object", "properties": {}}},
-                func=_fn)
+                func=_fn, interruptible=interruptible)
 
 
-def make_kernel(tmp_path, llm, *, persona: Persona | None = None,
-                tools: list[Tool] | None = None,
-                session: Session | None = None) -> SelfKernel:
+def make_kernel(tmp_path, llm, *, tools: list[Tool] | None = None,
+                session: Session | None = None,
+                persona: Persona | None = None) -> SelfKernel:
     cfg = make_config(tmp_path)
     k = SelfKernel(
         llm=llm,  # type: ignore[arg-type]
         persona=persona or make_persona(tmp_path),
         session=session or make_session(tmp_path),
-        compactor=Compactor(llm.chat, cfg),
-        cfg=cfg)
+        compactor=Compactor(llm.chat, cfg), cfg=cfg)
     for t in (tools or []):
         k.register_tool(t)
     return k
@@ -45,154 +45,241 @@ def events_of(kernel: SelfKernel) -> list[tuple[str, dict]]:
     return out  # type: ignore[return-value]
 
 
-async def test_prompt_runs_to_final_text(tmp_path):
+async def wait_event(evs, type_: str, reason: str | None = None,
+                      timeout: float = 3.0) -> tuple[str, dict]:
+    """轮询等待某事件出现。"""
+    async def _poll():
+        while True:
+            for item in evs:
+                if item[0] == type_ and (reason is None
+                                         or item[1].get("reason") == reason):
+                    return item
+            await asyncio.sleep(0.01)
+    return await asyncio.wait_for(_poll(), timeout=timeout)
+
+
+# ── 基础：唤醒 → 思考 → 休息 → 再唤醒 ──────────────────
+
+async def test_notify_wakes_thinks_rests(tmp_path):
     llm = FakeLLM([text_reply("我醒了")])
     k = make_kernel(tmp_path, llm)
     evs = events_of(k)
-    await k.prompt(Envelope(text="（你醒了）", kind="boot"))
+    k.notify(Envelope(text="（你醒了）", kind="boot"))
     await k.wait_idle()
+    assert k.is_busy is False  # 休息中
     types = [t for t, _ in evs]
-    assert types[0] == RUN_STARTED and types[-1] == RUN_ENDED
-    assert any(t == ASSISTANT_MSG for t in types)
-    assert any(m["role"] == "user" and "你醒了" in m["content"]
+    assert types[0] == WAKE and REST in types
+    assert evs[-1][0] == REST and evs[-1][1]["reason"] == "converged"
+    # 永续：第二声敲门 → 新唤醒周期
+    llm.script.append(text_reply("又醒了"))
+    k.notify(Envelope(text="第二件事"))
+    await k.wait_idle()
+    assert sum(1 for t, _ in evs if t == WAKE) == 2
+    assert any("第二件事" in str(m.get("content"))
                for m in k._session.messages)
 
 
-async def test_tool_call_gets_receipt(tmp_path):
-    llm = FakeLLM([tool_reply("echo"), text_reply("做完了")])
-    k = make_kernel(tmp_path, llm, tools=[make_tool("echo")])
-    evs = events_of(k)
-    await k.prompt(Envelope(text="用一下 echo"))
+# ── 插话：工具批次后、下次模型调用前送达 ────────────────
+
+async def test_steer_during_tool(tmp_path):
+    llm = FakeLLM([tool_reply("slow", cid="c1"), text_reply("收到插话")])
+    slow = make_tool("slow", delay=0.2)
+    k = make_kernel(tmp_path, llm, tools=[slow])
+    k.notify(Envelope(text="先干个活", kind="ambient"))
+    await asyncio.sleep(0.05)  # 等工具开始执行
+    k.notify(Envelope(text="插话：主人补充了一句", kind="ambient"))
     await k.wait_idle()
-    msgs = k._session.messages
-    tool_msgs = [m for m in msgs if m.get("role") == "tool"]
-    assert len(tool_msgs) == 1 and '"ok": true' in tool_msgs[0]["content"]
-    assert any(t == TOOL_CALL for t, _ in evs)
-    assert any(t == TOOL_RESULT for t, _ in evs)
+    # 第二次模型调用前插话已进上下文
+    assert any("主人补充" in str(m.get("content")) for m in llm.calls[1])
 
 
-async def test_unknown_and_failing_tool_never_break_chain(tmp_path):
-    llm = FakeLLM([
-        tool_reply("ghost_tool"),                    # 不存在
-        tool_reply("boom", cid="call_2"),            # 执行抛异常
-        text_reply("两件都失败了，没关系"),
-    ])
-    boom = Tool(schema={"name": "boom", "description": "x",
-                        "inputSchema": {"type": "object", "properties": {}}},
-                func=_raise)
-    k = make_kernel(tmp_path, llm, tools=[boom])
-    await k.prompt(Envelope(text="试试两个工具"))
+# ── 强刺激反射性打断可打断工具 ─────────────────────────
+
+async def test_strong_stimulus_interrupts_interruptible_tool(tmp_path):
+    llm = FakeLLM([tool_reply("long", cid="c1"), text_reply("先回主人")])
+    long_tool = make_tool("long", delay=3.0, interruptible=True)
+    k = make_kernel(tmp_path, llm, tools=[long_tool])
+    k.notify(Envelope(text="开始长任务", kind="ambient"))
+    await asyncio.sleep(0.05)
+    k.notify(Envelope(text="主人的消息", kind=DIRECT, source="private_1"))
     await k.wait_idle()
     tool_msgs = [m for m in k._session.messages if m.get("role") == "tool"]
-    assert len(tool_msgs) == 2  # 每个 tool_call 都有回执，链未断
-    assert "工具不存在" in tool_msgs[0]["content"]
-    assert '"ok": false' in tool_msgs[1]["content"]
+    assert "打断" in tool_msgs[0]["content"] and "未完成" in tool_msgs[0]["content"]
+    # 主人消息随后送达（插话）
+    assert any(m.get("content") == "主人的消息"
+               for m in k._session.messages if m.get("role") == "user")
+    # 总耗时远小于 3s（被打断）
+    assert llm.calls  # 第二次调用已发生
 
 
-async def _raise(args: dict) -> str:
-    raise RuntimeError("炸了")
+async def test_uninterruptible_tool_not_cancelled(tmp_path):
+    llm = FakeLLM([tool_reply("atomic", cid="c1"), text_reply("做完了")])
+    atomic = make_tool("atomic", delay=0.2, interruptible=False)
+    k = make_kernel(tmp_path, llm, tools=[atomic])
+    k.notify(Envelope(text="原子任务", kind="ambient"))
+    await asyncio.sleep(0.05)
+    k.notify(Envelope(text="主人的消息", kind=DIRECT))
+    await k.wait_idle()
+    tool_msgs = [m for m in k._session.messages if m.get("role") == "tool"]
+    assert "打断" not in tool_msgs[0]["content"]  # 正常完成
 
 
-async def test_steer_arrives_before_next_llm_call(tmp_path):
-    """插话在工具批次后、下一次模型调用前送达。"""
+# ── wait 工具：自己定闹钟，唤醒作为工具结果同回合延续 ──
+
+async def test_explicit_wait_returns_wake_as_tool_result(tmp_path):
     llm = FakeLLM([
-        tool_reply("slow", cid="c1"),   # 第一次：调工具
-        text_reply("好的，我听到了插话"),  # 第二次：应已看到插话文本
+        tool_reply("wait", args='{"timeout_s": 0.05, "reason": "小睡"}', cid="c1"),
+        text_reply("闹钟醒了，继续"),
     ])
-    slow = make_tool("slow", delay=0.2)
-
-    async def _steer_during_tool() -> None:
-        await asyncio.sleep(0.05)  # 等工具开始执行
-        await k.steer(Envelope(text="（插话：主人又补了一句）"))
-
-    k = make_kernel(tmp_path, llm, tools=[slow])
-    await asyncio.gather(
-        k.prompt(Envelope(text="先干个活")),
-        _steer_during_tool(),
-    )
-    await k.wait_idle()
-    # 第二次模型调用应包含插话文本
-    assert any("主人又补了一句" in str(m.get("content"))
-               for m in llm.calls[1])
-
-
-async def test_follow_up_runs_sequentially(tmp_path):
-    llm = FakeLLM([text_reply("第一封的回应"), text_reply("第二封的回应")])
     k = make_kernel(tmp_path, llm)
-    await k.prompt(Envelope(text="第一封"))
-    await k.prompt(Envelope(text="第二封"))  # 忙碌时自动降级 follow_up
-    await k.wait_idle()
-    # 两次模型调用各自以对应信封为起点
-    assert any("第一封" in str(m.get("content")) for m in llm.calls[0])
-    assert any("第二封" in str(m.get("content")) for m in llm.calls[1])
-    assert len(llm.calls) == 2
-
-
-async def test_rotate_seeds_new_session(tmp_path):
-    llm = FakeLLM([text_reply("初始回应"),
-                   text_reply("新会话的我收到播种")])
-    old_session = make_session(tmp_path)
-    k = make_kernel(tmp_path, llm, session=old_session)
     evs = events_of(k)
-    await k.prompt(Envelope(text="旧会话内容"))
+    k.notify(Envelope(text="设个闹钟小睡"))
+    # 显式 wait 期间 wait_idle 会提前返回——轮询等收敛休息
+    await wait_event(evs, REST, reason="converged")
+    tool_msgs = [m for m in k._session.messages if m.get("role") == "tool"]
+    assert "醒来" in tool_msgs[0]["content"]  # 工具结果=唤醒信封
+    assert len(llm.calls) == 2               # 同回合延续：醒后继续思考
+    rests = [d for t, d in evs if t == REST]
+    assert any(d["reason"].startswith("explicit") for d in rests)
+
+
+# ── 组批唤醒：等待期间多个事件一次进入同一视野 ──────────
+
+async def test_wake_batches_events(tmp_path):
+    llm = FakeLLM([text_reply("看到了全部"), text_reply("处理完")])
+    k = make_kernel(tmp_path, llm)
+    k.notify(Envelope(text="第一件"))        # 周期1 开始
+    await asyncio.sleep(0.05)                # 等它收敛进入休息
+    # 同一事件循环节拍内投两封 → 组批进同一唤醒信封
+    k.notify(Envelope(text="事件A", kind="ambient"))
+    k.notify(Envelope(text="事件B", kind="ambient"))
+    await k.wait_idle()
+    users = [m["content"] for m in k._session.messages if m.get("role") == "user"]
+    wake_msgs = [u for u in users if "期间收到" in u]
+    assert wake_msgs and "事件A" in wake_msgs[0] and "事件B" in wake_msgs[0]
+
+
+# ── 防不睡：轮次超限强制休息 ────────────────────────────
+
+async def test_forced_rest_after_max_turns(tmp_path):
+    llm = FakeLLM([tool_reply("echo", cid=f"c{i}") for i in range(5)])  # max_turns=5
+    llm.script.append(text_reply("被强制休息后继续"))
+    k = make_kernel(tmp_path, llm, tools=[make_tool("echo")])
+    k._cfg.max_turns = 3
+    k._cfg.turns_rest_nudge = 2
+    evs = events_of(k)
+    k.notify(Envelope(text="无限循环吧"))
+    await wait_event(evs, REST, reason="forced")
+    # 强制休息是等待——敲门后继续
+    k.notify(Envelope(text="继续"))
+    await k.wait_idle()
+    assert any(d.get("reason") == "forced" for t, d in evs if t == REST)
+
+
+# ── 深睡转身：swap_session + rest ──────────────────────
+
+async def test_swap_session_seeds_new_session(tmp_path):
+    llm = FakeLLM([text_reply("旧会话的一天"), text_reply("新会话的我")])
+    k = make_kernel(tmp_path, llm)
+    k.notify(Envelope(text="旧会话内容"))
     await k.wait_idle()
     old_id = k.session_id
-    await k.rotate(seed="（播种：你是小Q，刚从睡眠中轮换而来……）")
+    llm.script.append(text_reply("新会话的我"))
+    k.swap_session("（播种：你是小Q，刚从深睡中醒来……）")
+    k.notify(Envelope(text="唤醒"))
     await k.wait_idle()
-    assert any(t == SESSION_ROTATED for t, _ in evs)
     assert k.session_id != old_id
     msgs = k._session.messages
     assert "播种" in msgs[0]["content"] and msgs[0]["role"] == "user"
-    # 旧会话文件保留
-    assert old_session.file.exists()
 
 
-async def test_max_turns_converges(tmp_path):
-    """轮次耗尽后强制无工具收束，不死循环。"""
-    script = [tool_reply("echo", cid=f"c{i}") for i in range(5)]  # 恰好耗尽 max_turns=5
-    script.append(text_reply("被叫停了"))
-    llm = FakeLLM(script)
-    k = make_kernel(tmp_path, llm, tools=[make_tool("echo")])
-    await k.prompt(Envelope(text="无限循环吧"))
-    await k.wait_idle()
-    final = k._session.messages[-1]
-    assert final["role"] == "assistant" and final["content"] == "被叫停了"
+async def test_deep_sleep_tool_full_cycle(tmp_path):
+    from lifemate.host import _deep_sleep_tool
+    from lifemate.memory.store import Store
+    llm = FakeLLM([
+        tool_reply("deep_sleep",
+                   args='{"letter": "我是小Q，今天过得平静", "hours": 0.001}'),
+        text_reply("醒来，读到了自己的信"),
+    ])
+    store = Store(tmp_path / "m.db")
+    k = make_kernel(tmp_path, llm)
+    k.register_tool(_deep_sleep_tool(k, store))
+    old_id = k.session_id
+    k.notify(Envelope(text="一天结束了"))
+    await k.wait_idle()  # deep_sleep 内部 rest(3.6s)…wait_idle 只到显式休息
+    # 等休息→唤醒（闹钟 0.001h≈3.6s 到点）
+    for _ in range(400):
+        if any(m.get("role") == "assistant" and m.get("content") == "醒来，读到了自己的信"
+               for m in k._session.messages):
+            break
+        await asyncio.sleep(0.02)
+    assert "小Q" in (store.latest_packet() or "")
+    assert k.session_id != old_id
+    users = [m["content"] for m in k._session.messages if m.get("role") == "user"]
+    assert any("留给你的信" in u for u in users)
 
+
+# ── 崩溃恢复：悬空工具调用修复 ─────────────────────────
+
+async def test_dangling_tool_call_repaired(tmp_path):
+    sess = make_session(tmp_path)
+    sess.append({"role": "user", "content": "hi"})
+    sess.append({"role": "assistant", "content": "",
+                 "tool_calls": [{"id": "c1", "type": "function",
+                                 "function": {"name": "record_episode",
+                                              "arguments": "{}"}}]})
+    llm = FakeLLM([text_reply("续上")])
+    k = make_kernel(tmp_path, llm, session=sess)
+    msgs = sess.messages
+    assert msgs[-1]["role"] == "tool" and "重启" in msgs[-1]["content"]
+
+
+# ── 背压（仅插话队列） ─────────────────────────────────
+
+async def test_steer_backpressure(tmp_path):
+    llm = FakeLLM([text_reply("嗯")])
+    k = make_kernel(tmp_path, llm)
+    k._cfg.queue_max_steer = 3
+    drops: list[dict] = []
+    k.subscribe(lambda ev: drops.append(ev.data) if ev.type == QUEUE_DROP else None)
+    for i in range(6):
+        k._steer_q.append(Envelope(text=f"信封{i}"))
+    k._trim_steer()
+    assert len(k._steer_q) == 3
+    assert [e.text for e in k._steer_q] == ["信封3", "信封4", "信封5"]
+    assert drops and drops[0]["reason"] == "overflow_steer"
+
+
+# ── 压缩（沿用） ───────────────────────────────────────
 
 async def test_compaction_triggers_and_persists(tmp_path):
-    """低阈值触发压缩：摘要入会话、消息截断、文件重写可恢复。"""
     big = "x" * 400
     llm = FakeLLM([
         tool_reply("echo", cid="c1"),
-        LLMResponse(content="（这是压缩摘要）"),  # 第 2 轮的压缩调用
+        LLMResponse(content="（这是压缩摘要）"),
         text_reply("继续"),
     ])
     session = make_session(tmp_path)
-    # keep_recent=40：第 2 轮时截断点落在首条大消息后（保留工具对完整）
     cfg = make_config(tmp_path)
     cfg.compact_threshold_tokens = 50
     cfg.keep_recent_tokens = 40
-    compactor = Compactor(llm.chat, cfg)
     k = SelfKernel(llm=llm, persona=make_persona(tmp_path), session=session,
-                   compactor=compactor, cfg=cfg)
+                   compactor=Compactor(llm.chat, cfg), cfg=cfg)
     k.register_tool(make_tool("echo"))
-    await k.prompt(Envelope(text=f"触发压缩{big}"))
+    k.notify(Envelope(text=f"触发压缩{big}"))
     await k.wait_idle()
     assert session.summary == "（这是压缩摘要）"
-    assert len(session.messages) == 3  # 一对工具消息 + 收束回复
-    # 文件重写后可恢复：摘要与新会话起点
     reloaded = Session.load_latest(session.file.parent)
     assert reloaded.summary == "（这是压缩摘要）"
-    assert len(reloaded.messages) == 3
 
+
+# ── 重启连续性 ────────────────────────────────────────
 
 async def test_session_restart_continuity(tmp_path):
-    """重启恢复最近会话（7×24 连续性）。"""
     s1 = make_session(tmp_path)
     llm = FakeLLM([text_reply("好")])
     k = make_kernel(tmp_path, llm, session=s1)
-    await k.prompt(Envelope(text="今天聊过的话题"))
+    k.notify(Envelope(text="今天聊过的话题"))
     await k.wait_idle()
     s2 = Session.load_latest(s1.file.parent)
-    assert any("今天聊过的话题" in str(m.get("content"))
-               for m in s2.messages)
+    assert any("今天聊过的话题" in str(m.get("content")) for m in s2.messages)

@@ -89,7 +89,7 @@ def test_is_retryable_classification():
 async def test_queue_backpressure_drops_oldest(tmp_path):
     llm = FakeLLM([text_reply("嗯")])
     cfg = make_config(tmp_path)
-    cfg.queue_max_follow = 3
+    cfg.queue_max_steer = 3
     k = SelfKernel(llm=llm, persona=make_persona(tmp_path),
                    session=make_session(tmp_path),
                    compactor=Compactor(llm.chat, cfg), cfg=cfg)
@@ -97,12 +97,12 @@ async def test_queue_backpressure_drops_oldest(tmp_path):
     k.subscribe(lambda ev: drops.append(ev.data) if ev.type == QUEUE_DROP else None)
 
     for i in range(6):
-        k._follow_q.append(Envelope(text=f"信封{i}"))
-    k._trim_queues()
-    assert len(k._follow_q) == 3
+        k._steer_q.append(Envelope(text=f"信封{i}"))
+    k._trim_steer()
+    assert len(k._steer_q) == 3
     # 丢最旧，保最新
-    assert [e.text for e in k._follow_q] == ["信封3", "信封4", "信封5"]
-    assert drops and drops[0]["reason"] == "overflow_follow"
+    assert [e.text for e in k._steer_q] == ["信封3", "信封4", "信封5"]
+    assert drops and drops[0]["reason"] == "overflow_steer"
     assert drops[0]["texts"] == ["信封0", "信封1", "信封2"]
 
 
@@ -116,9 +116,9 @@ async def test_heal_revives_zombie_queue(tmp_path):
                    compactor=Compactor(llm.chat, make_config(tmp_path)),
                    cfg=make_config(tmp_path))
     k._task = None  # 模拟 task 消亡
-    k._follow_q.append(Envelope(text="僵尸队列里的信"))
+    k._steer_q.append(Envelope(text="僵尸队列里的信"))
     info = await k.heal()
-    assert info["healed"] == "zombie_queue" and k.is_busy
+    assert info["healed"] == "revived"
     await k.wait_idle()
     assert any(m.get("content") == "僵尸队列里的信"
                for m in k._session.messages)

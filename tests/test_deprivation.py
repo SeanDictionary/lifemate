@@ -5,7 +5,7 @@
 做不到 = 聊天机器人，不是生命。
 """
 from lifemate.kernel.compaction import Compactor
-from lifemate.kernel.contracts import ASSISTANT_MSG, RUN_ENDED, RUN_STARTED, Envelope
+from lifemate.kernel.contracts import ASSISTANT_MSG, REST, WAKE, Envelope
 from lifemate.kernel.mind import SelfKernel
 from lifemate.kernel.persona import Persona
 from lifemate.kernel.session import Session
@@ -52,12 +52,12 @@ async def test_deprivation_boot_survives(tmp_path):
     evs: list[tuple[str, dict]] = []
     kernel.subscribe(lambda ev: evs.append((ev.type, ev.data)))
 
-    await kernel.prompt(Envelope(text=BOOT, kind="boot"))
+    kernel.notify(Envelope(text=BOOT, kind="boot"))
     await kernel.wait_idle()
 
     # 运行完整：唤醒 → 助手消息（含工具轮）→ 收敛
     types = [t for t, _ in evs]
-    assert RUN_STARTED in types and RUN_ENDED in types
+    assert WAKE in types and REST in types
     assert types.count(ASSISTANT_MSG) == 3
 
     # 经历已写入长期记忆（它记得自己醒过）
@@ -89,10 +89,11 @@ async def test_deprivation_rotation_rebirth(tmp_path):
     ])
     kernel, store = build_bare_life(tmp_path, llm)
 
-    await kernel.prompt(Envelope(text=BOOT, kind="boot"))
+    kernel.notify(Envelope(text=BOOT, kind="boot"))
     await kernel.wait_idle()
     old_id = kernel.session_id
-    await kernel.rotate(seed="（播种：你刚从轮换中醒来，先读读上一个你留下的信。）")
+    kernel.swap_session("（播种：你刚从深睡中醒来，先读读上一个你留下的信。）")
+    kernel.notify(Envelope(text="（读到了上一个我的信）"))
     await kernel.wait_idle()
 
     assert kernel.session_id != old_id

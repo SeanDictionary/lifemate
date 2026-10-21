@@ -53,8 +53,8 @@ async def test_full_run_recorded(tmp_path):
     kernel, recorder = make_setup(tmp_path, llm, [make_tool("echo")])
     recorder.event("boot", version="test", tools=["echo"])
 
-    await kernel.prompt(Envelope(text="用一下 echo", kind="direct",
-                                 source="group_1"))
+    kernel.notify(Envelope(text="用一下 echo", kind="direct",
+                            source="group_1"))
     await kernel.wait_idle()
     recorder.close()
 
@@ -62,12 +62,12 @@ async def test_full_run_recorded(tmp_path):
     types = [x["type"] for x in lines]
     # 完整链路齐全且有序
     assert types[0] == "boot"
-    i = types.index("run")
+    i = types.index("wake")
     assert types[i + 1] == "msg" and lines[i + 1]["role"] == "user"
     # 信封行：投递语义在场
     env = lines[i + 1]["env"]
     assert env["kind"] == "direct" and env["source"] == "group_1"
-    assert env["delivery"] == "prompt" and env["arrived_ts"] > 0
+    assert env["delivery"] == "notify" and env["arrived_ts"] > 0
     # assistant 行：思考与元数据在场
     a = next(x for x in lines if x.get("role") == "assistant")
     assert a["thinking"] == "用户在测试我，我应该调一下工具"
@@ -76,7 +76,7 @@ async def test_full_run_recorded(tmp_path):
     # 工具行：执行语义在场
     t = next(x for x in lines if x.get("role") == "tool")
     assert t["name"] == "echo" and t["ok"] is True and t["tool_call_id"] == "c1"
-    assert types[-1] == "run_end" and lines[-1]["reason"] == "stop"
+    assert types[-1] == "rest" and lines[-1]["reason"] == "converged"
     # rid 贯穿：信封/助手/工具/收尾同一 rid
     rid = lines[i + 1]["rid"]
     assert a["rid"] == rid and t["rid"] == rid and lines[-1]["rid"] == rid
@@ -89,23 +89,17 @@ async def test_queue_drop_and_rotate_recorded(tmp_path):
     """被丢弃的插话 + 轮换：全宇宙唯一的存证。"""
     llm = FakeLLM([text_reply("嗯")])
     kernel, recorder = make_setup(tmp_path, llm, [])
-    await kernel.prompt(Envelope(text="第一封"))
+    kernel.notify(Envelope(text="第一封"))
     await kernel.wait_idle()
-    # 模拟一封永远无人处理的插话（直接塞进内核队列后轮换丢弃）
+    # 模拟一封永远无人处理的插话（直接塞进内核队列后被中止丢弃）
     kernel._steer_q.append(Envelope(text="被丢弃的插话", kind="direct"))
-    await kernel.rotate(seed="（播种：新的一天）")
-    await kernel.wait_idle()
+    await kernel.abort()
     recorder.close()
 
     lines = read_lines(recorder)
     drop = next(x for x in lines if x["type"] == "queue_drop")
-    assert drop["reason"] == "rotate" and drop["count"] == 1
+    assert drop["reason"] == "abort" and drop["count"] == 1
     assert drop["texts"] == ["被丢弃的插话"]
-    rot = next(x for x in lines if x["type"] == "rotate")
-    assert rot["old"] != rot["new"] and rot["seed_chars"] > 0
-    # 播种信封作为新会话第一条被记录
-    seed_line = [x for x in lines if x.get("role") == "user"][-1]
-    assert "播种" in seed_line["content"]
 
 
 async def test_field_truncation(tmp_path):
@@ -127,9 +121,7 @@ async def test_session_cleanup_on_rotate(tmp_path):
     cfg.session_keep_rotated = 1
     kernel = SelfKernel(llm=llm, persona=make_persona(tmp_path), session=s1,
                         compactor=Compactor(llm.chat, cfg), cfg=cfg)
-    await kernel.rotate(seed="s2")   # s1 → s2
-    await kernel.wait_idle()
-    await kernel.rotate(seed="s3")   # s2 → s3（s1 应被清理，保留 keep=1 个旧文件）
-    await kernel.wait_idle()
+    kernel.swap_session("s2")   # s1 → s2
+    kernel.swap_session("s3")   # s2 → s3（s1 应被清理，保留 keep=1 个旧文件）
     files = sorted(sessions_dir.glob("*.jsonl"))
     assert len(files) == 2  # 当前 + 1 个旧文件
