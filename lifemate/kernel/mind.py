@@ -23,7 +23,7 @@ from typing import Any, Callable
 
 from .compaction import Compactor
 from .contracts import (ASSISTANT_MSG, COMPACTED, DIRECT, Envelope, ERROR,
-                        EventCallback, MindEvent, OrganPack, QUEUE_DROP, REST,
+                        EventCallback, MindEvent, PluginPack, QUEUE_DROP, REST,
                         SEED, SESSION_ROTATED, TOOL_CALL, TOOL_RESULT, Tool,
                         USER_MSG, WAKE)
 from .llm import LLMClient, LLMResponse
@@ -68,7 +68,7 @@ class SelfKernel:
         self._cfg = cfg  # 活配置：用时读取（热重载生效）
 
         self._tools: dict[str, Tool] = {}
-        self._organs: dict[str, OrganPack] = {}
+        self._plugins: dict[str, PluginPack] = {}
         self._steer_q: deque[Envelope] = deque()      # 思考中的插话队列
         self._pending: list[Envelope] = []            # 等待期间累积的事件（组批）
         self._task: asyncio.Task | None = None
@@ -76,7 +76,7 @@ class SelfKernel:
         self._last_prompt_tokens = 0
         self._rid = ""                                # 当前唤醒周期 id（观测归组）
         self._wait: _Waiting | None = None
-        self._wake_extras: Callable[[], str] | None = None
+        self._wake_extras: list[Callable[[], str]] = []
         self._current_tool: asyncio.Task | None = None
         self._current_tool_interruptible = False
         self._interrupted: Envelope | None = None
@@ -104,29 +104,32 @@ class SelfKernel:
             except Exception:  # noqa: BLE001
                 log.exception("事件订阅者异常（type=%s）", type_)
 
-    def set_wake_extras(self, fn: Callable[[], str]) -> None:
-        """宿主注入唤醒附加事实（待办/身体感受）——内核不解其义，只附上。"""
-        self._wake_extras = fn
+    def add_wake_extras(self, fn: Callable[[], str]) -> None:
+        """宿主/插件注入唤醒附加事实（身体感受）——内核不解其义，只附上。
+
+        可多次注册（host 的待办概览、插件的未读消息等），组批唤醒时全部拼接。
+        """
+        self._wake_extras.append(fn)
 
     # ── 工具/器官挂载 ───────────────────────────────────
     def register_tool(self, tool: Tool) -> None:
         """注册工具（重名覆盖；拔器官后同名工具自然消失）。"""
         self._tools[tool.name] = tool
 
-    def register_organ(self, organ: OrganPack) -> None:
-        for t in organ.tools:
+    def register_plugin(self, plugin: PluginPack) -> None:
+        for t in plugin.tools:
             self.register_tool(t)
-        self._organs[organ.name] = organ
-        log.info("器官装载: %s（工具 %d 个）", organ.name, len(organ.tools))
+        self._plugins[plugin.name] = plugin
+        log.info("插件注册: %s（工具 %d 个）", plugin.name, len(plugin.tools))
 
-    def unregister_organ(self, name: str) -> None:
-        organ = self._organs.pop(name, None)
-        if not organ:
+    def unregister_plugin(self, name: str) -> None:
+        plugin = self._plugins.pop(name, None)
+        if not plugin:
             return
-        for t in organ.tools:
+        for t in plugin.tools:
             if self._tools.get(t.name) is t:
                 del self._tools[t.name]
-        log.info("器官摘除: %s", name)
+        log.info("插件摘除: %s", name)
 
     def _tool_schemas(self) -> list[dict[str, Any]]:
         return [t.schema for t in self._tools.values()]

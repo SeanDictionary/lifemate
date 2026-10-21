@@ -31,7 +31,7 @@ _JSON_FIELDS: dict[str, Any] = {
     "keep_recent_tokens": 8_000,        # 压缩保留最近消息的估算 token
     # 路径（相对宿主 CWD）
     "soul_dir": "soul",
-    "skills_dir": "skills",
+    "skills_dir": "skills", 
     # LLM 健壮性（借签 pi 自动重试语义）
     "llm_max_retries": 3,               # 瞬态错误重试次数
     "llm_retry_backoff_s": 2.0,         # 退避基数（指数：2/4/8s）
@@ -52,6 +52,8 @@ _JSON_FIELDS: dict[str, Any] = {
     "reminder_poll_s": 15.0,            # 到期提醒轮询间隔（闹钟兑现周期）
     # 元配置
     "config_poll_s": 30.0,              # 热重载轮询间隔
+    # 插件命名空间（自由子对象，插件私有键不进主白名单）
+    "plugins": {},
     # 观测与档案
     "observe_max_field_chars": 65_536,  # 观测行单字段截断上限
     "session_keep_rotated": 2,          # 轮换后保留的旧会话文件数（档案在 observe）
@@ -93,6 +95,7 @@ class Config:
         self._stamp: tuple[int, int] = (-1, -1)  # (mtime_ns, size)：纳秒级避免浮点精度丢失
         for k, v in _JSON_FIELDS.items():
             setattr(self, k, v)
+        self.plugins: dict = {}  # 插件命名空间（config.json 的 plugins 子对象）
         self.reload(create_if_missing=True)
 
     # ── 加载/重载 ───────────────────────────────────────
@@ -125,6 +128,13 @@ class Config:
             return []
 
         changed: list[str] = []
+        # 插件命名空间：自由子对象，整体替换（热重载即时可见）
+        plug = data.pop("plugins", None)
+        if not isinstance(plug, dict):
+            plug = {}
+        if plug != self.plugins:
+            self.plugins = plug
+            changed.append("plugins")
         for key, raw in data.items():
             if key not in _JSON_FIELDS:
                 log.warning("未知配置键 %r（白名单外，忽略）", key)

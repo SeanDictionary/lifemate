@@ -33,6 +33,7 @@ from .utils import instance
 from .utils.config import Config
 from .utils.log import get_logger, install_excepthooks, install_loop_handler, setup_logging
 from .utils.recorder import Recorder
+from .plugins import PluginContext, load_plugins, stop_plugins
 
 log = get_logger("host")
 
@@ -76,7 +77,8 @@ def build(cfg: Config) -> tuple[SelfKernel, Store, Recorder]:
         llm=llm, persona=persona, session=session, compactor=compactor, cfg=cfg)
     kernel.subscribe(recorder.on_kernel_event)
 
-    # 内核自带：记忆工具 + read_skill + deep_sleep（wait 由内核内置）
+    # 内核自带：记忆工具 + read_skill + deep_sleep（wait 由内核内置；
+    # 插件能力由 plugins/ 自动发现装载，见 run()）
     for t in build_memory_tools(store):
         kernel.register_tool(t)
     kernel.register_tool(_read_skill_tool(persona))
@@ -89,17 +91,8 @@ def build(cfg: Config) -> tuple[SelfKernel, Store, Recorder]:
             return ""
         items = "；".join(r["intent"][:30] for r in pend[:3])
         return f"（你还有 {len(pend)} 条待办提醒，如：{items}。）"
-    kernel.set_wake_extras(_extras)
+    kernel.add_wake_extras(_extras)
 
-    # 启动快照：复现"它当时看到的世界"（人格/技能/工具清单版本）
-    recorder.event(
-        "boot", version=__version__, config=cfg.masked(),
-        persona_hash=hashlib.sha256(
-            persona.system_prompt().encode("utf-8")).hexdigest()[:12],
-        skills=sorted(persona.skills()), tools=kernel.tool_names())
-    recorder.event("session_load", file=str(session.file),
-                   msgs=len(session.messages),
-                   summary_chars=len(session.summary))
     return kernel, store, recorder
 
 
@@ -293,8 +286,26 @@ async def run() -> None:
 
         kernel, store, recorder = build(cfg)
         kernel.subscribe(_console_printer())
-        log.info("剥夺模式启动（session=%s, 记忆=%s, 配置=%s）",
-                 kernel.session_id, store.stats(), cfg.masked())
+
+        # 插件自动发现装载（plugins/ 目录，零主代码改动）
+        from .kernel.persona import Persona
+        persona = Persona(cfg.soul_dir, cfg.skills_dir)
+        plugins = await load_plugins(PluginContext(
+            kernel=kernel, store=store, cfg=cfg, recorder=recorder,
+            data_dir=Path(cfg.data_dir) / "plugins"))
+
+        # 启动快照（含插件工具，复现它当时看到的世界）
+        recorder.event(
+            "boot", version=__version__, config=cfg.masked(),
+            persona_hash=hashlib.sha256(
+                persona.system_prompt().encode("utf-8")).hexdigest()[:12],
+            skills=sorted(persona.skills()), tools=kernel.tool_names())
+        recorder.event("session_load",
+                       msgs=len(kernel._session.messages),
+                       summary_chars=len(kernel._session.summary))
+
+        log.info("剥夺模式启动（session=%s, 记忆=%s, 插件=%s）",
+                 kernel.session_id, store.stats(), [p.name for p in plugins])
 
         stop = asyncio.Event()
         for sig in ("SIGINT", "SIGTERM"):
@@ -356,6 +367,7 @@ async def run() -> None:
         await kernel.wait_idle()
         stop.set()
         await asyncio.gather(*tasks, return_exceptions=True)
+        await stop_plugins(plugins)
         recorder.event("host_stop", reason=reason)
         recorder.close()
         store.close()

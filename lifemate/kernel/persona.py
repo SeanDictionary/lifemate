@@ -15,6 +15,7 @@ from pathlib import Path
 log = logging.getLogger("kernel.persona")
 
 _BUILTIN_DIR = Path(__file__).resolve().parent / "builtin"
+_PLUGINS_DIR = Path(__file__).resolve().parent.parent / "plugins"
 
 _DEFAULT_IDENTITY = "你是一个数字生命。诚实、自然、简洁。"
 
@@ -45,16 +46,17 @@ class Persona:
 
     # ── skills ───────────────────────────────────────────
     def skills(self) -> dict[str, _Skill]:
-        """扫描 skills 目录（每目录一个 SKILL.md；简单缓存按目录 mtime）。"""
-        if not self._skills_dir.exists():
-            return {}
-        mtime = max(
-            (p.stat().st_mtime for p in self._skills_dir.rglob("SKILL.md")),
-            default=0.0)
+        """扫描技能目录：skills/（全局第三方）+ plugins/*/SKILL.md（插件自带）。"""
+        paths: list[Path] = []
+        if self._skills_dir.exists():
+            paths += list(self._skills_dir.rglob("SKILL.md"))
+        if _PLUGINS_DIR.exists():
+            paths += [p for p in _PLUGINS_DIR.glob("*/SKILL.md")]
+        mtime = max((p.stat().st_mtime for p in paths), default=0.0)
         if self._skills is None or mtime != getattr(self, "_skills_mtime", -1):
             self._skills_mtime = mtime
             self._skills = {}
-            for path in sorted(self._skills_dir.rglob("SKILL.md")):
+            for path in sorted(paths):
                 skill = self._parse(path)
                 if skill:
                     self._skills[skill.name] = skill

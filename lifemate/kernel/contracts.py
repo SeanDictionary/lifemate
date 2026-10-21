@@ -6,7 +6,7 @@
 - Envelope  信封：外界信息进入心智的唯一形态
 - MindEvent 事件：心智活动外显的唯一形态（观测/呈现的唯一来源）
 - Tool      工具：MCP tool schema 形状 + 进程内执行函数
-- OrganPack 器官包：工具+skill 的挂载单元（适配器感知面由宿主驱动）
+- PluginPack 插件包：工具+skill 的挂载单元（适配器感知面由插件自持 start/stop）
 - MindKernel：认知自我的行为契约（思维循环 + 两接口 + 会话原语）
 """
 from __future__ import annotations
@@ -97,11 +97,11 @@ class LLMResponse:
 
 
 @dataclass
-class OrganPack:
-    """器官包：挂载单元（工具 + skill 名）。
+class PluginPack:
+    """插件包：挂载单元（工具 + skill 名）。
 
-    适配器的感知面（常驻连接/事件循环）不在此处——由宿主进程驱动，
-    产出 Envelope 后经 MindKernel.prompt/steer 注入。
+    适配器的感知面（常驻连接/事件循环）不在此处——由插件的 start/stop
+    自持，产出 Envelope 后经 MindKernel.notify 注入。
     """
 
     name: str
@@ -145,14 +145,14 @@ class MindKernel(Protocol):
                  强刺激（DIRECT）可反射性打断可打断工具
     - rest       挂起等待（deep_sleep 等宿主工具使用）
     - swap_session  睡眠中转身：换新会话并播种，运行不中断
-    - set_wake_extras  宿主注入唤醒附加事实（身体感受等，内核不解其义）
+    - add_wake_extras  宿主/插件注入唤醒附加事实（身体感受等，内核不解其义）
     """
 
     def notify(self, env: Envelope) -> None: ...
-    def set_wake_extras(self, fn: Callable[[], str]) -> None: ...
+    def add_wake_extras(self, fn: Callable[[], str]) -> None: ...
 
-    def register_organ(self, organ: OrganPack) -> None: ...
-    def unregister_organ(self, name: str) -> None: ...
+    def register_plugin(self, plugin: PluginPack) -> None: ...
+    def unregister_plugin(self, name: str) -> None: ...
 
     def swap_session(self, seed: str) -> None: ...
     async def rest(self, timeout_s: float | None) -> str: ...
