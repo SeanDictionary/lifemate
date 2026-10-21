@@ -184,3 +184,15 @@ def test_log_file_written(tmp_path):
     n = len(logging.getLogger().handlers)
     setup_logging(tmp_path)
     assert len(logging.getLogger().handlers) == n
+
+
+def test_log_console_off(tmp_path):
+    """console=False（--silence）：只写文件，不挂终端 handler。"""
+    setup_logging(tmp_path, console=False)
+    handlers = logging.getLogger().handlers
+    assert not any(type(h) is logging.StreamHandler for h in handlers)
+    logging.getLogger("lifemate.test").warning("静默测试")
+    for h in handlers:
+        h.flush()
+    assert "静默测试" in (tmp_path / "logs" / "lifemate.log").read_text(
+        encoding="utf-8")

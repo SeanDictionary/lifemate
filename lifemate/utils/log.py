@@ -13,13 +13,15 @@ import sys
 from pathlib import Path
 from typing import Any
 
-_FORMAT = "%(asctime)s %(name)s %(levelname)s %(message)s"
+_FORMAT = "%(asctime)s - %(name)s [%(levelname)s]: %(message)s"
 
 
 def setup_logging(data_dir: str | Path, *, max_bytes: int = 10 * 1024 * 1024,
                   backup_count: int = 5,
-                  level: int = logging.INFO) -> Path:
-    """配置根日志（文件轮转 + 控制台）。幂等：重复调用不叠加 handler。"""
+                  level: int = logging.INFO,
+                  console: bool = True) -> Path:
+    """配置根日志（文件轮转 + 控制台；console=False 仅文件——
+    -s/--silence 静默终端用，不影响文件日志）。幂等：重复调用不叠加 handler。"""
     logs_dir = Path(data_dir) / "logs"
     logs_dir.mkdir(parents=True, exist_ok=True)
     path = logs_dir / "lifemate.log"
@@ -31,8 +33,10 @@ def setup_logging(data_dir: str | Path, *, max_bytes: int = 10 * 1024 * 1024,
     fmt = logging.Formatter(_FORMAT)
     fh = logging.handlers.RotatingFileHandler(
         path, maxBytes=max_bytes, backupCount=backup_count, encoding="utf-8")
-    ch = logging.StreamHandler()
-    for h in (fh, ch):
+    handlers: list[logging.Handler] = [fh]
+    if console:
+        handlers.append(logging.StreamHandler())
+    for h in handlers:
         h.setFormatter(fmt)
         h._lifemate = True  # type: ignore[attr-defined]
         root.addHandler(h)
