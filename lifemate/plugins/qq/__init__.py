@@ -79,9 +79,10 @@ class QQPlugin(Plugin):
             access_token=self._conf.access_token,
             on_event=self._on_event)
         self._client.start()
-        # 身体感受：未读消息概览挂进每次唤醒
+        # 身体感受：未读消息概览挂进每次唤醒（自己的出站不算未读）
         ctx.kernel.add_wake_extras(
-            lambda: self._chatlog.unread_summary() if self._chatlog else "")
+            lambda: self._chatlog.unread_summary(self_id=self._conf.bot_uin)
+            if self._chatlog else "")
 
     async def stop(self) -> None:
         if self._client is not None:
@@ -126,6 +127,19 @@ class QQPlugin(Plugin):
     # ── 表达面基建 ─────────────────────────────────────
     async def _call(self, action: str, params: dict | None = None) -> dict:
         return await self._client.call(action, params)
+
+    def _log_sent(self, chat_id: str, text: str, message_id: int) -> None:
+        """自己的出站消息也进背景听觉（带撤回句柄）。
+
+        感知面应包含自己造成的世界变化；入档失败不影响发送本身。
+        """
+        if self._chatlog is None:
+            return
+        try:
+            self._chatlog.append(chat_id, self._conf.bot_uin, "我",
+                                 text, message_id)
+        except Exception:  # noqa: BLE001
+            log.exception("出站消息入档失败（不影响发送）")
 
     def _receipt(self, coro_factory, **tags) -> Any:
         """出站统一回执：永不抛错（铁律 7）。"""
@@ -188,7 +202,10 @@ def _build_tools(p: QQPlugin) -> list[Tool]:
 
         async def _do():
             data = await p._call(action, base)
-            return {"message_id": data.get("message_id")}
+            mid = int(data.get("message_id") or 0)
+            p._log_sent(f"{target_type}_{target_id}", text, mid)
+            # 回执复述动作事实：心智凭此审视刚发出的话（撤回句柄也在）
+            return {"message_id": mid, "text": text}
         return await p._receipt(_do, target=f"{target_type}_{target_id}",
                                 action=action)
 
@@ -207,10 +224,13 @@ def _build_tools(p: QQPlugin) -> list[Tool]:
         if caption:
             msg.append({"type": "text", "data": {"text": caption}})
         base["message"] = msg
+        sent_text = "[图片]" + (f" {caption}" if caption else "")
 
         async def _do():
             data = await p._call(action, base)
-            return {"message_id": data.get("message_id")}
+            mid = int(data.get("message_id") or 0)
+            p._log_sent(f"{target_type}_{target_id}", sent_text, mid)
+            return {"message_id": mid, "text": sent_text}
         return await p._receipt(_do, target=f"{target_type}_{target_id}")
 
     async def recall_message(args: dict) -> str:
@@ -242,7 +262,14 @@ def _build_tools(p: QQPlugin) -> list[Tool]:
         p._chatlog.mark_read(chat_id)
         if not rows:
             return _err("该会话暂无记录")
-        lines = [f"{r['sender_name']}: {r['text']}" for r in rows]
+        bot = p._conf.bot_uin
+        lines = []
+        for r in rows:
+            # 自己的出站带撤回句柄；别人的不带（减少噪声）
+            if bot and r["sender_id"] == bot:
+                lines.append(f"我: {r['text']}（message_id={r['message_id']}）")
+            else:
+                lines.append(f"{r['sender_name']}: {r['text']}")
         return json.dumps({"ok": True, "count": len(rows),
                            "log": "\n".join(lines)}, ensure_ascii=False)
 

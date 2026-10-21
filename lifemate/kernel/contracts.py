@@ -53,7 +53,9 @@ class Envelope:
 # ── 工具（MCP tool schema 形状）──────────────────────────────
 
 ToolSchema = dict[str, Any]
-# 执行函数：参数 dict → 文本回执（建议 JSON 字符串，含 ok 字段）
+# 执行函数：参数 dict → 文本回执（建议 JSON 字符串，含 ok 字段）。
+# 出站类回执须复述动作事实（对象/内容/句柄）：回执是心智审视
+# 刚发生动作的镜子——只报 ok 不报事实，心智无从反悔（见 builtin/action-review）
 ToolFunc = Callable[[dict[str, Any]], Awaitable[str]]
 
 

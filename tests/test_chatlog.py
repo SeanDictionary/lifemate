@@ -85,3 +85,15 @@ def test_unread_respects_24h_window(tmp_path):
     log.append("group_2", 1, "甲", "两天前的", ts=now - 2 * DAY)
     assert log.unread_summary() == ""
     log.close()
+
+
+def test_unread_excludes_self_outbound(tmp_path):
+    """自己的出站消息不算未读（身体感受只数别人说的话）。"""
+    log = ChatLog(tmp_path)
+    now = time.time()
+    log.append("group_1", 100, "别人", "hi", ts=now - 10)
+    log.append("group_1", 100, "别人", "又一句", ts=now - 5)
+    log.append("group_1", 7, "我", "我自己发的", ts=now - 1)
+    summary = log.unread_summary(self_id=7)
+    assert "2 条" in summary and "3 条" not in summary
+    log.close()

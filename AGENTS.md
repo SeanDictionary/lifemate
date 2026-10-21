@@ -152,6 +152,10 @@ env 仅部署种子）；热重载靠字段原地更新——新组件必须持�
 - **首启预设时序修复（2026-10-21）**：preset_plugin_defaults 提取为装载器
   独立函数，host 在 build() 之前调用——首启（无 config 必然无 LLM）
   提前 SystemExit 时插件默认段也已落盘，config.json 不再出现空 plugins
+- **行动后审视链路（2026-10-21）**：builtin 新增 action-review（行为层通用：
+  发觉不对→撤销/补救/铭记，不可逆动作出手前慢一拍）；出站回执复述动作
+  事实（contracts 约定，qq 发送回执带 text）；qq 自发消息落 chat_log
+  （带 message_id 句柄，read_chat_log 可见，未读统计排除自己）
 - **待开发**：attention（门控升格）→ sandbox → webui → video
 
 ## 验证方式

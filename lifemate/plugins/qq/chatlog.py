@@ -132,8 +132,8 @@ CREATE TABLE IF NOT EXISTS chat_state (
             try:
                 need = n - len(out)
                 rows = con.execute(
-                    "SELECT ts, sender_name, text FROM chat_log"
-                    " WHERE chat_id = ? ORDER BY ts DESC LIMIT ?",
+                    "SELECT ts, sender_id, sender_name, text, message_id"
+                    " FROM chat_log WHERE chat_id = ? ORDER BY ts DESC LIMIT ?",
                     (chat_id, need)).fetchall()
                 out.extend(dict(r) for r in rows)
             finally:
@@ -150,8 +150,11 @@ CREATE TABLE IF NOT EXISTS chat_state (
             (chat_id, time.time()))
         self._state.commit()
 
-    def unread_summary(self, top: int = 3) -> str:
-        """未读概览（身体感受）：24h 窗口内 ts > last_read_ts 的精确统计。"""
+    def unread_summary(self, self_id: int = 0, top: int = 3) -> str:
+        """未读概览（身体感受）：24h 窗口内 ts > last_read_ts 的精确统计。
+
+        self_id 非零时排除自己的出站消息（自己发的不算未读）。
+        """
         cutoff = time.time() - 86400
         read_map = {r["chat_id"]: r["last_read_ts"] for r in
                     self._state.execute(
@@ -162,9 +165,11 @@ CREATE TABLE IF NOT EXISTS chat_state (
             con = self._open_read(path)
             try:
                 rows = con.execute(
-                    "SELECT chat_id, ts FROM chat_log WHERE ts > ?",
-                    (cutoff,)).fetchall()
+                    "SELECT chat_id, ts, sender_id FROM chat_log"
+                    " WHERE ts > ?", (cutoff,)).fetchall()
                 for r in rows:
+                    if self_id and r["sender_id"] == self_id:
+                        continue
                     if r["ts"] > read_map.get(r["chat_id"], 0):
                         counts[r["chat_id"]] = counts.get(r["chat_id"], 0) + 1
             finally:

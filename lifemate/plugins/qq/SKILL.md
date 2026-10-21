@@ -31,7 +31,7 @@ description: QQ 平台参考：平台机制、消息形态、聊天节奏、对�
 |---|---|---|
 | 发文本 | send_message | 一次一条；多条连发受最小间隔限制 |
 | 发图 | send_image | file 支持 URL/本地路径/base64:// |
-| 撤回 | recall_message | message_id 从发送回执获取；有时效 |
+| 撤回 | recall_message | message_id 从发送回执或 chat_log 自己的消息获取；QQ 撤回有时效（约 2 分钟），过时回执会失败 |
 | 查消息 | get_message_detail | 谁发的/内容/时间 |
 | 看群聊记录 | read_chat_log | 背景听觉的读取口；看完自动算已读 |
 | 好友申请 | approve_friend_request | user_id + approve |
@@ -78,6 +78,7 @@ QQ 平台的消息形态由平台决定，所有人都这么聊：
 - 按日归档、不限量，`read_chat_log(target_type, target_id, n)` 读取最近 n 条，跨天自动穿透
 - 每次唤醒的附加信息中有未读概览（按已读线精确统计）
 - 强刺激（@/私聊/主人/回复/戳）同样落 chat_log——read_chat_log 可看到被@前后的完整上下文
+- 你自己发的消息也落 chat_log（显示为"我"，带 message_id 可作撤回句柄）
 
 ## 频控与风控（物理限制，非建议）
 

@@ -207,13 +207,23 @@ async def test_qq_plugin_end_to_end(tmp_path):
         assert send_req["params"]["group_id"] == 777
         assert any(t.get("data", {}).get("text") == "收到，我看过了"
                    for t in send_req["params"]["message"])
-        # 回执带 message_id
+        # 回执带 message_id + 复述发送内容（行动后审视的凭据）
         tool_results = [m["content"] for m in kernel._session.messages
                         if m.get("role") == "tool"]
         assert any('"ok": true' in t and "4242" in t for t in tool_results)
+        assert any("收到，我看过了" in t for t in tool_results)
         # 背景听觉已记录弱刺激
         rows = plugin._chatlog.recent("group_777", 10)
         assert any("今天天气不错" in r["text"] for r in rows)
+        # 自己的出站也入档（带撤回句柄）
+        assert any(r["sender_id"] == SELF and r["message_id"] == 4242
+                   and r["sender_name"] == "我" for r in rows)
+        # read_chat_log 能看到自己刚发的（带句柄）
+        read_tool = next(t for t in plugin.tools
+                         if t.schema["name"] == "read_chat_log")
+        out = await read_tool.func({"target_type": "group",
+                                    "target_id": 777, "n": 10})
+        assert "我: 收到，我看过了（message_id=4242）" in out
     finally:
         await plugin.stop()
         await napcat.stop()
