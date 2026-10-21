@@ -1,0 +1,20 @@
+# 运行数据
+data/
+
+# 开发副产物与归档（设计文档、v1 归档、临时输出）
+.cache/
+
+# Python
+__pycache__/
+*.pyc
+*.egg-info/
+.venv/
+.pytest_cache/
+.ruff_cache/
+
+# 环境
+.env
+
+# 系统
+Thumbs.db
+.DS_Store
