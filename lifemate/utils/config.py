@@ -24,8 +24,9 @@ _JSON_FIELDS: dict[str, Any] = {
     "llm_api_key": "",
     "llm_model": "",
     # 内核
-    "max_turns": 24,                    # 单次运行最大模型轮数
-    "tool_timeout_s": 120.0,            # 单工具执行超时
+    "max_turns": 24,                    # 单个唤醒周期内最大模型轮数（超过强制休息）
+    "turns_rest_nudge": 16,             # 连续轮数提醒阈值（先提示后强制）
+    "tool_timeout_s": 120.0,            # 单工具执行超时（wait 除外）
     "compact_threshold_tokens": 24_000, # 超过触发压缩（估算）
     "keep_recent_tokens": 8_000,        # 压缩保留最近消息的估算 token
     # 路径（相对宿主 CWD）
@@ -38,9 +39,8 @@ _JSON_FIELDS: dict[str, Any] = {
     # 系统日志
     "log_max_bytes": 10_485_760,        # 单份 .log 上限（10MB）
     "log_backup_count": 5,              # 轮转保留份数
-    # 排队背压
-    "queue_max_follow": 64,             # follow_up 队列上限（溢出丢最旧并存证）
-    "queue_max_steer": 16,              # 插话队列上限
+    # 排队背压（永续回合下仅插话队列）
+    "queue_max_steer": 16,              # 插话队列上限（溢出丢最旧并存证）
     # watchdog 自愈
     "watchdog_interval_s": 30.0,        # 健康检查间隔
     "max_run_s": 3600.0,                # 单次运行最大时长（超时中止并自愈）
@@ -48,6 +48,8 @@ _JSON_FIELDS: dict[str, Any] = {
     "observe_retention_days": 90,       # 观测档案保留天数（0=永久）
     "backup_interval_s": 86400.0,       # memory.db 备份间隔
     "backup_keep": 7,                   # 备份保留份数
+    # 永续回合
+    "reminder_poll_s": 15.0,            # 到期提醒轮询间隔（闹钟兑现周期）
     # 元配置
     "config_poll_s": 30.0,              # 热重载轮询间隔
     # 观测与档案

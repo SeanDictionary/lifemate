@@ -20,12 +20,13 @@ from typing import Any, Protocol, runtime_checkable
 DIRECT = "direct"          # 直接对话（被@/私聊/回复）
 AMBIENT = "ambient"        # 环境对话（经注意力门控升格后同样走强刺激路径）
 PLATFORM_EVENT = "platform_event"  # 平台事件（好友申请/群成员变动等）
-TICK = "tick"              # 内部时钟心跳
-WAKE = "wake"              # 唤醒（生物钟/守护进程信号）
+REMINDER = "reminder"      # 到期提醒（它自己定的闹钟被兑现）
+TICK = "tick"              # 内部时钟（保留）
+WAKE = "wake"              # 唤醒信封（等待解决后的组批消息）
 BOOT = "boot"              # 出生/启动
 SEED = "seed"              # 会话轮换后的播种信封
 
-STRONG_KINDS = frozenset({DIRECT, AMBIENT, PLATFORM_EVENT, TICK, WAKE, BOOT, SEED})
+STRONG_KINDS = frozenset({DIRECT, AMBIENT, PLATFORM_EVENT, REMINDER, TICK, WAKE, BOOT, SEED})
 
 
 @dataclass
@@ -57,10 +58,15 @@ ToolFunc = Callable[[dict[str, Any]], Awaitable[str]]
 
 @dataclass
 class Tool:
-    """进程内工具：schema 用 MCP 形状，将来可薄包装成 MCP server 暴露。"""
+    """进程内工具：schema 用 MCP 形状，将来可薄包装成 MCP server 暴露。
+
+    interruptible：强刺激（直接对话）可反射性打断执行中的调用
+    （停手是生理，反应是意志）；长工具（watch/exec）声明 True。
+    """
 
     schema: ToolSchema  # {"name","description","inputSchema"}
     func: ToolFunc
+    interruptible: bool = False
 
     @property
     def name(self) -> str:
@@ -105,12 +111,12 @@ class OrganPack:
 
 # ── 事件（观测/呈现的唯一来源）───────────────────────────────
 
-RUN_STARTED = "run_started"        # 一次运行开始（处理一封信封）
+WAKE = "wake"                      # 唤醒周期开始（wait 解决/出生/重生）
 ASSISTANT_MSG = "assistant_msg"    # 一条助手消息（文本与/或工具调用）
 USER_MSG = "user_msg"              # 一封送达心智的信封（含投递语义）
 TOOL_CALL = "tool_call"            # 一次工具调用开始
 TOOL_RESULT = "tool_result"        # 一次工具回执（含执行语义）
-RUN_ENDED = "run_ended"            # 运行结束
+REST = "rest"                      # 进入休息（收敛/显式/强制/中止）
 SESSION_ROTATED = "session_rotated"  # 会话轮换完成
 COMPACTED = "compacted"            # 上下文压缩完成
 QUEUE_DROP = "queue_drop"          # 排队信封被丢弃（rotate/abort）
@@ -127,34 +133,31 @@ class MindEvent:
 
 # ── 内核行为契约 ────────────────────────────────────────────
 
-IdleHook = Callable[[], Awaitable[None]]
-
-
 @runtime_checkable
 class MindKernel(Protocol):
     """认知自我的行为契约（实现见 kernel.mind.SelfKernel）。
 
-    刺激入口三语义（借签 pi）：
-    - prompt    空闲时唤醒（忙碌时自动降级为 follow_up）
-    - steer     忙碌时插话：当前助手轮的工具批次执行完后、下一次模型调用前送达
-    - follow_up 排队：本轮运行完全结束后作为新运行起点
+    永续回合模型：一次运行贯穿一生——思考 → 休息(wait) → 唤醒 → 思考 → ……
+    不是事件开启思考，而是思考在等待事件。
+
+    - notify     世界敲门（唯一入口）：等待中→解决等待并组批唤醒；
+                 思考中→插话（工具批次后、下次模型调用前送达）；
+                 强刺激（DIRECT）可反射性打断可打断工具
+    - rest       挂起等待（deep_sleep 等宿主工具使用）
+    - swap_session  睡眠中转身：换新会话并播种，运行不中断
+    - set_wake_extras  宿主注入唤醒附加事实（身体感受等，内核不解其义）
     """
 
-    async def prompt(self, env: Envelope) -> None: ...
-    async def steer(self, env: Envelope) -> None: ...
-    async def follow_up(self, env: Envelope) -> None: ...
+    def notify(self, env: Envelope) -> None: ...
+    def set_wake_extras(self, fn: Callable[[], str]) -> None: ...
 
     def register_organ(self, organ: OrganPack) -> None: ...
     def unregister_organ(self, name: str) -> None: ...
 
-    async def rotate(self, seed: str) -> None: ...
+    def swap_session(self, seed: str) -> None: ...
+    async def rest(self, timeout_s: float | None) -> str: ...
     async def abort(self) -> None: ...
 
     def subscribe(self, cb: EventCallback) -> Callable[[], None]: ...
     async def wait_idle(self) -> None: ...
-
-    def on_idle(self, hook: IdleHook) -> None:
-        """注册空闲钩子：每次运行完全结束（无排队信封）时调用。
-
-        生命周期器官用它在恰当的时机触发固化与轮换。
-        """
+    async def heal(self) -> dict: ...
