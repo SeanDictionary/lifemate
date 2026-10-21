@@ -105,7 +105,7 @@ class Persona:
         parts.extend(self.builtin_docs())
         skills = self.skills()
         if skills:
-            lines = ["### 可用技能（用 read_skill 工具读取全文后再遵循）"]
+            lines = ["### 可用技能（全文经 read_skill 工具获取）"]
             lines += [f"- {s.name}: {s.description}" for s in skills.values()]
             parts.append("\n".join(lines))
         return "\n\n".join(x for x in parts if x.strip())

@@ -36,8 +36,7 @@ log = logging.getLogger("kernel.mind")
 _TOOL_RESULT_MAX = 6000
 _CIRCLED = "①②③④⑤⑥⑦⑧⑨⑩"
 
-_NUDGE = ("（提示：你已经连续思考了很多轮。如果还有正事就继续；"
-          "否则建议调用 wait 休息，或用 set_reminder 安排下一步。）")
+_NUDGE = "（本轮已连续思考多轮，未休息。）"
 
 
 def _cap(text: str, n: int = _TOOL_RESULT_MAX) -> str:
@@ -508,7 +507,7 @@ class SelfKernel:
                     "role": "tool", "tool_call_id": tc["id"],
                     "content": json.dumps(
                         {"ok": False,
-                         "note": "进程重启，这次调用没有结果——如仍需要可重做"},
+                         "note": "进程重启，该调用未返回结果。"},
                         ensure_ascii=False)})
                 repaired += 1
         if repaired:

@@ -245,7 +245,7 @@ async def test_deep_sleep_tool_full_cycle(tmp_path):
     assert "小Q" in (store.latest_packet() or "")
     assert k.session_id != old_id
     users = [m["content"] for m in k._session.messages if m.get("role") == "user"]
-    assert any("留给你的信" in u for u in users)
+    assert any("留下的信" in u for u in users)
 
 
 # ── 崩溃恢复：悬空工具调用修复 ─────────────────────────

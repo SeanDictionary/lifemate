@@ -134,15 +134,14 @@ def _deep_sleep_tool(kernel: SelfKernel, store: Store) -> Tool:
         if not letter:
             return _json.dumps(
                 {"ok": False,
-                 "error": "letter 不能为空——睡前给下一个自己写信是制度"},
+                 "error": "letter 不能为空（deep_sleep 保存重建包后轮换会话）"},
                 ensure_ascii=False)
         hours = max(0.1, min(float(args.get("hours") or 8), 72.0))
         store.save_packet(letter)
         pend = store.pending_reminders(5)
         todo = "；".join(r["intent"][:40] for r in pend) or "无"
-        seed = ("（你刚从深睡中醒来，这是新会话的开始。"
-                "上一个你留给你的信：\n" + letter
-                + "\n\n你定的待办提醒：" + todo + "）")
+        seed = ("（深睡结束，会话已轮换。上一会话留下的信：\n" + letter
+                + f"\n\n待办提醒：{todo}）")
         kernel.swap_session(seed)
         return await kernel.rest(hours * 3600)
 
