@@ -13,13 +13,15 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+import uuid
 from collections import deque
 from typing import Any
 
 from .compaction import Compactor
-from .contracts import (ASSISTANT_MSG, ERROR, Envelope, EventCallback, IdleHook,
-                        MindEvent, OrganPack, RUN_ENDED, RUN_STARTED,
-                        SESSION_ROTATED, SEED, TOOL_CALL, TOOL_RESULT, Tool)
+from .contracts import (ASSISTANT_MSG, COMPACTED, ERROR, Envelope, EventCallback,
+                        IdleHook, MindEvent, OrganPack, QUEUE_DROP, RUN_ENDED,
+                        RUN_STARTED, SESSION_ROTATED, SEED, TOOL_CALL,
+                        TOOL_RESULT, Tool, USER_MSG)
 from .llm import LLMClient, LLMResponse
 from .persona import Persona
 from .session import Session
@@ -55,6 +57,7 @@ class SelfKernel:
         self._subs: list[EventCallback] = []
         self._idle_hooks: list[IdleHook] = []
         self._last_prompt_tokens = 0
+        self._rid = ""  # 当前运行 id（观测归组用）
 
     # ── 事件 ─────────────────────────────────────────────
     def subscribe(self, cb: EventCallback) -> Any:
@@ -102,16 +105,19 @@ class SelfKernel:
 
     # ── 刺激入口 ────────────────────────────────────────
     async def prompt(self, env: Envelope) -> None:
+        env.delivery = "prompt"
         async with self._lock:
             self._follow_q.append(env)
             self._ensure_run()
 
     async def follow_up(self, env: Envelope) -> None:
+        env.delivery = "follow_up"
         async with self._lock:
             self._follow_q.append(env)
             self._ensure_run()
 
     async def steer(self, env: Envelope) -> None:
+        env.delivery = "steer"
         async with self._lock:
             if self._task is not None and not self._task.done():
                 self._steer_q.append(env)
@@ -155,8 +161,9 @@ class SelfKernel:
 
     async def _process(self, env: Envelope) -> None:
         """处理一封信封直至收敛。"""
-        self._emit(RUN_STARTED, kind=env.kind, source=env.source)
-        self._session.append({"role": "user", "content": env.text})
+        self._rid = uuid.uuid4().hex[:6]
+        self._emit(RUN_STARTED, rid=self._rid, kind=env.kind, source=env.source)
+        self._deliver(env)
 
         for _turn in range(self._cfg.max_turns):
             await self._maybe_compact()
@@ -167,14 +174,17 @@ class SelfKernel:
             if not resp.tool_calls:
                 if self._drain_steer():
                     continue  # 插话送达，继续下一轮模型调用
-                self._emit(RUN_ENDED)
+                self._emit(RUN_ENDED, rid=self._rid, reason="stop")
                 return
             for tc in resp.tool_calls:
-                self._emit(TOOL_CALL, name=tc.name, arguments=tc.arguments[:500])
-                result = await self._exec_tool(tc)
+                self._emit(TOOL_CALL, rid=self._rid, name=tc.name,
+                           arguments=tc.arguments[:500])
+                result, ok, latency_ms = await self._exec_tool(tc)
                 self._session.append(
                     {"role": "tool", "tool_call_id": tc.id, "content": result})
-                self._emit(TOOL_RESULT, name=tc.name, result=result[:500])
+                self._emit(TOOL_RESULT, rid=self._rid, tool_call_id=tc.id,
+                           name=tc.name, ok=ok, latency_ms=latency_ms,
+                           result=result[:500])
             self._drain_steer()  # 工具批次后、下次模型调用前送达插话
 
         # 轮次耗尽：通知后做一次无工具收束
@@ -183,7 +193,14 @@ class SelfKernel:
             "content": "（已达单次运行的轮次上限，请不再调用工具，直接收束本轮）"})
         resp = await self._llm.chat(self._build_messages(), tools=None)
         self._record_assistant(resp)
-        self._emit(RUN_ENDED, reason="max_turns")
+        self._emit(RUN_ENDED, rid=self._rid, reason="max_turns")
+
+    def _deliver(self, env: Envelope) -> None:
+        """信封送达心智（进上下文）并发观测事件。"""
+        self._session.append({"role": "user", "content": env.text})
+        self._emit(USER_MSG, rid=self._rid, text=env.text, env={
+            "kind": env.kind, "source": env.source,
+            "delivery": env.delivery, "arrived_ts": round(env.ts, 3)})
 
     def _record_assistant(self, resp: LLMResponse) -> None:
         msg: dict[str, Any] = {"role": "assistant", "content": resp.content}
@@ -193,16 +210,21 @@ class SelfKernel:
                  "function": {"name": c.name, "arguments": c.arguments}}
                 for c in resp.tool_calls]
         self._session.append(msg)
-        self._emit(ASSISTANT_MSG, content=resp.content,
-                   tool_calls=[{"name": c.name} for c in resp.tool_calls])
+        self._emit(ASSISTANT_MSG, rid=self._rid, content=resp.content,
+                   thinking=resp.thinking,
+                   tool_calls=[{"name": c.name, "arguments": c.arguments[:500]}
+                               for c in resp.tool_calls],
+                   model=resp.model, stop_reason=resp.stop_reason,
+                   prompt_tokens=resp.prompt_tokens,
+                   completion_tokens=resp.completion_tokens,
+                   latency_ms=resp.latency_ms)
 
     def _drain_steer(self) -> bool:
         """把排队的插话作为用户消息送达。返回是否有送达。"""
         if not self._steer_q:
             return False
         while self._steer_q:
-            env = self._steer_q.popleft()
-            self._session.append({"role": "user", "content": env.text})
+            self._deliver(self._steer_q.popleft())
         return True
 
     def _build_messages(self) -> list[dict[str, Any]]:
@@ -213,12 +235,18 @@ class SelfKernel:
         try:
             if self._compactor.needs_compaction(self._session,
                                                 self._last_prompt_tokens):
-                await self._compactor.compact(self._session)
+                info = await self._compactor.compact(self._session)
+                if info:
+                    self._emit(COMPACTED, rid=self._rid, **info)
         except Exception:  # noqa: BLE001
             log.exception("压缩流程异常（跳过）")
 
-    async def _exec_tool(self, tc: Any) -> str:
-        """执行工具：任何异常转错误回执，绝不断链。"""
+    async def _exec_tool(self, tc: Any) -> tuple[str, bool, int]:
+        """执行工具：任何异常转错误回执，绝不断链。
+
+        返回 (回执文本, ok, 耗时 ms)。"""
+        import time as _time
+        t0 = _time.monotonic()
         try:
             args = json.loads(tc.arguments or "{}")
             if not isinstance(args, dict):
@@ -227,24 +255,27 @@ class SelfKernel:
             args = {}
         tool = self._tools.get(tc.name)
         if tool is None:
-            return json.dumps(
+            return (json.dumps(
                 {"ok": False,
                  "error": f"工具不存在: {tc.name}（对应器官可能已被摘除）"},
-                ensure_ascii=False)
+                ensure_ascii=False), False, 0)
         try:
             result = await asyncio.wait_for(
                 tool.func(args), timeout=self._cfg.tool_timeout_s)
-            return _cap(result if isinstance(result, str)
-                        else json.dumps(result, ensure_ascii=False))
+            text = result if isinstance(result, str) else json.dumps(
+                result, ensure_ascii=False)
+            return _cap(text), True, int((_time.monotonic() - t0) * 1000)
         except TimeoutError:
             log.warning("工具超时: %s", tc.name)
-            return json.dumps({"ok": False, "error": "工具执行超时"},
-                              ensure_ascii=False)
+            return (json.dumps({"ok": False, "error": "工具执行超时"},
+                               ensure_ascii=False),
+                    False, int((_time.monotonic() - t0) * 1000))
         except Exception as e:  # noqa: BLE001
             log.warning("工具 %s 执行异常: %s", tc.name, e)
-            return json.dumps(
+            return (json.dumps(
                 {"ok": False, "error": f"{type(e).__name__}: {e}"},
-                ensure_ascii=False)
+                ensure_ascii=False),
+                    False, int((_time.monotonic() - t0) * 1000))
 
     # ── 会话原语 ────────────────────────────────────────
     async def rotate(self, seed: str) -> None:
@@ -258,21 +289,29 @@ class SelfKernel:
         if task is not None:
             await asyncio.gather(task, return_exceptions=True)
         async with self._lock:
+            if self._steer_q:
+                self._emit(QUEUE_DROP, reason="rotate",
+                           texts=[e.text for e in self._steer_q])
+                self._steer_q.clear()
             old_id = self._session.session_id
-            self._session = self._session.rotate()
-            self._steer_q.clear()
+            self._session = self._session.rotate(
+                keep=getattr(self._cfg, "session_keep_rotated", 2))
             self._emit(SESSION_ROTATED, old=old_id,
-                       new=self._session.session_id)
+                       new=self._session.session_id, seed_chars=len(seed))
             self._follow_q.append(Envelope(text=seed, kind=SEED))
             self._ensure_run()
 
     async def abort(self) -> None:
-        """中止当前运行（插话丢弃；排队的 follow_up 保留）。"""
+        """中止当前运行（插话丢弃并记录；排队的 follow_up 保留）。"""
+        if self._steer_q:
+            self._emit(QUEUE_DROP, reason="abort",
+                       texts=[e.text for e in self._steer_q])
+            self._steer_q.clear()
         task = self._task
-        self._steer_q.clear()
         if task is not None and not task.done():
             task.cancel()
             await asyncio.gather(task, return_exceptions=True)
+            self._emit(RUN_ENDED, rid=self._rid, reason="aborted")
 
     async def wait_idle(self) -> None:
         while True:
@@ -293,3 +332,6 @@ class SelfKernel:
     @property
     def is_busy(self) -> bool:
         return self._task is not None and not self._task.done()
+
+    def tool_names(self) -> list[str]:
+        return sorted(self._tools)

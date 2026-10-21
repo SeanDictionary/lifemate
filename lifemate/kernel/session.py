@@ -26,6 +26,20 @@ def estimate_tokens(text: str) -> int:
     return len(text) // _CHARS_PER_TOKEN
 
 
+def _cleanup_rotated(directory: Path, keep: int) -> None:
+    """轮换后清理旧会话文件：保留最近 keep 个（含当前），更旧的删除。
+
+    档案职责已移交 observe；旧会话文件只为崩溃回退留少量余量。
+    """
+    files = sorted(directory.glob("*.jsonl"), key=lambda f: f.stat().st_mtime,
+                   reverse=True)
+    for old in files[1 + max(keep, 0):]:  # [0] 是当前会话
+        try:
+            old.unlink()
+        except OSError:
+            pass
+
+
 class Session:
     """一个会话实例（思维循环的当前工作记忆）。"""
 
@@ -88,9 +102,11 @@ class Session:
         return n
 
     # ── 轮换 ─────────────────────────────────────────────
-    def rotate(self) -> "Session":
-        """开新会话（旧文件保留），返回新实例。"""
-        return Session.create(self.file.parent)
+    def rotate(self, keep: int = 2) -> "Session":
+        """开新会话（旧文件按 keep 清理——档案职责在 observe），返回新实例。"""
+        new = Session.create(self.file.parent)
+        _cleanup_rotated(self.file.parent, keep=keep)
+        return new
 
     # ── 工厂 ─────────────────────────────────────────────
     @classmethod

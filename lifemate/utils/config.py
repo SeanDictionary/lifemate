@@ -33,6 +33,9 @@ _JSON_FIELDS: dict[str, Any] = {
     "skills_dir": "skills",
     # 元配置
     "config_poll_s": 30.0,              # 热重载轮询间隔
+    # 观测与档案
+    "observe_max_field_chars": 65_536,  # 观测行单字段截断上限
+    "session_keep_rotated": 2,          # 轮换后保留的旧会话文件数（档案在 observe）
 }
 
 # env 种子：显式设置时覆盖 JSON（容器部署用）

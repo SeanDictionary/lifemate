@@ -41,11 +41,11 @@ class Compactor:
             return last_prompt_tokens > self._cfg.compact_threshold_tokens
         return session.total_tokens() > self._cfg.compact_threshold_tokens
 
-    async def compact(self, session: Session) -> bool:
-        """执行压缩。返回是否实际压缩（失败不阻塞思维循环）。"""
+    async def compact(self, session: Session) -> dict | None:
+        """执行压缩。返回压缩信息（失败/未触发返回 None，不阻塞思维循环）。"""
         cut = self._find_cut(session.messages, self._cfg.keep_recent_tokens)
         if cut <= 0:
-            return False
+            return None
         dropped = session.messages[:cut]
         kept = session.messages[cut:]
         transcript = "\n".join(
@@ -58,14 +58,19 @@ class Compactor:
             }])
             summary = (resp.content or "").strip()
             if not summary:
-                return False
+                return None
         except Exception:  # noqa: BLE001
             log.exception("压缩调用失败（跳过本轮）")
-            return False
+            return None
         session.apply_compaction(summary, kept)
         log.info("会话压缩：丢弃 %d 条，保留 %d 条，摘要 %d 字",
                  len(dropped), len(kept), len(summary))
-        return True
+        return {
+            "dropped": len(dropped), "kept": len(kept),
+            "summary_chars": len(summary),
+            "prompt_tokens": resp.prompt_tokens,
+            "completion_tokens": resp.completion_tokens,
+        }
 
     @staticmethod
     def _find_cut(messages: list[dict[str, Any]],
