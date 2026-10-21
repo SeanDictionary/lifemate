@@ -59,8 +59,10 @@ class QQPlugin(Plugin):
     # ── 感知面 ────────────────────────────────────────
     async def start(self, ctx: PluginContext) -> None:
         self._kernel = ctx.kernel
-        self._chatlog = ChatLog(self._data_dir / "chatlog.db",
-                                int(self._q("chatlog_max", 500)))
+        # 按日分库、不限量；保留期可配（0=永久，默认 0）
+        self._chatlog = ChatLog(
+            self._data_dir,
+            retention_days=int(self._q("chatlog_retention_days", 0)))
         self._client = OneBotClient(
             ws_url=self._q("ws_url", "ws://127.0.0.1:3001"),
             access_token=self._q("access_token", ""),
