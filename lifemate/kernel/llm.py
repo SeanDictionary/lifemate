@@ -39,9 +39,15 @@ class OpenAILLM:
     ) -> LLMResponse:
         kwargs: dict[str, Any] = {}
         if tools:
-            # MCP 形状 → OpenAI function 形状（唯一方言翻译点）
+            # MCP 形状 → OpenAI function 形状（唯一方言翻译点：
+            # name/description/inputSchema → name/description/parameters）
             kwargs["tools"] = [
-                {"type": "function", "function": t} for t in tools
+                {"type": "function", "function": {
+                    "name": t["name"],
+                    "description": t.get("description", ""),
+                    "parameters": t.get("inputSchema", {"type": "object"}),
+                }}
+                for t in tools
             ]
         t0 = time.monotonic()
         resp = await self._client.chat.completions.create(
@@ -49,12 +55,9 @@ class OpenAILLM:
         msg = resp.choices[0].message
         calls: list[ToolCall] = []
         for tc in (msg.tool_calls or []):
-            try:
-                args = tc.function.arguments or "{}"
-                json.loads(args)  # 预校验，坏参数留给执行层兜底
-            except (ValueError, TypeError):
-                args = "{}"
-            calls.append(ToolCall(id=tc.id, name=tc.function.name, arguments=args))
+            calls.append(ToolCall(id=tc.id, name=tc.function.name,
+                                  arguments=_normalize_args(
+                                      tc.function.arguments)))
         content = _strip_thinking(msg.content or "")
         u = resp.usage
         _ = time.monotonic() - t0  # 延迟供观测层使用（当前仅 debug 级）
@@ -66,6 +69,19 @@ class OpenAILLM:
 
 
 _THINK_RE = re.compile(r"<think>.*?</think>", re.S)
+
+
+def _normalize_args(raw: object) -> str:
+    """方言兼容：有的网关返回 dict，有的返回字符串，有的返回空。"""
+    if isinstance(raw, dict):
+        return json.dumps(raw, ensure_ascii=False)
+    if isinstance(raw, str) and raw.strip():
+        try:
+            json.loads(raw)
+            return raw
+        except ValueError:
+            return "{}"  # 坏 JSON 留给执行层兜底回执
+    return "{}"
 
 
 def _strip_thinking(text: str) -> str:
