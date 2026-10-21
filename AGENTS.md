@@ -18,6 +18,9 @@
    旁路装配等第三通道。一切动态事实由器官写进信封。
 3. **器官 = 适配器 + 工具 + skill 三件套**。拔器官 = 摘工具 + 摘 skill，
    心智从工具/skill 列表的自然变化感知能力增减；禁止代码分支判断器官在不在。
+   skill 定位：**内置以外**的知情层（器官/第三方扩展，按需加载）；
+   内核核心机制指引一律进 kernel/builtin/（代码管理、常驻装配——
+   生存制度不能依赖"模型碰巧去读"）。
 4. **感知是推的，行动是拉的**：适配器感知面常驻（连接/事件循环/定时器），
    主动把信封推进内核；工具只被心智调用。禁止用工具轮询模拟接收。
 5. **工具定义用 MCP tool schema 形状**（进程内实现；将来可薄包装成
@@ -38,7 +41,8 @@ lifemate/
 │   ├── llm.py         #   模型调用唯一入口（OpenAI 兼容；活配置，签名变更热重建）
 │   ├── session.py     #   工作记忆：消息列表 + JSONL 持久化 + 轮换
 │   ├── compaction.py  #   上下文压缩（会话内兜底，阈值活配置）
-│   └── persona.py     #   人格装配（identity + skills 索引，每轮重建）
+│   ├── persona.py     #   人格装配：identity + 内置指引 + skills 索引，每轮重建
+│   └── builtin/       #   内置机制指引（代码管理，常驻装配——核心制度保证在场）
 ├── memory/            # 记忆系统（内核②：长期记忆）
 │   ├── store.py       #   SQLite：episodes/curiosity/needs/reminders/重建包
 │   └── tools.py       #   记忆工具（MCP 形状，内核自带）
@@ -49,7 +53,8 @@ lifemate/
 │   └── ...            #   开发顺序：qq → attention → schedule → sleep →
 │                      #   sandbox → governance → video → webui
 ├── soul/              # 人格（identity.md——数据非代码）
-├── skills/            # skill 目录（SKILL.md，agentskills 风格）
+├── skills/            # skill 目录：**内置以外**的第三方/扩展功能知情层
+│                      # （器官说明书随器官走；用户自加扩展放这里即生效）
 ├── host.py            # 器官宿主：事件循环、装载器官、驱动感知面
 └── __main__.py        # 入口（当前：剥夺模式——无器官，stdin 为调试信封）
 tests/                 # 单测 + 剥夺测试（必须常绿）
@@ -97,6 +102,9 @@ env 仅部署种子）；热重载靠字段原地更新——新组件必须持�
   自省→记忆写入→写重建包→诚实收敛，全链零断链）
 - **配置体系就位**：utils/config 活配置（JSON 事实源/env 种子/热重载/
   掩码），host 轮询重载 + `/reload` 调试命令，LLM 客户端签名热重建
+- **skill 语义重定位**：skills/ = 内置以外的第三方/扩展知情层；
+  核心机制指引（记忆/重建包制度）移入 kernel/builtin/，代码管理、
+  每轮常驻装配（保证在场，不依赖按需读取）
 - **待开发器官顺序**：qq → attention → schedule → sleep → sandbox →
   governance → video → webui（器官开发时同步引入生命周期器官：
   轮换触发/重建包固化时机）

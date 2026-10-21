@@ -105,8 +105,8 @@ async def test_persona_has_identity_and_skills(tmp_path):
     llm = FakeLLM([text_reply("嗯")])
     kernel, _ = build_bare_life(tmp_path, llm)
     prompt = kernel._persona.system_prompt()
-    assert "小Q" in prompt              # 身份在
-    assert "memory-keeping" in prompt   # skills 索引在
-    assert "send_message" not in prompt  # 无器官知识
-    skill = kernel._persona.read_skill("memory-keeping")
-    assert "重建包" in skill
+    assert "小Q" in prompt               # 身份在
+    assert "重建包" in prompt             # 内置机制指引常驻在场（保证在场，非按需）
+    assert "memory-keeping" not in prompt  # 已不是 skill（第三方索引里没有）
+    assert "send_message" not in prompt   # 无器官知识
+    assert kernel._persona.read_skill("memory-keeping").startswith('{"ok"')  # skill 已移除
