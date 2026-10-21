@@ -84,10 +84,16 @@ class Store:
     def recent_episodes(self, n: int = 12, since_hours: float = 48.0,
                         exclude_source: str = "") -> list[dict[str, Any]]:
         cutoff = time.time() - since_hours * 3600
-        rows = self._exec(
-            "SELECT ts, source, kind, summary FROM episodes"
-            " WHERE ts > ? AND source != ? ORDER BY ts DESC LIMIT ?",
-            (cutoff, exclude_source, n)).fetchall()
+        if exclude_source:
+            rows = self._exec(
+                "SELECT ts, source, kind, summary FROM episodes"
+                " WHERE ts > ? AND source != ? ORDER BY ts DESC LIMIT ?",
+                (cutoff, exclude_source, n)).fetchall()
+        else:
+            rows = self._exec(
+                "SELECT ts, source, kind, summary FROM episodes"
+                " WHERE ts > ? ORDER BY ts DESC LIMIT ?",
+                (cutoff, n)).fetchall()
         return [dict(r) for r in rows]
 
     # ── 好奇队列 curiosity ───────────────────────────────

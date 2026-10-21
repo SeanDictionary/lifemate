@@ -18,9 +18,9 @@ from typing import Any
 
 from .compaction import Compactor
 from .contracts import (ASSISTANT_MSG, ERROR, Envelope, EventCallback, IdleHook,
-                        LLMClient, MindEvent, OrganPack, RUN_ENDED, RUN_STARTED,
+                        MindEvent, OrganPack, RUN_ENDED, RUN_STARTED,
                         SESSION_ROTATED, SEED, TOOL_CALL, TOOL_RESULT, Tool)
-from .llm import LLMResponse
+from .llm import LLMClient, LLMResponse
 from .persona import Persona
 from .session import Session
 
@@ -148,12 +148,12 @@ class SelfKernel:
                     hooks = list(self._idle_hooks)
             if respawn:
                 self._task = asyncio.create_task(self._run())
-                return
-            for hook in hooks:
-                try:
-                    await hook()
-                except Exception:  # noqa: BLE001
-                    log.exception("空闲钩子异常")
+            else:
+                for hook in hooks:
+                    try:
+                        await hook()
+                    except Exception:  # noqa: BLE001
+                        log.exception("空闲钩子异常")
 
     async def _process(self, env: Envelope) -> None:
         """处理一封信封直至收敛。"""
