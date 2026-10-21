@@ -36,8 +36,8 @@ def render(line: dict) -> str:
         if role == "user":
             env = line.get("env") or {}
             meta = "·".join(str(x) for x in (
-                env.get("kind", ""), env.get("source", ""),
-                env.get("delivery", "")) if x)
+                env.get("origin", ""), env.get("kind", ""),
+                env.get("source", ""), env.get("delivery", "")) if x)
             head = f"（{meta}）" if meta else ""
             return f"{ts} ✉ {tag}{head}{_brief(line.get('content', ''), 400)}"
         if role == "assistant":

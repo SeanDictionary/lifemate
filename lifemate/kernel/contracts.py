@@ -47,6 +47,7 @@ class Envelope:
     meta: dict[str, Any] = field(default_factory=dict)
     ts: float = field(default_factory=time.time)
     delivery: str = ""
+    origin: str = ""       # 投递者标识（插件名/console/host）——信封溯源
 
 
 # ── 工具（MCP tool schema 形状）──────────────────────────────

@@ -312,3 +312,16 @@ async def test_session_restart_continuity(tmp_path):
     await k.wait_idle()
     s2 = Session.load_latest(s1.file.parent)
     assert any("今天聊过的话题" in str(m.get("content")) for m in s2.messages)
+
+
+async def test_envelope_origin_in_wake_and_archive(tmp_path):
+    """信封溯源：origin 贯穿唤醒组批标签与观测档案。"""
+    llm = FakeLLM([text_reply("嗯")])
+    k = make_kernel(tmp_path, llm)
+    k.notify(Envelope(text="第一件", kind="boot", origin="host"))
+    await k.wait_idle()
+    k.notify(Envelope(text="来自控制台", kind="direct", origin="console"))
+    await k.wait_idle()
+    users = [m["content"] for m in k._session.messages if m.get("role") == "user"]
+    wake = [u for u in users if "期间收到" in u]
+    assert wake and "[console·direct]" in wake[0]

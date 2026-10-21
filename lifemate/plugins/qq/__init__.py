@@ -120,6 +120,7 @@ class QQPlugin(Plugin):
         self._chatlog.append(ev.chat_id, ev.sender_id, ev.sender_name,
                              ev.text, ev.message_id)
         self._kernel.notify(Envelope(text=text, kind=kind, source=ev.chat_id,
+                                      origin="qq",
                                       meta={"sender_id": ev.sender_id}))
 
     # ── 表达面基建 ─────────────────────────────────────

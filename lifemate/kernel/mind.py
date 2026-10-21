@@ -262,7 +262,7 @@ class SelfKernel:
         if events:
             lines = [head + "期间收到："]
             for i, env in enumerate(events):
-                tag = "·".join(x for x in (env.kind, env.source) if x)
+                tag = "·".join(x for x in (env.origin, env.kind, env.source) if x)
                 mark = _CIRCLED[i] if i < len(_CIRCLED) else f"({i + 1})"
                 text = env.text if len(env.text) <= 800 else env.text[:800] + "…"
                 lines.append(f"{mark} [{tag}] {text}" if tag else f"{mark} {text}")
@@ -289,7 +289,7 @@ class SelfKernel:
         """信封送达心智（进上下文）并发观测事件。"""
         self._session.append({"role": "user", "content": env.text})
         self._emit(USER_MSG, rid=self._rid, text=env.text, env={
-            "kind": env.kind, "source": env.source,
+            "origin": env.origin, "kind": env.kind, "source": env.source,
             "delivery": env.delivery or "wake",
             "arrived_ts": round(env.ts, 3)})
         self._touch()

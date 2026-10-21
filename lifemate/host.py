@@ -260,7 +260,7 @@ async def _reminder_poller(cfg: Config, store: Store, kernel: SelfKernel,
                 for r in store.due_reminders(3):
                     kernel.notify(Envelope(
                         text=f"（你自己定的提醒到点了：{r['intent']}）",
-                        kind=REMINDER))
+                        kind=REMINDER, origin="host"))
             except Exception:  # noqa: BLE001
                 log.exception("提醒轮询异常")
 
@@ -330,7 +330,7 @@ async def run(silence: bool = False, log_level: str | None = None,
             boot_text = _boot_envelope([p.name for p in plugins])
         else:
             boot_text = RESUME_ENVELOPE
-        kernel.notify(Envelope(text=boot_text, kind=BOOT))
+        kernel.notify(Envelope(text=boot_text, kind=BOOT, origin="host"))
 
         # 开发控制台：stdin 调试信封 + /命令；信号经 stop 事件传入。
         # 服务模式（no_stdin）：无 stdin 依赖，纯信号驱动（后台/容器/服务化）
