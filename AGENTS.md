@@ -57,6 +57,13 @@ lifemate/
 │   ├── recorder.py    #   观测记录器：项目级日志基础设施（黑匣子，常开不可拆）
 │   └── instance.py    #   单实例锁：OS 文件锁，防双开损坏数据
 ├── replay.py          # 回放查看器：python -m lifemate.replay（翻档案）
+├── server/            # 网络服务层（宿主侧，与 host 对等）：API+SSE+静态托管
+│   ├── http.py        #   极简 HTTP 基建：解析/路由({param})/响应/静态/鉴权
+│   ├── events.py      #   事件桥：内核订阅→广播（有界队列/丢最旧/心跳）
+│   ├── history.py     #   observe 档案读取 + LLM 用量聚合
+│   ├── routes.py      #   核心路由表（/api/status/events/history/say/chat/
+│   │                  #   config读写/memory/usage/plugins）
+│   └── outbound.py    #   webui_send 工具 + 对话环形缓冲
 ├── console.py         # 开发控制台：stdin→/命令+调试信封（宿主对话面，非器官）
 ├── host.py            # 运行时服务：思维循环驱动+基建任务+插件装载（Host 类）
 └── __main__.py        # 入口=组合根：共享准备（锁/日志/装配/stop）+服务编排
@@ -68,6 +75,7 @@ data/                  # 运行数据（gitignore）：config.json / memory.db /
 │   ├── __init__.py    #   装载器（主代码，写一次）：扫描→create 工厂→注册+start
 │   ├── example/       #   样板插件（默认关）
 │   └── qq/            #   QQ 插件：正向 WS 连 NapCat + 事件→信封 + 工具集
+│                      #   + panel.py 面板路由（挂 /api/plugins/qq/*，随插件可拆卸）
 │                      #   新增插件=加目录+config plugins 命名空间，零主代码改动
 ├── soul/              # 人格（identity.md——数据非代码）
 ├── skills/            # skill 目录：**内置以外**的第三方/扩展功能知情层
@@ -81,7 +89,7 @@ data/                  # 运行数据（gitignore：memory.db / sessions/）
 .cache/                # 开发副产物 + v1 归档 + 设计文档（gitignore）
 ```
 
-依赖方向（唯一允许）：`__main__（组合根）→ host → plugins(经装载器) →
+依赖方向（唯一允许）：`__main__（组合根）→ host/server → plugins(经装载器) →
 kernel.contracts ← kernel`；
 `kernel/memory/organs/host → utils`（utils 不依赖任何上层）；器官之间零 import。
 配置体系：业务配置一律进 `utils/config.py` 白名单（即 config.json 键，
@@ -158,6 +166,13 @@ env 仅部署种子）；热重载靠字段原地更新——新组件必须持�
   运行时服务（插件装载/三态信封/控制台或服务模式/四基建任务/思维收尾）；
   与将来 server 网络服务对等，两者只消费共享上下文
   （kernel/store/recorder/cfg/stop），互不 import
+- **server 网络服务层上线（2026-10-21）**：始终启动（端口绑定失败降级）；
+  零依赖 HTTP/SSE；API=状态/事件流/档案查询(rid=链路回放)/对话
+  (say+webui_send+环形缓冲)/配置读写（密钥掩码，apply_updates+save 落盘）/记忆浏览/用量分账；
+  插件面板机制：panel.py 契约（PANEL 元数据+routes(ctx,plugin)，鸭子类型
+  零 server 依赖），挂 /api/plugins/<name>/*，拔插件=路由消失；
+  qq 面板先行（status/chats/chatlog，ChatLog 补 chats()）；
+  前端 Next.js+shadcn 待建（web/，静态导出由 server 托管）
 - **行动后审视链路（2026-10-21）**：builtin 新增 action-review（行为层通用：
   发觉不对→撤销/补救/铭记，不可逆动作出手前慢一拍）；出站回执复述动作
   事实（contracts 约定，qq 发送回执带 text）；qq 自发消息落 chat_log
