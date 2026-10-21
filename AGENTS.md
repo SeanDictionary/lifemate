@@ -46,7 +46,7 @@ lifemate/
 │   ├── session.py     #   工作记忆：消息列表 + JSONL 持久化 + 轮换
 │   ├── compaction.py  #   上下文压缩（会话内兜底，阈值活配置）
 │   ├── persona.py     #   人格装配：identity + 内置指引 + skills 索引，每轮重建
-│   └── builtin/       #   内置机制指引（代码管理，常驻装配——核心制度保证在场）
+│   └── builtin/       #   内置机制说明（代码管理，常驻装配，客观陈述）
 ├── memory/            # 记忆系统（内核②：长期记忆）
 │   ├── store.py       #   SQLite：episodes/curiosity/needs/reminders/重建包
 │   └── tools.py       #   记忆工具（MCP 形状，内核自带）

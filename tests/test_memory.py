@@ -51,7 +51,7 @@ def test_reminders_due_and_daily_roll(tmp_path):
 def test_rebuild_packet(tmp_path):
     s = _store(tmp_path)
     assert s.latest_packet() is None
-    s.save_packet("我是小Q，正在过 v2 的日子")
+    s.save_packet("我是大肥鱼，正在过 v2 的日子")
     assert "v2" in (s.latest_packet() or "")
 
 

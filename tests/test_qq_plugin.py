@@ -189,7 +189,7 @@ async def test_qq_plugin_end_to_end(tmp_path):
         # 先来一条弱刺激（背景听觉，不唤醒）+ 一条强刺激（@bot，唤醒）
         await napcat.push(_group_msg(text="今天天气不错"))
         await asyncio.sleep(0.05)
-        await napcat.push(_group_msg(at_me=True, text="小Q在吗，帮看看上面"))
+        await napcat.push(_group_msg(at_me=True, text="大肥鱼在吗，帮看看上面"))
         # 信封经 WS 异步到达：先等唤醒事件，再等收敛休息
         await _wait_for(lambda: "wake" in evs)
         await kernel.wait_idle()
@@ -197,7 +197,7 @@ async def test_qq_plugin_end_to_end(tmp_path):
         # 强刺激以组批信封直达
         users = [m["content"] for m in kernel._session.messages
                  if m.get("role") == "user"]
-        assert any("对你说" in u and "小Q在吗" in u for u in users)
+        assert any("对你说" in u and "大肥鱼在吗" in u for u in users)
         # 弱刺激进了背景听觉（read_chat_log 能读到）
         # 工具链：read_chat_log → send_message → FakeNapCat 收到
         acts = [r["action"] for r in napcat.received]

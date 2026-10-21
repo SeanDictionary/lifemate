@@ -214,7 +214,7 @@ async def test_swap_session_seeds_new_session(tmp_path):
     await k.wait_idle()
     old_id = k.session_id
     llm.script.append(text_reply("新会话的我"))
-    k.swap_session("（播种：你是小Q，刚从深睡中醒来……）")
+    k.swap_session("（播种：你是大肥鱼，刚从深睡中醒来……）")
     k.notify(Envelope(text="唤醒"))
     await k.wait_idle()
     assert k.session_id != old_id
@@ -227,7 +227,7 @@ async def test_deep_sleep_tool_full_cycle(tmp_path):
     from lifemate.memory.store import Store
     llm = FakeLLM([
         tool_reply("deep_sleep",
-                   args='{"letter": "我是小Q，今天过得平静", "hours": 0.001}'),
+                   args='{"letter": "我是大肥鱼，今天过得平静", "hours": 0.001}'),
         text_reply("醒来，读到了自己的信"),
     ])
     store = Store(tmp_path / "m.db")
@@ -242,7 +242,7 @@ async def test_deep_sleep_tool_full_cycle(tmp_path):
                for m in k._session.messages):
             break
         await asyncio.sleep(0.02)
-    assert "小Q" in (store.latest_packet() or "")
+    assert "大肥鱼" in (store.latest_packet() or "")
     assert k.session_id != old_id
     users = [m["content"] for m in k._session.messages if m.get("role") == "user"]
     assert any("留下的信" in u for u in users)

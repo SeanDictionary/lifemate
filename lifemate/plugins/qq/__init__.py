@@ -10,13 +10,13 @@
 """
 from __future__ import annotations
 
-import asyncio
 import json
 import logging
 import time
 from pathlib import Path
+from typing import Any
 
-from ...kernel.contracts import AMBIENT, DIRECT, PLATFORM_EVENT, Envelope, Tool
+from ...kernel.contracts import DIRECT, PLATFORM_EVENT, Envelope, Tool
 from .. import Field, Plugin, PluginConfig, PluginContext
 from .chatlog import ChatLog
 from .connection import OneBotClient

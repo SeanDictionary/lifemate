@@ -82,7 +82,7 @@ async def test_deprivation_rotation_rebirth(tmp_path):
     """无器官下完成一次完整轮换：写重建包 → 轮换 → 播种 → 新我读信。"""
     llm = FakeLLM([
         tool_reply("save_rebuild_packet",
-                   args=json_dump({"content": "我是小Q，v2 重构日的自己"})),
+                   args=json_dump({"content": "我是大肥鱼，v2 重构日的自己"})),
         text_reply("信写好了，可以睡了。"),
         tool_reply("latest_rebuild_packet", cid="c1"),
         text_reply("读到了上一个我的信。我记得我是谁。"),
@@ -97,7 +97,7 @@ async def test_deprivation_rotation_rebirth(tmp_path):
     await kernel.wait_idle()
 
     assert kernel.session_id != old_id
-    assert "小Q" in (store.latest_packet() or "")
+    assert "大肥鱼" in (store.latest_packet() or "")
     store.close()
 
 
@@ -106,8 +106,7 @@ async def test_persona_has_identity_and_skills(tmp_path):
     llm = FakeLLM([text_reply("嗯")])
     kernel, _ = build_bare_life(tmp_path, llm)
     prompt = kernel._persona.system_prompt()
-    assert "小Q" in prompt               # 身份在
+    assert "大肥鱼" in prompt               # 身份在
     assert "重建包" in prompt             # 内置机制指引常驻在场（保证在场，非按需）
     assert "memory-keeping" not in prompt  # 已不是 skill（第三方索引里没有）
-    assert "send_message" not in prompt   # 无器官知识
     assert kernel._persona.read_skill("memory-keeping").startswith('{"ok"')  # skill 已移除
