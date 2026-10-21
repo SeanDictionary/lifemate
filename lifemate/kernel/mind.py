@@ -39,14 +39,12 @@ def _cap(text: str, n: int = _TOOL_RESULT_MAX) -> str:
 
 class SelfKernel:
     def __init__(self, *, llm: LLMClient, persona: Persona, session: Session,
-                 compactor: Compactor, max_turns: int = 24,
-                 tool_timeout_s: float = 120.0) -> None:
+                 compactor: Compactor, cfg) -> None:
         self._llm = llm
         self._persona = persona
         self._session = session
         self._compactor = compactor
-        self._max_turns = max_turns
-        self._tool_timeout_s = tool_timeout_s
+        self._cfg = cfg  # 活配置：max_turns/tool_timeout_s 用时读取（热重载生效）
 
         self._tools: dict[str, Tool] = {}
         self._organs: dict[str, OrganPack] = {}
@@ -160,7 +158,7 @@ class SelfKernel:
         self._emit(RUN_STARTED, kind=env.kind, source=env.source)
         self._session.append({"role": "user", "content": env.text})
 
-        for _turn in range(self._max_turns):
+        for _turn in range(self._cfg.max_turns):
             await self._maybe_compact()
             resp = await self._llm.chat(
                 self._build_messages(), tools=self._tool_schemas() or None)
@@ -235,7 +233,7 @@ class SelfKernel:
                 ensure_ascii=False)
         try:
             result = await asyncio.wait_for(
-                tool.func(args), timeout=self._tool_timeout_s)
+                tool.func(args), timeout=self._cfg.tool_timeout_s)
             return _cap(result if isinstance(result, str)
                         else json.dumps(result, ensure_ascii=False))
         except TimeoutError:

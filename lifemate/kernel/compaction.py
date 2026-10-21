@@ -29,21 +29,21 @@ class _ChatFn(Protocol):
 
 
 class Compactor:
-    def __init__(self, chat: _ChatFn, threshold_tokens: int,
-                 keep_recent_tokens: int) -> None:
+    """阈值从活配置读取（热重载即时生效）。"""
+
+    def __init__(self, chat: _ChatFn, cfg) -> None:
         self._chat = chat
-        self._threshold = threshold_tokens
-        self._keep_recent = keep_recent_tokens
+        self._cfg = cfg
 
     def needs_compaction(self, session: Session,
                          last_prompt_tokens: int) -> bool:
         if last_prompt_tokens > 0:
-            return last_prompt_tokens > self._threshold
-        return session.total_tokens() > self._threshold
+            return last_prompt_tokens > self._cfg.compact_threshold_tokens
+        return session.total_tokens() > self._cfg.compact_threshold_tokens
 
     async def compact(self, session: Session) -> bool:
         """执行压缩。返回是否实际压缩（失败不阻塞思维循环）。"""
-        cut = self._find_cut(session.messages, self._keep_recent)
+        cut = self._find_cut(session.messages, self._cfg.keep_recent_tokens)
         if cut <= 0:
             return False
         dropped = session.messages[:cut]

@@ -12,7 +12,6 @@ import sys
 from pathlib import Path
 
 from .kernel.compaction import Compactor
-from .kernel.config import Config, load
 from .kernel.contracts import BOOT, Envelope, Tool
 from .kernel.llm import OpenAILLM
 from .kernel.mind import SelfKernel
@@ -20,6 +19,7 @@ from .kernel.persona import Persona
 from .kernel.session import Session
 from .memory.store import Store
 from .memory.tools import build_memory_tools
+from .utils.config import Config
 
 log = logging.getLogger("host")
 
@@ -36,16 +36,15 @@ def build(cfg: Config) -> tuple[SelfKernel, Store]:
     """装配内核 + 记忆（剥夺模式：不装载任何器官）。"""
     if not cfg.llm_base_url or not cfg.llm_model:
         raise SystemExit(
-            "需要 LIFEMATE_LLM_BASE_URL 与 LIFEMATE_LLM_MODEL（内核无法思考）")
-    llm = OpenAILLM(cfg.llm_base_url, cfg.llm_api_key, cfg.llm_model)
+            "需要配置 llm_base_url 与 llm_model"
+            "（config.json 或 env LIFEMATE_LLM_*；内核无法思考）")
+    llm = OpenAILLM(cfg)
     store = Store(Path(cfg.data_dir) / "memory.db")
     session = Session.load_latest(Path(cfg.data_dir) / "sessions")
     persona = Persona(cfg.soul_dir, cfg.skills_dir)
-    compactor = Compactor(llm.chat, cfg.compact_threshold_tokens,
-                          cfg.keep_recent_tokens)
+    compactor = Compactor(llm.chat, cfg)
     kernel = SelfKernel(
-        llm=llm, persona=persona, session=session, compactor=compactor,
-        max_turns=cfg.max_turns, tool_timeout_s=cfg.tool_timeout_s)
+        llm=llm, persona=persona, session=session, compactor=compactor, cfg=cfg)
 
     # 内核自带：记忆工具 + read_skill（人格的按需读取面）
     for t in build_memory_tools(store):
@@ -94,31 +93,53 @@ def _console_printer() -> None:
     return _print
 
 
+async def _config_watcher(cfg: Config, stop: asyncio.Event) -> None:
+    """配置热重载轮询：mtime 变化即原地重载（间隔自身也是配置项）。"""
+    while not stop.is_set():
+        try:
+            await asyncio.wait_for(stop.wait(), timeout=cfg.config_poll_s)
+        except TimeoutError:
+            try:
+                cfg.reload()
+            except Exception:  # noqa: BLE001
+                log.exception("配置重载异常")
+
+
 async def run() -> None:
     logging.basicConfig(
         level=logging.INFO,
         format="%(asctime)s %(name)s %(levelname)s %(message)s")
-    cfg = load()
+    cfg = Config()
     kernel, store = build(cfg)
     kernel.subscribe(_console_printer())
-    log.info("剥夺模式启动（session=%s, 记忆=%s）",
-             kernel.session_id, store.stats())
+    log.info("剥夺模式启动（session=%s, 记忆=%s, 配置=%s）",
+             kernel.session_id, store.stats(), cfg.masked())
+
+    stop = asyncio.Event()
+    watcher = asyncio.create_task(_config_watcher(cfg, stop))
 
     # 出生/重启信封
     await kernel.prompt(Envelope(text=BOOT_ENVELOPE, kind=BOOT))
 
-    # stdin 调试信封：每行一封（Ctrl-Z+回车 或 EOF 退出）
+    # stdin 调试信封：每行一封；/reload 热重载配置；Ctrl-Z+回车 或 EOF 退出
     loop = asyncio.get_event_loop()
     while True:
         line = await loop.run_in_executor(None, sys.stdin.readline)
         if not line:
             break
         text = line.strip()
-        if text:
-            if text == "/quit":
-                break
-            await kernel.prompt(Envelope(text=text))
+        if not text:
+            continue
+        if text == "/quit":
+            break
+        if text == "/reload":
+            changed = cfg.reload()
+            print(f"↻ 配置重载：{', '.join(changed) or '无变化'}")
+            continue
+        await kernel.prompt(Envelope(text=text))
     await kernel.wait_idle()
+    stop.set()
+    await asyncio.gather(watcher, return_exceptions=True)
     store.close()
     log.info("宿主退出")
 

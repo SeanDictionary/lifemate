@@ -22,17 +22,23 @@ class LLMClient(Protocol):
 
 
 class OpenAILLM:
-    """OpenAI 兼容客户端（惰性建连；配置见 kernel.config）。"""
+    """OpenAI 兼容客户端：持有活配置，签名变更时热重建连接。"""
 
-    def __init__(self, base_url: str, api_key: str, model: str,
-                 timeout: float = 300.0) -> None:
-        from openai import AsyncOpenAI  # 惰性导入，测试环境零依赖
-        self._client = AsyncOpenAI(
-            base_url=base_url or "https://api.openai.com/v1",
-            api_key=api_key or "sk-unconfigured",
-            timeout=timeout,
-        )
-        self.model = model
+    def __init__(self, cfg) -> None:
+        self._cfg = cfg
+        self._client = None
+        self._sig: tuple[str, str] | None = None
+
+    def _get_client(self):
+        sig = (self._cfg.llm_base_url, self._cfg.llm_api_key)
+        if self._client is None or sig != self._sig:
+            from openai import AsyncOpenAI  # 惰性导入，测试环境零依赖
+            self._client = AsyncOpenAI(
+                base_url=self._cfg.llm_base_url or "https://api.openai.com/v1",
+                api_key=self._cfg.llm_api_key or "sk-unconfigured",
+                timeout=300.0)
+            self._sig = sig
+        return self._client
 
     async def chat(
         self, messages: list[dict[str, Any]], tools: list[ToolSchema] | None = None,
@@ -50,8 +56,8 @@ class OpenAILLM:
                 for t in tools
             ]
         t0 = time.monotonic()
-        resp = await self._client.chat.completions.create(
-            model=self.model, messages=messages, **kwargs)
+        resp = await self._get_client().chat.completions.create(
+            model=self._cfg.llm_model, messages=messages, **kwargs)
         msg = resp.choices[0].message
         calls: list[ToolCall] = []
         for tc in (msg.tool_calls or []):
