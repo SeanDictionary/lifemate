@@ -15,8 +15,8 @@ from pathlib import Path
 from typing import Any, Callable
 
 from ..kernel.contracts import (ASSISTANT_MSG, COMPACTED, ERROR, MindEvent,
-                                QUEUE_DROP, RUN_ENDED, RUN_STARTED,
-                                SESSION_ROTATED, TOOL_RESULT, USER_MSG)
+                                QUEUE_DROP, REST, SESSION_ROTATED, TOOL_RESULT,
+                                USER_MSG, WAKE)
 
 log = logging.getLogger("utils.recorder")
 
@@ -102,9 +102,12 @@ class Recorder:
     def on_kernel_event(self, ev: MindEvent) -> None:
         d = ev.data
         rid = d.get("rid", "")
-        if ev.type == RUN_STARTED:
-            self._write("run", rid=rid, kind=d.get("kind"),
-                        source=d.get("source"))
+        if ev.type == WAKE:
+            self._write("wake", rid=rid, trigger=d.get("trigger"),
+                        kind=d.get("kind"), source=d.get("source"))
+        elif ev.type == REST:
+            self._write("rest", rid=rid, reason=d.get("reason"),
+                        timeout_s=d.get("timeout_s"))
         elif ev.type == USER_MSG:
             self._write("msg", rid=rid, role="user",
                         content=d.get("text", ""), env=d.get("env", {}))
@@ -125,8 +128,6 @@ class Recorder:
                         ok=bool(d.get("ok")),
                         latency_ms=d.get("latency_ms", 0),
                         content=d.get("result", ""))
-        elif ev.type == RUN_ENDED:
-            self._write("run_end", rid=rid, reason=d.get("reason", "stop"))
         elif ev.type == SESSION_ROTATED:
             self._write("rotate", old=d.get("old"), new=d.get("new"),
                         seed_chars=d.get("seed_chars"))

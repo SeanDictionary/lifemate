@@ -63,10 +63,12 @@ def render(line: dict) -> str:
                     f"{line.get('latency_ms', 0)}ms: {_brief(line.get('content', ''))}")
         return f"{ts} ？ {line}"
 
-    if t == "run":
-        return f"{ts} ▶ run {rid} kind={line.get('kind', '')} source={line.get('source', '')}"
-    if t == "run_end":
-        return f"{ts} ■ run_end {rid} reason={line.get('reason', '')}"
+    if t == "wake":
+        return (f"{ts} ☀ 唤醒 {rid} trigger={line.get('trigger', '')} "
+                f"kind={line.get('kind', '')} source={line.get('source', '')}")
+    if t == "rest":
+        to = f" timeout={line.get('timeout_s')}s" if line.get("timeout_s") else ""
+        return f"{ts} 🌙 休息 {rid} reason={line.get('reason', '')}{to}"
     if t == "rotate":
         return f"{ts} ↻ 会话轮换 {line.get('old')} → {line.get('new')}（播种 {line.get('seed_chars', 0)} 字）"
     if t == "compact":
