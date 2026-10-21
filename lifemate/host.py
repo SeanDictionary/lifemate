@@ -51,6 +51,18 @@ RESUME_ENVELOPE = (
 )
 
 
+def _boot_envelope(plugin_names: list[str]) -> str:
+    """出生信封：如实告知身体状态（不搬谎——它据此建立自我模型）。"""
+    if not plugin_names:
+        return BOOT_ENVELOPE
+    names = "、".join(plugin_names)
+    return (
+        f"（你醒了。你此刻装配的身体：{names}——外界的动静会唤醒你。"
+        "动手之前，建议先用 read_skill 读一下相应平台的技能说明"
+        "（索引就在你视野里）；没有装配的能力不要假装有。"
+        "做什么由你决定。诚实面对自己的状态即可。）")
+
+
 def build(cfg: Config) -> tuple[SelfKernel, Store, Recorder]:
     """装配内核 + 记忆 + 观测记录器（剥夺模式：不装载任何器官）。"""
     if not cfg.llm_base_url or not cfg.llm_model:
@@ -324,10 +336,13 @@ async def run() -> None:
             asyncio.create_task(_reminder_poller(cfg, store, kernel, stop)),
         ]
 
-        # 出生/重启信封（永续回合的第一声敲门）
+        # 出生/重启信封（永续回合的第一声敲门；如实告知身体状态）
         fresh = len(kernel._session.messages) == 0
-        kernel.notify(Envelope(
-            text=BOOT_ENVELOPE if fresh else RESUME_ENVELOPE, kind=BOOT))
+        if fresh:
+            boot_text = _boot_envelope([p.name for p in plugins])
+        else:
+            boot_text = RESUME_ENVELOPE
+        kernel.notify(Envelope(text=boot_text, kind=BOOT))
 
         # stdin 调试信封（守护线程）；/reload /quit；信号/EOF 优雅退出
         stdin_q: asyncio.Queue = asyncio.Queue()
