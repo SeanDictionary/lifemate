@@ -57,6 +57,7 @@ lifemate/
 │   ├── recorder.py    #   观测记录器：项目级日志基础设施（黑匣子，常开不可拆）
 │   └── instance.py    #   单实例锁：OS 文件锁，防双开损坏数据
 ├── replay.py          # 回放查看器：python -m lifemate.replay（翻档案）
+├── console.py         # 开发控制台：stdin→/命令+调试信封（宿主对话面，非器官）
 ├── host.py            # 器官宿主：事件循环、装载器官、驱动感知面、挂载观测
 └── __main__.py        # 入口（当前：剥夺模式——无器官，stdin 为调试信封）
 tests/                 # 单测 + 剥夺测试（必须常绿）
@@ -71,8 +72,10 @@ data/                  # 运行数据（gitignore）：config.json / memory.db /
 ├── soul/              # 人格（identity.md——数据非代码）
 ├── skills/            # skill 目录：**内置以外**的第三方/扩展功能知情层
 │                      # （器官说明书随器官走；用户自加扩展放这里即生效）
+├── console.py         # 开发控制台：stdin→/命令+调试信封（宿主对话面，非器官）
 ├── host.py            # 器官宿主：事件循环、装载器官、驱动感知面
-└── __main__.py        # 入口（当前：剥夺模式——无器官，stdin 为调试信封）
+└── __main__.py        # 入口（CLI：-v/--version、-l/--log-level、-s/--silence；
+                      #   stdin 每行=调试信封）
 tests/                 # 单测 + 剥夺测试（必须常绿）
 data/                  # 运行数据（gitignore：memory.db / sessions/）
 .cache/                # 开发副产物 + v1 归档 + 设计文档（gitignore）
@@ -138,11 +141,19 @@ env 仅部署种子）；热重载靠字段原地更新——新组件必须持�
   弱刺激背景听觉（chat_log + read_chat_log 自主查看 + 未读身体感受），
   21 个工具（发消息/媒体/撤回/审批/群管/世界查询/状态/原始 API），
   出站回执制 + 风控物理钳制；FakeNapCat 端到端测试通过
+- **控制台独立 + 终端静默（2026-10-21）**：stdin 控制台独立为 console.py
+  （宿主对话面，非器官——命令面 /quit /reload 需操纵宿主生命周期，不进
+  器官契约）；-s/--silence 静默终端日志（文件照写，对话呈现不变），
+  静默决策收在入口、host 显式传参不碰 sys.argv
+- **启动 CLI（2026-10-21）**：__main__ argparse（-v/--version、
+  -l/--log-level、-s/--silence）；config 新增 log_level 键（默认 info，
+  CLI -l 覆盖 config）；等级名解析收口 utils/log.level_from_name
+  （未知值告警回落）；版本号收口 __version__.py（importlib.metadata）
 - **待开发**：attention（门控升格）→ sandbox → webui → video
 
 ## 验证方式
 
 - 单测：`pytest`（剥夺测试必须常绿）
 - 剥夺模式运行：`python -m lifemate`（无器官启动；stdin 每行=一封信封，
-  `/reload` 热重载配置，`/quit` 退出）
+  `/reload` 热重载配置，`/quit` 退出；`--help` 看启动参数）
 - 语法/风格：`ruff check`（如安装）
