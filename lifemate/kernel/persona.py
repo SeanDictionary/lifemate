@@ -1,8 +1,10 @@
-"""人格装配：identity + skills 索引，每轮请求重建（不缓存进长会话）。
+"""人格装配：identity + 内置机制指引 + skills 索引，每轮请求重建。
 
-- 身份（soul/identity.md）：数据非代码；缺失时用最小默认人格
-- skills 目录（agentskills 风格 SKILL.md）：只注入 name+description 索引，
-  全文由心智经 read_skill 工具按需读取（保持上下文精简）
+三层分工：
+- soul/identity.md      人格（数据非代码，常驻；缺失时用最小默认人格）
+- kernel/builtin/*.md   内置机制指引（代码管理，常驻——核心制度保证在场，
+                        不能依赖"模型碰巧去读"）
+- skills/*/SKILL.md     第三方/扩展知情层（目录扫描，索引常驻、全文按需）
 """
 from __future__ import annotations
 
@@ -12,7 +14,9 @@ from pathlib import Path
 
 log = logging.getLogger("kernel.persona")
 
-_DEFAULT_IDENTITY = "你是一个数字生命，名叫小Q。诚实、自然、简洁。"
+_BUILTIN_DIR = Path(__file__).resolve().parent / "builtin"
+
+_DEFAULT_IDENTITY = "你是一个数字生命。诚实、自然、简洁。"
 
 _FM_RE = re.compile(r"^---\s*\n(.*?)\n---\s*\n", re.S)
 _KV_RE = re.compile(r"^(\w[\w-]*):\s*(.+)$", re.M)
@@ -81,12 +85,25 @@ class Persona:
         return skill.content
 
     # ── 装配 ─────────────────────────────────────────────
+    def builtin_docs(self) -> list[str]:
+        """内置机制指引（随内核分发，每轮常驻——核心制度保证在场）。"""
+        out = []
+        for p in sorted(_BUILTIN_DIR.glob("*.md")):
+            try:
+                text = p.read_text(encoding="utf-8").strip()
+            except OSError:
+                continue
+            if text:
+                out.append(text)
+        return out
+
     def system_prompt(self) -> str:
-        """每轮重建：身份 + skills 索引（工具清单由 API tools 参数携带）。"""
+        """每轮重建：身份 + 内置机制指引 + skills 索引（工具清单由 API tools 携带）。"""
         parts = [self.identity()]
+        parts.extend(self.builtin_docs())
         skills = self.skills()
         if skills:
             lines = ["### 可用技能（用 read_skill 工具读取全文后再遵循）"]
             lines += [f"- {s.name}: {s.description}" for s in skills.values()]
             parts.append("\n".join(lines))
-        return "\n\n".join(parts)
+        return "\n\n".join(x for x in parts if x.strip())
