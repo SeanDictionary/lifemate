@@ -14,7 +14,6 @@ from __future__ import annotations
 
 import asyncio
 import hashlib
-import logging
 import signal
 import sys
 import threading
@@ -23,7 +22,7 @@ from pathlib import Path
 
 from . import __version__
 from .kernel.compaction import Compactor
-from .kernel.contracts import BOOT, Envelope, Tool
+from .kernel.contracts import BOOT, REMINDER, Envelope, Tool
 from .kernel.llm import OpenAILLM
 from .kernel.mind import SelfKernel
 from .kernel.persona import Persona
@@ -32,8 +31,7 @@ from .memory.store import Store
 from .memory.tools import build_memory_tools
 from .utils import instance
 from .utils.config import Config
-from .utils.log import (get_logger, install_excepthooks, install_loop_handler,
-                        setup_logging)
+from .utils.log import get_logger, install_excepthooks, install_loop_handler, setup_logging
 from .utils.recorder import Recorder
 
 log = get_logger("host")
@@ -41,9 +39,14 @@ log = get_logger("host")
 BOOT_ENVELOPE = (
     "（你醒了。此刻你没有任何外界器官——听不见任何消息、不能对外发言、"
     "没有沙箱和手脚——只有你的记忆和你自己。\n"
-    "你可以：回顾和整理你的记忆（记忆工具）；给自己定提醒；记录此刻的"
-    "想法与感受；或者什么都不做。\n"
+    "你可以：回顾和整理你的记忆（记忆工具）；给自己定提醒或闹钟（wait）；"
+    "记录此刻的想法与感受；或者什么都不做。\n"
     "做什么由你决定。诚实面对自己的状态即可。）"
+)
+
+RESUME_ENVELOPE = (
+    "（进程重启了。你上次的活动被打断——会话与记忆已恢复，"
+    "从中断处继续即可。如果你正在等待什么，重新等。）"
 )
 
 
@@ -73,10 +76,20 @@ def build(cfg: Config) -> tuple[SelfKernel, Store, Recorder]:
         llm=llm, persona=persona, session=session, compactor=compactor, cfg=cfg)
     kernel.subscribe(recorder.on_kernel_event)
 
-    # 内核自带：记忆工具 + read_skill（人格的按需读取面）
+    # 内核自带：记忆工具 + read_skill + deep_sleep（wait 由内核内置）
     for t in build_memory_tools(store):
         kernel.register_tool(t)
     kernel.register_tool(_read_skill_tool(persona))
+    kernel.register_tool(_deep_sleep_tool(kernel, store))
+
+    # 唤醒附加事实（身体感受：待办提醒概览——内核不解其义，只附上）
+    def _extras() -> str:
+        pend = store.pending_reminders(5)
+        if not pend:
+            return ""
+        items = "；".join(r["intent"][:30] for r in pend[:3])
+        return f"（你还有 {len(pend)} 条待办提醒，如：{items}。）"
+    kernel.set_wake_extras(_extras)
 
     # 启动快照：复现"它当时看到的世界"（人格/技能/工具清单版本）
     recorder.event(
@@ -102,12 +115,45 @@ def _read_skill_tool(persona: Persona) -> Tool:
     }, func=_read)
 
 
+def _deep_sleep_tool(kernel: SelfKernel, store: Store) -> Tool:
+    """整觉：写信（重建包）→ 转身（换会话播种）→ 长眠。睡眠制度。"""
+
+    async def _fn(args: dict) -> str:
+        import json as _json
+        letter = str(args.get("letter") or "").strip()
+        if not letter:
+            return _json.dumps(
+                {"ok": False,
+                 "error": "letter 不能为空——睡前给下一个自己写信是制度"},
+                ensure_ascii=False)
+        hours = max(0.1, min(float(args.get("hours") or 8), 72.0))
+        store.save_packet(letter)
+        pend = store.pending_reminders(5)
+        todo = "；".join(r["intent"][:40] for r in pend) or "无"
+        seed = ("（你刚从深睡中醒来，这是新会话的开始。"
+                "上一个你留给你的信：\n" + letter
+                + "\n\n你定的待办提醒：" + todo + "）")
+        kernel.swap_session(seed)
+        return await kernel.rest(hours * 3600)
+
+    return Tool(schema={
+        "name": "deep_sleep",
+        "description": "整觉：给下一个自己写信（必填）→ 轮换新会话 → 睡指定小时。"
+                       "一天的结束用它；轻度小睡用 wait 即可。",
+        "inputSchema": {"type": "object", "properties": {
+            "letter": {"type": "string",
+                       "description": "写给下一个自己的信（我是谁/最近经历/未办/心情）"},
+            "hours": {"type": "number", "description": "睡多久（小时，默认 8）"},
+        }, "required": ["letter"]}},
+        func=_fn, interruptible=False)
+
+
 def _console_printer() -> None:
     """控制台呈现（开发调试用；正式观测走 observe 档案 + replay）。"""
-    from .kernel.contracts import (ASSISTANT_MSG, RUN_ENDED, RUN_STARTED,
-                                   SESSION_ROTATED, TOOL_CALL, TOOL_RESULT)
-    glyph = {RUN_STARTED: "▶", ASSISTANT_MSG: "💬", TOOL_CALL: "🔧",
-             TOOL_RESULT: "↩", RUN_ENDED: "■", SESSION_ROTATED: "↻"}
+    from .kernel.contracts import (ASSISTANT_MSG, REST, SESSION_ROTATED,
+                                   TOOL_CALL, TOOL_RESULT, WAKE)
+    glyph = {WAKE: "☀", ASSISTANT_MSG: "💬", TOOL_CALL: "🔧",
+             TOOL_RESULT: "↩", REST: "🌙", SESSION_ROTATED: "↻"}
 
     def _print(ev) -> None:
         g = glyph.get(ev.type, "·")
@@ -120,10 +166,10 @@ def _console_printer() -> None:
                 print(f"   {g}→ {c['name']}")
         elif ev.type == TOOL_CALL:
             print(f"{g} {ev.data['name']}({ev.data['arguments'][:120]})")
-        elif ev.type == RUN_STARTED:
-            print(f"{g} [run] {ev.data.get('kind', '')}")
-        elif ev.type == RUN_ENDED:
-            print(f"{g} [end]")
+        elif ev.type == WAKE:
+            print(f"{g} [唤醒] {ev.data.get('trigger', '')}")
+        elif ev.type == REST:
+            print(f"{g} [休息] {ev.data.get('reason', '')}")
         elif ev.type == SESSION_ROTATED:
             print(f"{g} 会话轮换 {ev.data.get('old')} → {ev.data.get('new')}")
 
@@ -214,6 +260,22 @@ def _start_stdin_reader(queue: asyncio.Queue) -> None:
     t.start()
 
 
+async def _reminder_poller(cfg: Config, store: Store, kernel: SelfKernel,
+                            stop: asyncio.Event) -> None:
+    """闹钟兑现器：到期提醒 → notify（它的意志，机制兑现）。"""
+    while not stop.is_set():
+        try:
+            await asyncio.wait_for(stop.wait(), timeout=cfg.reminder_poll_s)
+        except TimeoutError:
+            try:
+                for r in store.due_reminders(3):
+                    kernel.notify(Envelope(
+                        text=f"（你自己定的提醒到点了：{r['intent']}）",
+                        kind=REMINDER))
+            except Exception:  # noqa: BLE001
+                log.exception("提醒轮询异常")
+
+
 async def run() -> None:
     cfg = None
     lock = None
@@ -248,10 +310,13 @@ async def run() -> None:
             asyncio.create_task(_config_watcher(cfg, stop, recorder)),
             asyncio.create_task(_watchdog(cfg, kernel, stop)),
             asyncio.create_task(_maintenance(cfg, store, recorder, stop)),
+            asyncio.create_task(_reminder_poller(cfg, store, kernel, stop)),
         ]
 
-        # 出生/重启信封
-        await kernel.prompt(Envelope(text=BOOT_ENVELOPE, kind=BOOT))
+        # 出生/重启信封（永续回合的第一声敲门）
+        fresh = len(kernel._session.messages) == 0
+        kernel.notify(Envelope(
+            text=BOOT_ENVELOPE if fresh else RESUME_ENVELOPE, kind=BOOT))
 
         # stdin 调试信封（守护线程）；/reload /quit；信号/EOF 优雅退出
         stdin_q: asyncio.Queue = asyncio.Queue()
@@ -283,7 +348,7 @@ async def run() -> None:
                     recorder.event("config_reload", changed=changed)
                 print(f"↻ 配置重载：{', '.join(changed) or '无变化'}")
                 continue
-            await kernel.prompt(Envelope(text=text))
+            await kernel.notify(Envelope(text=text))
 
         # 优雅停机：中止思维 → 停后台任务 → flush 档案 → 关库 → 释放锁
         log.info("开始优雅停机（reason=%s）", reason)
@@ -297,7 +362,7 @@ async def run() -> None:
         log.info("宿主退出")
     finally:
         instance.release(lock)
-
+ 
 
 def main() -> None:
     try:
