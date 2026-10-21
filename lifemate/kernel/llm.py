@@ -1,16 +1,105 @@
 """模型调用唯一入口（OpenAI 兼容 Chat Completions）。
 
 内核内部表示（LLMResponse/ToolCall）与具体 API 方言解耦：
-方言翻译（reasoning_content 剥离等）收在本文件，思维循环不感知。
+方言翻译（thinking 剥离等）收在本文件，思维循环不感知。
+健壮性（借签 pi 自动重试）：瞬态错误指数退避重试，永久错误直抛，
+连续失败达阈值触发告警回调（宿主/器官订阅）。
 """
 from __future__ import annotations
 
+import asyncio
 import json
+import logging
 import re
 import time
-from typing import Any, Protocol
+from typing import Any, Awaitable, Callable, Protocol
 
 from .contracts import LLMResponse, ToolCall, ToolSchema
+
+log = logging.getLogger("kernel.llm")
+
+# 瞬态（可重试）异常类名（openai 未装时按名匹配；装了则 isinstance 优先）
+_RETRYABLE_NAMES = {
+    "APIConnectionError", "APITimeoutError", "TimeoutError",
+    "RateLimitError", "InternalServerError", "ServiceUnavailableError",
+    "ReadTimeout", "RemoteProtocolError",
+}
+
+
+def is_retryable(exc: BaseException) -> bool:
+    """瞬态错误判定：连接/超时/限流/5xx 可重试；鉴权/参数/上下文溢出直抛。"""
+    try:
+        import openai
+        if isinstance(exc, (openai.APIConnectionError, openai.APITimeoutError,
+                            openai.RateLimitError, openai.InternalServerError)):
+            return True
+        if isinstance(exc, openai.APIStatusError):
+            return exc.status_code >= 500
+        if isinstance(exc, (openai.AuthenticationError, openai.BadRequestError,
+                            openai.NotFoundError, openai.PermissionDeniedError)):
+            return False
+    except ImportError:
+        pass
+    return type(exc).__name__ in _RETRYABLE_NAMES
+
+
+async def chat_with_retry(
+    fn: Callable[[], Awaitable[LLMResponse]],
+    *,
+    max_retries: int,
+    backoff_s: float,
+    fail_streak: "_FailStreak | None" = None,
+) -> LLMResponse:
+    """带重试的一次调用：瞬态错误指数退避重试，永久错误直抛。
+
+    fail_streak 用于连续失败告警（成功即清零，阈值触发回调）。
+    """
+    last: BaseException | None = None
+    for attempt in range(max_retries + 1):
+        try:
+            resp = await fn()
+            if fail_streak is not None:
+                fail_streak.reset()
+            return resp
+        except Exception as e:  # noqa: BLE001
+            last = e
+            if not is_retryable(e) or attempt >= max_retries:
+                if fail_streak is not None:
+                    fail_streak.record(str(e))
+                raise
+            delay = backoff_s * (2 ** attempt)
+            log.warning("LLM 调用失败（第 %d 次：%s），%.1fs 后重试",
+                        attempt + 1, e, delay)
+            await asyncio.sleep(delay)
+    raise last  # pragma: no cover（循环内必 raise/return）
+
+
+class _FailStreak:
+    """连续失败计数与告警（借签 v1：第 N 次连续失败触发一次回调）。"""
+
+    def __init__(self, threshold: int,
+                 on_alert: Callable[[int], None] | None = None) -> None:
+        self._threshold = threshold
+        self._on_alert = on_alert
+        self.count = 0
+        self._alerted = False
+
+    def reset(self) -> None:
+        self.count = 0
+        self._alerted = False
+
+    def record(self, reason: str) -> None:
+        self.count += 1
+        if self.count >= self._threshold:
+            log.critical("LLM 连续失败 %d 次（最近：%s）——自主性已受影响",
+                         self.count, reason[:200])
+            if not self._alerted:
+                self._alerted = True
+                if self._on_alert is not None:
+                    try:
+                        self._on_alert(self.count)
+                    except Exception:  # noqa: BLE001
+                        log.exception("LLM 失败告警回调异常")
 
 
 class LLMClient(Protocol):
@@ -24,10 +113,12 @@ class LLMClient(Protocol):
 class OpenAILLM:
     """OpenAI 兼容客户端：持有活配置，签名变更时热重建连接。"""
 
-    def __init__(self, cfg) -> None:
+    def __init__(self, cfg, on_persistent_failure: Callable[[int], None] | None = None) -> None:
         self._cfg = cfg
         self._client = None
         self._sig: tuple[str, str] | None = None
+        self._fail_streak = _FailStreak(cfg.llm_fail_alert_streak,
+                                        on_persistent_failure)
 
     def _get_client(self):
         sig = (self._cfg.llm_base_url, self._cfg.llm_api_key)
@@ -41,6 +132,15 @@ class OpenAILLM:
         return self._client
 
     async def chat(
+        self, messages: list[dict[str, Any]], tools: list[ToolSchema] | None = None,
+    ) -> LLMResponse:
+        return await chat_with_retry(
+            lambda: self._raw_chat(messages, tools),
+            max_retries=self._cfg.llm_max_retries,
+            backoff_s=self._cfg.llm_retry_backoff_s,
+            fail_streak=self._fail_streak)
+
+    async def _raw_chat(
         self, messages: list[dict[str, Any]], tools: list[ToolSchema] | None = None,
     ) -> LLMResponse:
         kwargs: dict[str, Any] = {}
