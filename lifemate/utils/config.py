@@ -173,6 +173,38 @@ class Config:
             encoding="utf-8")
         log.info("生成默认配置：%s", self.path)
 
+    def write_plugin_defaults(self, name: str, section: dict) -> bool:
+        """把插件默认配置段写入 config.json（仅当该段不存在时）。
+
+        首启预设：插件声明字段以 enabled=false 落盘，用户直接可见可改；
+        已有配置段（含用户改动）不碰。返回是否写入。
+        """
+        if name in self.plugins:
+            return False
+        try:
+            data = json.loads(self.path.read_text(encoding="utf-8"))
+            if not isinstance(data, dict):
+                return False
+            if name in (data.get("plugins") or {}):
+                return False  # 文件里有但内存没有（异常态）：以文件为准
+            data.setdefault("plugins", {})[name] = section
+            self.path.write_text(
+                json.dumps(data, ensure_ascii=False, indent=2) + "\n",
+                encoding="utf-8")
+        except (OSError, ValueError) as e:
+            log.warning("插件 %s 默认配置写入失败：%s", name, e)
+            return False
+        # 同步内存并刷新戳，避免热重载误报变更
+        self.plugins = dict(self.plugins)
+        self.plugins[name] = dict(section)
+        try:
+            st = self.path.stat()
+            self._stamp = (st.st_mtime_ns, st.st_size)
+        except OSError:
+            pass
+        log.info("插件配置预设已写入：%s（enabled=false）", name)
+        return True
+
     # ── 展示 ────────────────────────────────────────────
     def masked(self) -> dict[str, Any]:
         """掩码导出（日志/档案展示用，密钥只露尾 4 位）。

@@ -158,6 +158,9 @@ class QQPlugin(Plugin):
         return "send_private_msg", {"user_id": int(target_id)}
 
 
+CONFIG = QQConfig  # 装载器约定：首启预设写盘（enabled=false）
+
+
 def create(ctx: PluginContext) -> Plugin | None:
     conf = QQConfig(ctx.cfg)
     if not conf.enabled:

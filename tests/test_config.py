@@ -88,3 +88,20 @@ def test_plugin_namespace_secret_masked(tmp_path, monkeypatch):
     assert qq["access_token"].startswith("***")
     assert "123456789" not in qq["access_token"]
     assert qq["ws_url"] == "ws://x:1" and qq["bot_uin"] == 123  # 非敏感键原样
+
+
+def test_plugin_defaults_written_on_fresh_config(tmp_path):
+    """首启预设：插件声明段（enabled=false）自动写进 config.json。"""
+    cfg = Config(data_dir=tmp_path)
+    assert "qq" not in cfg.plugins
+    from lifemate.plugins.qq import QQConfig
+    assert cfg.write_plugin_defaults("qq", QQConfig.declared()) is True
+    # 文件里有了，且 enabled=False
+    data = json.loads(cfg.path.read_text(encoding="utf-8"))
+    assert data["plugins"]["qq"]["enabled"] is False
+    assert data["plugins"]["qq"]["ws_url"] == "ws://127.0.0.1:3001"
+    # 内存同步（热重载不误报）
+    assert cfg.reload() == []
+    assert cfg.plugins["qq"]["enabled"] is False
+    # 已有段不覆盖（用户改动受保护）
+    assert cfg.write_plugin_defaults("qq", {"enabled": True}) is False

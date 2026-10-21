@@ -120,6 +120,13 @@ async def load_plugins(ctx: PluginContext) -> list[Plugin]:
         except Exception:  # noqa: BLE001
             log.exception("插件导入失败：%s", sub.name)
             continue
+        # 首启预设：声明式配置的插件把默认段（enabled=false）写进 config.json，
+        # 用户直接可见可改（约定：模块导出 CONFIG = XxxConfig）
+        conf_cls = getattr(module, "CONFIG", None)
+        if (isinstance(conf_cls, type)
+                and issubclass(conf_cls, PluginConfig)
+                and conf_cls.declared()):
+            ctx.cfg.write_plugin_defaults(sub.name, conf_cls.declared())
         create = getattr(module, "create", None)
         if not callable(create):
             log.warning("插件 %s 缺少 create(ctx) 入口，跳过", sub.name)
