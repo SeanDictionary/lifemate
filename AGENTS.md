@@ -35,14 +35,16 @@ lifemate/
 ├── kernel/            # 内核（认知自我，必须实现）
 │   ├── contracts.py   #   契约：信封/事件/器官包/工具形状/MindKernel（纯协议零实现）
 │   ├── mind.py        #   思维循环：信封队列(prompt/steer/follow_up)+工具分发+轮换
-│   ├── llm.py         #   模型调用唯一入口（OpenAI 兼容）
+│   ├── llm.py         #   模型调用唯一入口（OpenAI 兼容；活配置，签名变更热重建）
 │   ├── session.py     #   工作记忆：消息列表 + JSONL 持久化 + 轮换
-│   ├── compaction.py  #   上下文压缩（会话内兜底）
-│   ├── persona.py     #   人格装配（identity + skills 索引，每轮重建）
-│   └── config.py      #   引导配置（env 优先；器官业务配置后续进配置系统）
+│   ├── compaction.py  #   上下文压缩（会话内兜底，阈值活配置）
+│   └── persona.py     #   人格装配（identity + skills 索引，每轮重建）
 ├── memory/            # 记忆系统（内核②：长期记忆）
 │   ├── store.py       #   SQLite：episodes/curiosity/needs/reminders/重建包
 │   └── tools.py       #   记忆工具（MCP 形状，内核自带）
+├── utils/             # 共享中立层（依赖锚点：全系统可用，不依赖任何上层）
+│   └── config.py      #   活配置：{data_dir}/config.json 事实源 + env 种子
+│                      #   + mtime 热重载（原地更新，引用即热生效）+ 密钥掩码
 ├── organs/            # 器官包（可拆，逐件开发，每器官一文件）
 │   └── ...            #   开发顺序：qq → attention → schedule → sleep →
 │                      #   sandbox → governance → video → webui
@@ -56,7 +58,10 @@ data/                  # 运行数据（gitignore：memory.db / sessions/）
 ```
 
 依赖方向（唯一允许）：`host → organs → kernel.contracts ← kernel`；
-`kernel → memory`（记忆是内核的一部分）；器官之间零 import。
+`kernel/memory/organs/host → utils`（utils 不依赖任何上层）；器官之间零 import。
+配置体系：业务配置一律进 `utils/config.py` 白名单（即 config.json 键，
+env 仅部署种子）；热重载靠字段原地更新——新组件必须持活引用、用时读取，
+禁止启动时冻结拷贝。
 
 ## 开发硬性规则
 
@@ -67,7 +72,8 @@ data/                  # 运行数据（gitignore：memory.db / sessions/）
     每个提交自洽（可独立运行/测试通过）
 1. **行为变更以主人指示为需求源头**：先评估（架构影响/风险/替代方案）
     再动手；读代码即文档，不写设计文档（设计稿除外）
-2. **新增行为参数必须进配置**（kernel/config.py 白名单），禁止硬编码魔法数字
+2. **新增行为参数必须进配置白名单**（utils/config.py，即 config.json 键），
+   禁止硬编码魔法数字
 3. **未上线阶段 schema 变更直接改 CREATE TABLE 删表重建**：不写迁移脚本、
    不搬数据、不保历史（开发数据一律可弃）
 4. **日志纪律**：每模块独立 logger；决策/轮换/工具失败必带上下文；禁裸 print
@@ -87,8 +93,10 @@ data/                  # 运行数据（gitignore：memory.db / sessions/）
   空闲钩子）+ 记忆系统（SQLite 五表 + 记忆工具）+ 人格装配（identity +
   skills 索引）+ 会话（JSONL 持久化/重启恢复/轮换）+ 压缩兜底 +
   剥夺模式宿主。借签 pi 的会话/压缩/steer 语义，按器官化契约重组
-- **已验证**：18 项单测全绿；真实 LLM 剥夺运行通过（无器官下唤醒→
-  自省→记忆写入→诚实收敛，全链零断链）
+- **已验证**：25 项单测全绿；真实 LLM 剥夺运行通过（无器官下唤醒→
+  自省→记忆写入→写重建包→诚实收敛，全链零断链）
+- **配置体系就位**：utils/config 活配置（JSON 事实源/env 种子/热重载/
+  掩码），host 轮询重载 + `/reload` 调试命令，LLM 客户端签名热重建
 - **待开发器官顺序**：qq → attention → schedule → sleep → sandbox →
   governance → video → webui（器官开发时同步引入生命周期器官：
   轮换触发/重建包固化时机）
@@ -96,5 +104,6 @@ data/                  # 运行数据（gitignore：memory.db / sessions/）
 ## 验证方式
 
 - 单测：`pytest`（剥夺测试必须常绿）
-- 剥夺模式运行：`python -m lifemate`（无器官启动；stdin 每行=一封信封）
+- 剥夺模式运行：`python -m lifemate`（无器官启动；stdin 每行=一封信封，
+  `/reload` 热重载配置，`/quit` 退出）
 - 语法/风格：`ruff check`（如安装）
