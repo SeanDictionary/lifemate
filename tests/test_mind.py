@@ -60,6 +60,35 @@ async def wait_event(evs, type_: str, reason: str | None = None,
 
 # ── 基础：唤醒 → 思考 → 休息 → 再唤醒 ──────────────────
 
+async def test_wake_extras_appended_and_isolated(tmp_path):
+    """身体感受：从 wait 醒来时多注册拼接、空串跳过、单个异常不拖垮其他。"""
+    llm = FakeLLM([
+        tool_reply("wait", args='{"timeout_s": 0.05, "reason": "小睡"}', cid="c1"),
+        text_reply("醒来了"),
+    ])
+    k = make_kernel(tmp_path, llm)
+    evs = events_of(k)
+
+    def _good() -> str:
+        return "（你还有 2 条待办提醒。）"
+
+    def _bad() -> str:
+        raise RuntimeError("身体感受坏了")
+
+    def _empty() -> str:
+        return ""
+
+    k.add_wake_extras(_good)
+    k.add_wake_extras(_bad)
+    k.add_wake_extras(_empty)
+    k.notify(Envelope(text="设个闹钟小睡"))
+    await wait_event(evs, REST, reason="converged")
+    # 唤醒信封（wait 工具结果）里有好的那条；坏的被吞；唤醒正常完成
+    tool_msgs = [m for m in k._session.messages if m.get("role") == "tool"]
+    assert "2 条待办提醒" in tool_msgs[0]["content"]
+    assert k.is_busy is False
+
+
 async def test_notify_wakes_thinks_rests(tmp_path):
     llm = FakeLLM([text_reply("我醒了")])
     k = make_kernel(tmp_path, llm)

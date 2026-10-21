@@ -270,13 +270,13 @@ class SelfKernel:
         else:
             body = head + "没有新事件——是你设的闹钟或等待自然到期。）"
         parts = [body]
-        if self._wake_extras is not None:
+        for fn in self._wake_extras:
             try:
-                extra = self._wake_extras()
+                extra = fn()
                 if extra:
                     parts.append(extra)
             except Exception:  # noqa: BLE001
-                log.exception("唤醒附加事实生成异常")
+                log.exception("唤醒附加事实生成异常（忽略该条）")
         return "\n".join(parts)
 
     def _begin_cycle(self, env: Envelope, trigger: str = "event") -> None:
