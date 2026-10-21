@@ -39,6 +39,7 @@ _JSON_FIELDS: dict[str, Any] = {
     # 系统日志
     "log_max_bytes": 10_485_760,        # 单份 .log 上限（10MB）
     "log_backup_count": 5,              # 轮转保留份数
+    "log_level": "info",                # 日志等级 debug/info/warning/error/critical（CLI -l 覆盖）
     # 排队背压（永续回合下仅插话队列）
     "queue_max_steer": 16,              # 插话队列上限（溢出丢最旧并存证）
     # watchdog 自愈

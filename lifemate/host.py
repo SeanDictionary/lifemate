@@ -14,6 +14,7 @@ from __future__ import annotations
 
 import asyncio
 import hashlib
+import logging
 import signal
 import time
 from pathlib import Path
@@ -29,7 +30,8 @@ from .memory.store import Store
 from .memory.tools import build_memory_tools
 from .utils import instance
 from .utils.config import Config
-from .utils.log import get_logger, install_excepthooks, install_loop_handler, setup_logging
+from .utils.log import (get_logger, install_excepthooks, install_loop_handler,
+                        level_from_name, setup_logging)
 from .utils.recorder import Recorder
 from .console import Console
 from .plugins import PluginContext, load_plugins, stop_plugins
@@ -263,7 +265,7 @@ async def _reminder_poller(cfg: Config, store: Store, kernel: SelfKernel,
                 log.exception("提醒轮询异常")
 
 
-async def run(silence: bool = False) -> None:
+async def run(silence: bool = False, log_level: str | None = None) -> None:
     cfg = None
     lock = None
     kernel = store = recorder = None
@@ -272,12 +274,14 @@ async def run(silence: bool = False) -> None:
         cfg = _C()
         # 单实例锁先于一切数据访问
         lock = instance.acquire(cfg.data_dir)
+        level = level_from_name(log_level or cfg.log_level)
         log_path = setup_logging(
             cfg.data_dir, max_bytes=cfg.log_max_bytes,
-            backup_count=cfg.log_backup_count, console=not silence)
+            backup_count=cfg.log_backup_count,
+            level=level, console=not silence)
         install_excepthooks()
         install_loop_handler(asyncio.get_event_loop())
-        log.info("日志：%s", log_path)
+        log.info("日志：%s（level=%s）", log_path, logging.getLevelName(level))
 
         kernel, store, recorder = build(cfg)
         kernel.subscribe(_console_printer())
@@ -347,8 +351,8 @@ async def run(silence: bool = False) -> None:
         instance.release(lock)
  
 
-def main(silence: bool = False) -> None:
+def main(silence: bool = False, log_level: str | None = None) -> None:
     try:
-        asyncio.run(run(silence))
+        asyncio.run(run(silence, log_level))
     except KeyboardInterrupt:
         pass

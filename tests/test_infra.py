@@ -8,7 +8,7 @@ import pytest
 from lifemate.kernel.contracts import QUEUE_DROP, Envelope
 from lifemate.kernel.llm import _FailStreak, chat_with_retry, is_retryable
 from lifemate.utils.instance import acquire, release
-from lifemate.utils.log import setup_logging
+from lifemate.utils.log import level_from_name, setup_logging
 from lifemate.utils.recorder import Recorder
 
 from conftest import FakeLLM, make_config, make_persona, make_session, text_reply
@@ -184,6 +184,16 @@ def test_log_file_written(tmp_path):
     n = len(logging.getLogger().handlers)
     setup_logging(tmp_path)
     assert len(logging.getLogger().handlers) == n
+
+
+def test_level_from_name():
+    """等级名解析：正常/容错空白大小写/None 默认/未知值告警回落。"""
+    assert level_from_name("debug") == logging.DEBUG
+    assert level_from_name(" INFO ") == logging.INFO
+    assert level_from_name(None) == logging.INFO
+    assert level_from_name("") == logging.INFO
+    assert level_from_name("infoo") == logging.INFO        # 未知→回落 default
+    assert level_from_name("infoo", default=logging.ERROR) == logging.ERROR
 
 
 def test_log_console_off(tmp_path):

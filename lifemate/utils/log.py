@@ -15,6 +15,28 @@ from typing import Any
 
 _FORMAT = "%(asctime)s - %(name)s [%(levelname)s]: %(message)s"
 
+log = logging.getLogger("utils.log")
+
+_LEVELS = {
+    "debug": logging.DEBUG,
+    "info": logging.INFO,
+    "warning": logging.WARNING,
+    "error": logging.ERROR,
+    "critical": logging.CRITICAL,
+}
+
+
+def level_from_name(name: str | None, default: int = logging.INFO) -> int:
+    """日志等级名→等级值；None/未知值告警并回落 default。"""
+    if not name:
+        return default
+    lv = _LEVELS.get(str(name).strip().lower())
+    if lv is None:
+        log.warning("未知日志等级 %r，回落 %s", name,
+                    logging.getLevelName(default))
+        return default
+    return lv
+
 
 def setup_logging(data_dir: str | Path, *, max_bytes: int = 10 * 1024 * 1024,
                   backup_count: int = 5,

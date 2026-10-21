@@ -1,18 +1,52 @@
 """入口：python -m lifemate（剥夺模式）。
 
+-v / --version：显示版本号并退出。
+-l / --log-level：设置日志等级（默认使用config设置）。
 -s / --silence：静默终端日志（输入输出照常）。
 """
-import os
-import sys
+import argparse
 
-from .host import main
-
-
-def _silence_requested() -> bool:
-    """-s/--silence 或 env LIFEMATE_SILENT 任一命中即静默（守护部署走 env）。"""
-    if os.environ.get("LIFEMATE_SILENT", "").strip().lower() in ("1", "true", "yes"):
-        return True
-    return any(a in ("-s", "--silence") for a in sys.argv[1:])
+from .__version__ import __version__
+from .host import main as host_main
 
 
-main(silence=_silence_requested())
+ARGS = [
+    {
+        "flags": ("-v", "--version"),
+        "params": {
+            "action": "version",
+            "version": __version__
+        }
+    },
+    {
+        "flags": ("-l", "--log-level"),
+        "params": {
+            "choices": ("debug", "info", "warning", "error", "critical"),
+            "help": "Set log level (default from config)"
+        }
+    },
+    {
+        "flags": ("-s", "--silence"),
+        "params": {
+            "action": "store_true",
+            "help": "Silence terminal logs (input/output still works)"
+        }
+    }
+]
+
+
+def add_arguments(parser: argparse.ArgumentParser):
+    parser.description = f"Lifemate {__version__}: Organize digital life runtime."
+    for arg in ARGS:
+        parser.add_argument(*arg['flags'], **arg['params'])
+
+
+def main() -> None:
+    parser = argparse.ArgumentParser(prog="lifemate")
+    add_arguments(parser)
+    args = parser.parse_args()
+    host_main(silence=args.silence, log_level=args.log_level)
+
+
+if __name__ == "__main__":
+    main()
