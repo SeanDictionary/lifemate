@@ -52,13 +52,16 @@ lifemate/
 ├── utils/             # 共享中立层（依赖锚点：全系统可用，不依赖任何上层）
 │   ├── config.py      #   活配置：{data_dir}/config.json 事实源 + env 种子
 │   │                  #   + mtime 热重载（原地更新，引用即热生效）+ 密钥掩码
-│   └── recorder.py    #   观测记录器：项目级日志基础设施（黑匣子，常开不可拆）
+│   ├── log.py         #   全局日志：.log 轮转存储 + 未捕获异常兑底
+│   ├── recorder.py    #   观测记录器：项目级日志基础设施（黑匣子，常开不可拆）
+│   └── instance.py    #   单实例锁：OS 文件锁，防双开损坏数据
 ├── replay.py          # 回放查看器：python -m lifemate.replay（翻档案）
 ├── host.py            # 器官宿主：事件循环、装载器官、驱动感知面、挂载观测
 └── __main__.py        # 入口（当前：剥夺模式——无器官，stdin 为调试信封）
 tests/                 # 单测 + 剥夺测试（必须常绿）
 data/                  # 运行数据（gitignore）：config.json / memory.db /
-                      #   sessions/（仅当前+少量旧文件）/ observe/（全程档案）
+                      #   sessions/ / observe/ / logs/*.log / backups/ /
+                      #   lifemate.lock
 ├── organs/            # 器官包（可拆，逐件开发，每器官一文件）
 │   └── ...            #   开发顺序：qq → attention → schedule → sleep →
 │                      #   sandbox → governance → video → webui
@@ -108,7 +111,12 @@ env 仅部署种子）；热重载靠字段原地更新——新组件必须持�
   空闲钩子）+ 记忆系统（SQLite 五表 + 记忆工具）+ 人格装配（identity +
   skills 索引）+ 会话（JSONL 持久化/重启恢复/轮换）+ 压缩兜底 +
   剥夺模式宿主。借签 pi 的会话/压缩/steer 语义，按器官化契约重组
-- 已验证：29 项单测全绿；真实 LLM 剥夺运行 + replay 回放通过
+- **基建加固完成（2026-10-21）**：LLM 重试退避+连续失败告警（借签 pi）；
+  全局日志 .log 轮转+异常兑底；优雅停机（信号→中止思维→flush→关库）；
+  单实例锁；排队背压（溢出丢最旧存证）；watchdog 自愈（僵尸队列/卡死运行）；
+  SQLite WAL+在线备份；observe 保留期清理——共 13 个新配置键
+- 已验证：40 项单测全绿；真实 LLM 剥夺运行 + replay 回放 + 优雅停机/
+  备份/日志端到端通过
 - 回放：`python -m lifemate.replay [日期] [--rid xx] [--tail N]`
 - **配置体系就位**：utils/config 活配置（JSON 事实源/env 种子/热重载/
   掩码），host 轮询重载 + `/reload` 调试命令，LLM 客户端签名热重建
