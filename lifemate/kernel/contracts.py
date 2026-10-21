@@ -13,6 +13,7 @@ from __future__ import annotations
 
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field
+import time
 from typing import Any, Protocol, runtime_checkable
 
 # ── 信封来源类型（envelope.kind）─────────────────────────────
@@ -35,12 +36,16 @@ class Envelope:
     kind   来源类型（见上）；强弱分级由注意力器官/适配器在上游完成
     source 会话寻址（如 "group_123"），可空——内核不理解其语义，仅透传
     meta   适配器附加信息（审计/观测用，内核不读内容）
+    ts     到达时间戳（观测用：信封何时进入队列）
+    delivery 入队方式（prompt/steer/follow_up，由内核入口方法标注）
     """
 
     text: str
     kind: str = DIRECT
     source: str = ""
     meta: dict[str, Any] = field(default_factory=dict)
+    ts: float = field(default_factory=time.time)
+    delivery: str = ""
 
 
 # ── 工具（MCP tool schema 形状）──────────────────────────────
@@ -73,10 +78,14 @@ class ToolCall:
 
 @dataclass
 class LLMResponse:
-    """一次模型响应（内核内部表示）。"""
+    """一次模型响应（内核内部表示，含观测元数据）。"""
 
     content: str
     tool_calls: list[ToolCall] = field(default_factory=list)
+    thinking: str = ""      # 归一化思考（不进上下文，仅供观测）
+    stop_reason: str = ""   # stop/length/toolUse/…（raw 保真）
+    model: str = ""         # 实际应答模型
+    latency_ms: int = 0
     prompt_tokens: int = 0
     completion_tokens: int = 0
 
@@ -98,10 +107,13 @@ class OrganPack:
 
 RUN_STARTED = "run_started"        # 一次运行开始（处理一封信封）
 ASSISTANT_MSG = "assistant_msg"    # 一条助手消息（文本与/或工具调用）
+USER_MSG = "user_msg"              # 一封送达心智的信封（含投递语义）
 TOOL_CALL = "tool_call"            # 一次工具调用开始
-TOOL_RESULT = "tool_result"        # 一次工具回执
+TOOL_RESULT = "tool_result"        # 一次工具回执（含执行语义）
 RUN_ENDED = "run_ended"            # 运行结束
 SESSION_ROTATED = "session_rotated"  # 会话轮换完成
+COMPACTED = "compacted"            # 上下文压缩完成
+QUEUE_DROP = "queue_drop"          # 排队信封被丢弃（rotate/abort）
 ERROR = "error"
 
 EventCallback = Callable[["MindEvent"], None]

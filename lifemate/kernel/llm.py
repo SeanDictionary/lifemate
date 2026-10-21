@@ -58,23 +58,28 @@ class OpenAILLM:
         t0 = time.monotonic()
         resp = await self._get_client().chat.completions.create(
             model=self._cfg.llm_model, messages=messages, **kwargs)
-        msg = resp.choices[0].message
+        choice = resp.choices[0]
+        msg = choice.message
+        thinking, content = _extract_thinking(msg)
         calls: list[ToolCall] = []
         for tc in (msg.tool_calls or []):
             calls.append(ToolCall(id=tc.id, name=tc.function.name,
                                   arguments=_normalize_args(
                                       tc.function.arguments)))
-        content = _strip_thinking(msg.content or "")
         u = resp.usage
-        _ = time.monotonic() - t0  # 延迟供观测层使用（当前仅 debug 级）
         return LLMResponse(
-            content=content, tool_calls=calls,
+            content=content, thinking=thinking, tool_calls=calls,
+            stop_reason=_map_stop(choice.finish_reason),
+            model=getattr(resp, "model", "") or "",
+            latency_ms=int((time.monotonic() - t0) * 1000),
             prompt_tokens=getattr(u, "prompt_tokens", 0) if u else 0,
             completion_tokens=getattr(u, "completion_tokens", 0) if u else 0,
         )
 
 
-_THINK_RE = re.compile(r"<think>.*?</think>", re.S)
+_THINK_RE = re.compile(r"<think>(.*?)</think>", re.S)
+_STOP_MAP = {"tool_calls": "toolUse", "function_call": "toolUse",
+             "stop": "stop", "length": "length"}
 
 
 def _normalize_args(raw: object) -> str:
@@ -90,6 +95,22 @@ def _normalize_args(raw: object) -> str:
     return "{}"
 
 
-def _strip_thinking(text: str) -> str:
-    """剥离 Qwen 式 <think> 内嵌标签（避免污染回复）。"""
-    return _THINK_RE.sub("", text).strip()
+def _extract_thinking(msg: Any) -> tuple[str, str]:
+    """三来源归一化（借签 pi）：reasoning_content / reasoning / <think>。
+
+    思考从正文剥离——上下文只要干净正文，thinking 仅供观测档案。
+    """
+    t = getattr(msg, "reasoning_content", None) or getattr(msg, "reasoning", None)
+    c = msg.content or ""
+    if isinstance(t, str) and t.strip():
+        return t.strip(), c.strip()
+    m = _THINK_RE.search(c)
+    if m:
+        return m.group(1).strip(), _THINK_RE.sub("", c).strip()
+    return "", c.strip()
+
+
+def _map_stop(raw: Any) -> str:
+    if not raw:
+        return ""
+    return _STOP_MAP.get(str(raw), str(raw))
