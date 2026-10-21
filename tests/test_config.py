@@ -105,3 +105,26 @@ def test_plugin_defaults_written_on_fresh_config(tmp_path):
     assert cfg.plugins["qq"]["enabled"] is False
     # 已有段不覆盖（用户改动受保护）
     assert cfg.write_plugin_defaults("qq", {"enabled": True}) is False
+
+
+def test_save_and_apply_updates(tmp_path):
+    """save() 原子写回 + apply_updates 部分键更新（面板保存链路）。"""
+    cfg = Config(data_dir=tmp_path)
+    cfg.log_level = "debug"
+    cfg.save()
+    data = json.loads(cfg.path.read_text(encoding="utf-8"))
+    assert data["log_level"] == "debug"
+    assert cfg.reload() == []                    # _stamp 已同步，不重复解析
+
+    result = cfg.apply_updates({"log_level": "warning", "no_such_key": 1})
+    assert result["applied"] == ["log_level"]
+    assert result["unknown"] == ["no_such_key"]
+    assert cfg.log_level == "warning"
+    data = json.loads(cfg.path.read_text(encoding="utf-8"))
+    assert data["log_level"] == "warning"        # 已落盘
+
+    # 密钥掩码形态跳过（未修改）
+    cfg.llm_api_key = "sk-secret-12345678"
+    result = cfg.apply_updates({"llm_api_key": "***5678"})
+    assert result["skipped_masked"] == ["llm_api_key"]
+    assert cfg.llm_api_key == "sk-secret-12345678"

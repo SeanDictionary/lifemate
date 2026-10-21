@@ -53,6 +53,11 @@ _JSON_FIELDS: dict[str, Any] = {
     "reminder_poll_s": 15.0,            # 到期提醒轮询间隔（闹钟兑现周期）
     # 元配置
     "config_poll_s": 30.0,              # 热重载轮询间隔
+    # 网络服务层（宿主侧，API + 前端静态托管；始终启动，无开关）
+    "server_host": "127.0.0.1",       # 绑定地址（暴露局域网是显式行为）
+    "server_port": 8300,              # 端口（绑定期读，改后需重启）
+    "server_token": "",               # 非空则全端点校验 ?token=（每请求读，热生效）
+    "server_static_dir": "web/out",   # 前端静态导出目录（相对 CWD）
     # 插件命名空间（自由子对象，插件私有键不进主白名单）
     "plugins": {},
     # 观测与档案
@@ -172,6 +177,52 @@ class Config:
             json.dumps(dict(_JSON_FIELDS), ensure_ascii=False, indent=2) + "\n",
             encoding="utf-8")
         log.info("生成默认配置：%s", self.path)
+
+    def save(self) -> Path:
+        """把当前白名单键 + plugins 命名空间原子写回 config.json。
+
+        临时文件 + replace（防半写）；写后同步 _stamp（防下次 reload 重复
+        解析）。热生效由字段原地更新保证，save 只负责持久化。"""
+        data: dict[str, Any] = {k: getattr(self, k) for k in _JSON_FIELDS if k != "plugins"}
+        data["plugins"] = self.plugins
+        self.path.parent.mkdir(parents=True, exist_ok=True)
+        tmp = self.path.with_suffix(".json.tmp")
+        tmp.write_text(
+            json.dumps(data, ensure_ascii=False, indent=2) + "\n",
+            encoding="utf-8")
+        tmp.replace(self.path)
+        try:
+            st = self.path.stat()
+            self._stamp = (st.st_mtime_ns, st.st_size)
+        except OSError:
+            pass
+        log.info("配置已保存：%s", self.path)
+        return self.path
+
+    def apply_updates(self, updates: dict[str, Any]) -> dict[str, Any]:
+        """部分键更新（面板保存用）：白名单外拒绝、密钥掩码形态跳过
+        （未改）、coerce 后原地生效（热生效）+ save() 落盘。
+
+        返回 {applied, skipped_masked, unknown}。plugins 命名空间不接受
+        （留给各插件面板将来的专属编辑页）。env 种子键可改可存，但重启
+        后仍被 env 覆盖——由调用方提示（env_locked）。"""
+        applied: list[str] = []
+        skipped: list[str] = []
+        unknown: list[str] = []
+        for k, v in (updates or {}).items():
+            if k not in _JSON_FIELDS or k == "plugins":
+                unknown.append(k)
+                continue
+            if (k in _SECRET_KEYS and isinstance(v, str)
+                    and v.startswith("***")):
+                skipped.append(k)  # 掩码回传 = 未修改
+                continue
+            setattr(self, k, _coerce(k, v))
+            applied.append(k)
+        if applied:
+            self.save()
+        return {"applied": applied, "skipped_masked": skipped,
+                "unknown": unknown}
 
     def write_plugin_defaults(self, name: str, section: dict) -> bool:
         """把插件默认配置段写入 config.json（仅当该段不存在时）。
