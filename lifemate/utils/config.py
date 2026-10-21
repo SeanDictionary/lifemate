@@ -31,6 +31,23 @@ _JSON_FIELDS: dict[str, Any] = {
     # 路径（相对宿主 CWD）
     "soul_dir": "soul",
     "skills_dir": "skills",
+    # LLM 健壮性（借签 pi 自动重试语义）
+    "llm_max_retries": 3,               # 瞬态错误重试次数
+    "llm_retry_backoff_s": 2.0,         # 退避基数（指数：2/4/8s）
+    "llm_fail_alert_streak": 5,         # 连续失败告警阈值（回调触发）
+    # 系统日志
+    "log_max_bytes": 10_485_760,        # 单份 .log 上限（10MB）
+    "log_backup_count": 5,              # 轮转保留份数
+    # 排队背压
+    "queue_max_follow": 64,             # follow_up 队列上限（溢出丢最旧并存证）
+    "queue_max_steer": 16,              # 插话队列上限
+    # watchdog 自愈
+    "watchdog_interval_s": 30.0,        # 健康检查间隔
+    "max_run_s": 3600.0,                # 单次运行最大时长（超时中止并自愈）
+    # 磁盘治理
+    "observe_retention_days": 90,       # 观测档案保留天数（0=永久）
+    "backup_interval_s": 86400.0,       # memory.db 备份间隔
+    "backup_keep": 7,                   # 备份保留份数
     # 元配置
     "config_poll_s": 30.0,              # 热重载轮询间隔
     # 观测与档案
