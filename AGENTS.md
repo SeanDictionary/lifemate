@@ -30,6 +30,9 @@
 7. **出站/执行回执制**：工具与适配器永不抛错，返回 `{ok, detail}`；
    失败回执给心智，由它自决重试/放弃/搁置。
 8. **内核/记忆/人格之外的一切新能力必须以器官形式加入**，不进内核。
+9. **记录不可关闭，查看方式可任意**：观测记录（Recorder→data/observe/）
+   是项目级日志基础设施，host 无条件挂载，不是器官；查看器（replay/
+   将来 WebUI）可拆可换。thinking 不进上下文但必须入档案。
 
 ## 目录结构（功能界限 · 模块化 · 文件夹分类）
 
@@ -47,8 +50,15 @@ lifemate/
 │   ├── store.py       #   SQLite：episodes/curiosity/needs/reminders/重建包
 │   └── tools.py       #   记忆工具（MCP 形状，内核自带）
 ├── utils/             # 共享中立层（依赖锚点：全系统可用，不依赖任何上层）
-│   └── config.py      #   活配置：{data_dir}/config.json 事实源 + env 种子
-│                      #   + mtime 热重载（原地更新，引用即热生效）+ 密钥掩码
+│   ├── config.py      #   活配置：{data_dir}/config.json 事实源 + env 种子
+│   │                  #   + mtime 热重载（原地更新，引用即热生效）+ 密钥掩码
+│   └── recorder.py    #   观测记录器：项目级日志基础设施（黑匣子，常开不可拆）
+├── replay.py          # 回放查看器：python -m lifemate.replay（翻档案）
+├── host.py            # 器官宿主：事件循环、装载器官、驱动感知面、挂载观测
+└── __main__.py        # 入口（当前：剥夺模式——无器官，stdin 为调试信封）
+tests/                 # 单测 + 剥夺测试（必须常绿）
+data/                  # 运行数据（gitignore）：config.json / memory.db /
+                      #   sessions/（仅当前+少量旧文件）/ observe/（全程档案）
 ├── organs/            # 器官包（可拆，逐件开发，每器官一文件）
 │   └── ...            #   开发顺序：qq → attention → schedule → sleep →
 │                      #   sandbox → governance → video → webui
@@ -98,13 +108,14 @@ env 仅部署种子）；热重载靠字段原地更新——新组件必须持�
   空闲钩子）+ 记忆系统（SQLite 五表 + 记忆工具）+ 人格装配（identity +
   skills 索引）+ 会话（JSONL 持久化/重启恢复/轮换）+ 压缩兜底 +
   剥夺模式宿主。借签 pi 的会话/压缩/steer 语义，按器官化契约重组
-- **已验证**：25 项单测全绿；真实 LLM 剥夺运行通过（无器官下唤醒→
-  自省→记忆写入→写重建包→诚实收敛，全链零断链）
+- 已验证：29 项单测全绿；真实 LLM 剥夺运行 + replay 回放通过
+- 回放：`python -m lifemate.replay [日期] [--rid xx] [--tail N]`
 - **配置体系就位**：utils/config 活配置（JSON 事实源/env 种子/热重载/
   掩码），host 轮询重载 + `/reload` 调试命令，LLM 客户端签名热重建
-- **skill 语义重定位**：skills/ = 内置以外的第三方/扩展知情层；
-  核心机制指引（记忆/重建包制度）移入 kernel/builtin/，代码管理、
-  每轮常驻装配（保证在场，不依赖按需读取）
+- **观测底座完成（2026-10-21）**：Recorder 常开黑匣子（按日切 JSONL、
+  永不压缩、seq/rid/时间戳/投递语义/执行语义/thinking 全量入档）；
+  replay 查看器（思考折叠/工具耗时/按 rid 过滤）；轮换后旧会话文件
+  按配置清理（档案职责 100% 归 observe）
 - **待开发器官顺序**：qq → attention → schedule → sleep → sandbox →
   governance → video → webui（器官开发时同步引入生命周期器官：
   轮换触发/重建包固化时机）
