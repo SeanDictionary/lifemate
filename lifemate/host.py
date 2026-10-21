@@ -14,9 +14,7 @@ from __future__ import annotations
 
 import asyncio
 import hashlib
-import os
 import signal
-import sys
 import time
 from pathlib import Path
 
@@ -154,16 +152,6 @@ def _deep_sleep_tool(kernel: SelfKernel, store: Store) -> Tool:
         func=_fn, interruptible=False)
 
 
-def _silence_requested() -> bool:
-    """终端日志静默请求：-s/--silence 参数或 env LIFEMATE_SILENT（守护部署用）。
-
-    只静默日志的终端呈现（文件日志照写），不影响控制台对话与事件呈现。
-    """
-    if os.environ.get("LIFEMATE_SILENT", "").strip().lower() in ("1", "true", "yes"):
-        return True
-    return any(a in ("-s", "--silence") for a in sys.argv[1:])
-
-
 def _console_printer() -> None:
     """控制台呈现（开发调试用；正式观测走 observe 档案 + replay）。"""
     from .kernel.contracts import (ASSISTANT_MSG, REST, SESSION_ROTATED,
@@ -275,7 +263,7 @@ async def _reminder_poller(cfg: Config, store: Store, kernel: SelfKernel,
                 log.exception("提醒轮询异常")
 
 
-async def run() -> None:
+async def run(silence: bool = False) -> None:
     cfg = None
     lock = None
     kernel = store = recorder = None
@@ -286,7 +274,7 @@ async def run() -> None:
         lock = instance.acquire(cfg.data_dir)
         log_path = setup_logging(
             cfg.data_dir, max_bytes=cfg.log_max_bytes,
-            backup_count=cfg.log_backup_count, console=not _silence_requested())
+            backup_count=cfg.log_backup_count, console=not silence)
         install_excepthooks()
         install_loop_handler(asyncio.get_event_loop())
         log.info("日志：%s", log_path)
@@ -359,8 +347,8 @@ async def run() -> None:
         instance.release(lock)
  
 
-def main() -> None:
+def main(silence: bool = False) -> None:
     try:
-        asyncio.run(run())
+        asyncio.run(run(silence))
     except KeyboardInterrupt:
         pass
