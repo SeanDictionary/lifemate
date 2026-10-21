@@ -13,6 +13,7 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+import time
 import uuid
 from collections import deque
 from typing import Any
@@ -58,6 +59,7 @@ class SelfKernel:
         self._idle_hooks: list[IdleHook] = []
         self._last_prompt_tokens = 0
         self._rid = ""  # 当前运行 id（观测归组用）
+        self._run_started_at = 0.0  # watchdog 卡死检测用
 
     # ── 事件 ─────────────────────────────────────────────
     def subscribe(self, cb: EventCallback) -> Any:
@@ -108,12 +110,14 @@ class SelfKernel:
         env.delivery = "prompt"
         async with self._lock:
             self._follow_q.append(env)
+            self._trim_queues()
             self._ensure_run()
 
     async def follow_up(self, env: Envelope) -> None:
         env.delivery = "follow_up"
         async with self._lock:
             self._follow_q.append(env)
+            self._trim_queues()
             self._ensure_run()
 
     async def steer(self, env: Envelope) -> None:
@@ -121,9 +125,24 @@ class SelfKernel:
         async with self._lock:
             if self._task is not None and not self._task.done():
                 self._steer_q.append(env)
+                self._trim_queues()
             else:
                 self._follow_q.append(env)
+                self._trim_queues()
                 self._ensure_run()
+
+    def _trim_queues(self) -> None:
+        """背压：队列超限时丢最旧并存证（洪峰下保留最新上下文）。"""
+        for q, cap, label in (
+                (self._follow_q, self._cfg.queue_max_follow, "follow"),
+                (self._steer_q, self._cfg.queue_max_steer, "steer")):
+            dropped = []
+            while len(q) > cap:
+                dropped.append(q.popleft())
+            if dropped:
+                log.warning("队列溢出（%s）：丢弃最旧 %d 封", label, len(dropped))
+                self._emit(QUEUE_DROP, reason=f"overflow_{label}",
+                           texts=[e.text for e in dropped])
 
     def _ensure_run(self) -> None:
         """启动运行任务（调用方持锁）。"""
@@ -132,6 +151,7 @@ class SelfKernel:
 
     # ── 运行循环 ────────────────────────────────────────
     async def _run(self) -> None:
+        self._run_started_at = time.monotonic()
         try:
             while self._follow_q:
                 env = self._follow_q.popleft()
@@ -312,6 +332,36 @@ class SelfKernel:
             task.cancel()
             await asyncio.gather(task, return_exceptions=True)
             self._emit(RUN_ENDED, rid=self._rid, reason="aborted")
+
+    # ── 自愈（watchdog 入口） ─────────────────────
+    async def heal(self) -> dict[str, Any]:
+        """健康检查与自愈：僵尸队列复活 + 卡死运行处置。
+
+        由宿主 watchdog 周期调用；返回当前状态供观测。
+        """
+        info: dict[str, Any] = {
+            "busy": self.is_busy,
+            "follow": len(self._follow_q),
+            "steer": len(self._steer_q),
+        }
+        # 卡死运行：超时中止（abort 保留 follow_q，中止后会自动重生）
+        if self.is_busy and self._run_started_at:
+            elapsed = time.monotonic() - self._run_started_at
+            if elapsed > self._cfg.max_run_s:
+                log.error("运行超时（%.0fs > %.0fs），中止并自愈",
+                          elapsed, self._cfg.max_run_s)
+                self._emit(ERROR, error="run_stuck", detail={
+                    "elapsed_s": round(elapsed, 1), "rid": self._rid})
+                await self.abort()
+                info["healed"] = "run_stuck"
+        # 僵尸队列：task 已死但队列非空（respawn 失败等罕见情形）
+        async with self._lock:
+            if (self._task is None or self._task.done()) and self._follow_q:
+                log.warning("检测到僵尸队列（%d 封待处理），重新拉起运行",
+                            len(self._follow_q))
+                self._ensure_run()
+                info["healed"] = "zombie_queue"
+        return info
 
     async def wait_idle(self) -> None:
         while True:
