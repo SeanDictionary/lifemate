@@ -1,15 +1,24 @@
 """器官宿主：事件循环、装载器官、驱动感知面、把信封送进内核。
 
 当前为剥夺模式（无任何器官）：内核+记忆+人格的最小生命形态。
-后续器官逐件装载（qq → attention → schedule → …），宿主只做装配，
-不含任何业务逻辑。
+后续器官逐件装载（schedule → qq → attention → …），宿主只做装配。
+
+基建职责（7×24 守护进程化）：
+- 单实例锁（防双开损坏数据）
+- 全局日志（.log 轮转 + 未捕获异常兜底）
+- 优雅停机（信号 → 中止思维 → flush 档案 → 关库）
+- watchdog（僵尸队列复活 / 卡死运行处置）
+- 磁盘治理（observe 保留期清理 / memory.db 定期备份）
 """
 from __future__ import annotations
 
 import asyncio
 import hashlib
 import logging
+import signal
 import sys
+import threading
+import time
 from pathlib import Path
 
 from . import __version__
@@ -21,10 +30,13 @@ from .kernel.persona import Persona
 from .kernel.session import Session
 from .memory.store import Store
 from .memory.tools import build_memory_tools
+from .utils import instance
 from .utils.config import Config
+from .utils.log import (get_logger, install_excepthooks, install_loop_handler,
+                        setup_logging)
 from .utils.recorder import Recorder
 
-log = logging.getLogger("host")
+log = get_logger("host")
 
 BOOT_ENVELOPE = (
     "（你醒了。此刻你没有任何外界器官——听不见任何消息、不能对外发言、"
@@ -41,19 +53,24 @@ def build(cfg: Config) -> tuple[SelfKernel, Store, Recorder]:
         raise SystemExit(
             "需要配置 llm_base_url 与 llm_model"
             "（config.json 或 env LIFEMATE_LLM_*；内核无法思考）")
-    llm = OpenAILLM(cfg)
+
+    # 观测记录器先行（黑匣子原则：任何后续装配失败也有档可查）
+    recorder = Recorder(Path(cfg.data_dir) / "observe",
+                        sid_fn=lambda: kernel.session_id,  # noqa: F821 惰性闭包
+                        max_field_chars=cfg.observe_max_field_chars)
+
+    llm = OpenAILLM(
+        cfg,
+        on_persistent_failure=lambda streak: recorder.event(
+            "error", where="llm",
+            error=f"连续失败 {streak} 次——自主性受影响，请检查网关/渠道"))
+
     store = Store(Path(cfg.data_dir) / "memory.db")
     session = Session.load_latest(Path(cfg.data_dir) / "sessions")
     persona = Persona(cfg.soul_dir, cfg.skills_dir)
     compactor = Compactor(llm.chat, cfg)
     kernel = SelfKernel(
         llm=llm, persona=persona, session=session, compactor=compactor, cfg=cfg)
-
-    # 观测记录器：项目级日志基础设施，常开不可拆（黑匣子原则）
-    recorder = Recorder(
-        Path(cfg.data_dir) / "observe",
-        sid_fn=lambda: kernel.session_id,
-        max_field_chars=cfg.observe_max_field_chars)
     kernel.subscribe(recorder.on_kernel_event)
 
     # 内核自带：记忆工具 + read_skill（人格的按需读取面）
@@ -86,7 +103,7 @@ def _read_skill_tool(persona: Persona) -> Tool:
 
 
 def _console_printer() -> None:
-    """控制台呈现（开发调试用；正式观测走呈现器官订阅同一事件流）。"""
+    """控制台呈现（开发调试用；正式观测走 observe 档案 + replay）。"""
     from .kernel.contracts import (ASSISTANT_MSG, RUN_ENDED, RUN_STARTED,
                                    SESSION_ROTATED, TOOL_CALL, TOOL_RESULT)
     glyph = {RUN_STARTED: "▶", ASSISTANT_MSG: "💬", TOOL_CALL: "🔧",
@@ -113,8 +130,10 @@ def _console_printer() -> None:
     return _print
 
 
+# ── 后台基建任务 ────────────────────────────────────────
+
 async def _config_watcher(cfg: Config, stop: asyncio.Event,
-                          recorder: Recorder | None = None) -> None:
+                          recorder: Recorder) -> None:
     """配置热重载轮询：mtime 变化即原地重载（间隔自身也是配置项）。"""
     while not stop.is_set():
         try:
@@ -122,53 +141,162 @@ async def _config_watcher(cfg: Config, stop: asyncio.Event,
         except TimeoutError:
             try:
                 changed = cfg.reload()
-                if changed and recorder is not None:
+                if changed:
                     recorder.event("config_reload", changed=changed)
             except Exception:  # noqa: BLE001
                 log.exception("配置重载异常")
 
 
+async def _watchdog(cfg: Config, kernel: SelfKernel,
+                    stop: asyncio.Event) -> None:
+    """健康巡检：僵尸队列复活 / 卡死运行处置（自愈入口在内核 heal）。"""
+    while not stop.is_set():
+        try:
+            await asyncio.wait_for(stop.wait(), timeout=cfg.watchdog_interval_s)
+        except TimeoutError:
+            try:
+                info = await kernel.heal()
+                if "healed" in info:
+                    log.warning("watchdog 自愈动作：%s", info["healed"])
+            except Exception:  # noqa: BLE001
+                log.exception("watchdog 巡检异常")
+
+
+async def _maintenance(cfg: Config, store: Store, recorder: Recorder,
+                       stop: asyncio.Event) -> None:
+    """磁盘治理：observe 保留期清理 + memory.db 定期在线备份。"""
+    last_backup = 0.0
+    while not stop.is_set():
+        try:
+            await asyncio.wait_for(stop.wait(), timeout=3600.0)
+        except TimeoutError:
+            pass
+        try:
+            removed = recorder.cleanup(cfg.observe_retention_days)
+            if removed:
+                log.info("观测档案清理：%d 个超期日档", removed)
+            if time.time() - last_backup >= cfg.backup_interval_s:
+                last_backup = time.time()
+                ts = time.strftime("%Y%m%d-%H%M%S")
+                dest = store.backup(Path(cfg.data_dir) / "backups" / f"memory-{ts}.db")
+                _prune_backups(Path(cfg.data_dir) / "backups", cfg.backup_keep)
+                log.info("记忆已备份：%s", dest.name)
+        except Exception:  # noqa: BLE001
+            log.exception("维护任务异常")
+
+
+def _prune_backups(directory: Path, keep: int) -> None:
+    files = sorted(directory.glob("memory-*.db"), key=lambda f: f.stat().st_mtime)
+    for old in files[: max(len(files) - keep, 0)]:
+        try:
+            old.unlink()
+        except OSError:
+            pass
+
+
+# ── stdin（守护线程：停机不被阻塞行卡死） ─────────────
+
+def _start_stdin_reader(queue: asyncio.Queue) -> None:
+    def _reader() -> None:
+        loop = _reader._loop
+        while True:
+            try:
+                line = sys.stdin.readline()
+            except (OSError, ValueError):
+                line = ""
+            if not line:
+                loop.call_soon_threadsafe(queue.put_nowait, None)
+                return
+            loop.call_soon_threadsafe(queue.put_nowait, line)
+
+    t = threading.Thread(target=_reader, name="stdin", daemon=True)
+    _reader._loop = asyncio.get_event_loop()  # type: ignore[attr-defined]
+    t.start()
+
+
 async def run() -> None:
-    logging.basicConfig(
-        level=logging.INFO,
-        format="%(asctime)s %(name)s %(levelname)s %(message)s")
-    cfg = Config()
-    kernel, store, recorder = build(cfg)
-    kernel.subscribe(_console_printer())
-    log.info("剥夺模式启动（session=%s, 记忆=%s, 配置=%s）",
-             kernel.session_id, store.stats(), cfg.masked())
+    cfg = None
+    lock = None
+    kernel = store = recorder = None
+    try:
+        from .utils.config import Config as _C
+        cfg = _C()
+        # 单实例锁先于一切数据访问
+        lock = instance.acquire(cfg.data_dir)
+        log_path = setup_logging(cfg.data_dir, max_bytes=cfg.log_max_bytes,
+                                 backup_count=cfg.log_backup_count)
+        install_excepthooks()
+        install_loop_handler(asyncio.get_event_loop())
+        log.info("日志：%s", log_path)
 
-    stop = asyncio.Event()
-    watcher = asyncio.create_task(_config_watcher(cfg, stop, recorder))
+        kernel, store, recorder = build(cfg)
+        kernel.subscribe(_console_printer())
+        log.info("剥夺模式启动（session=%s, 记忆=%s, 配置=%s）",
+                 kernel.session_id, store.stats(), cfg.masked())
 
-    # 出生/重启信封
-    await kernel.prompt(Envelope(text=BOOT_ENVELOPE, kind=BOOT))
+        stop = asyncio.Event()
+        for sig in ("SIGINT", "SIGTERM"):
+            if hasattr(signal, sig):
+                def _on_signal(s, _f, _loop=asyncio.get_event_loop()):
+                    _loop.call_soon_threadsafe(stop.set)
+                try:
+                    signal.signal(getattr(signal, sig), _on_signal)
+                except (ValueError, OSError):
+                    pass  # 非主线程/平台不支持时忽略
 
-    # stdin 调试信封：每行一封；/reload 热重载配置；Ctrl-Z+回车 或 EOF 退出
-    loop = asyncio.get_event_loop()
-    while True:
-        line = await loop.run_in_executor(None, sys.stdin.readline)
-        if not line:
-            break
-        text = line.strip()
-        if not text:
-            continue
-        if text == "/quit":
-            break
-        if text == "/reload":
-            changed = cfg.reload()
-            if changed:
-                recorder.event("config_reload", changed=changed)
-            print(f"↻ 配置重载：{', '.join(changed) or '无变化'}")
-            continue
-        await kernel.prompt(Envelope(text=text))
-    await kernel.wait_idle()
-    stop.set()
-    await asyncio.gather(watcher, return_exceptions=True)
-    recorder.event("host_stop", reason="exit")
-    recorder.close()
-    store.close()
-    log.info("宿主退出")
+        tasks = [
+            asyncio.create_task(_config_watcher(cfg, stop, recorder)),
+            asyncio.create_task(_watchdog(cfg, kernel, stop)),
+            asyncio.create_task(_maintenance(cfg, store, recorder, stop)),
+        ]
+
+        # 出生/重启信封
+        await kernel.prompt(Envelope(text=BOOT_ENVELOPE, kind=BOOT))
+
+        # stdin 调试信封（守护线程）；/reload /quit；信号/EOF 优雅退出
+        stdin_q: asyncio.Queue = asyncio.Queue()
+        _start_stdin_reader(stdin_q)
+        reason = "exit"
+        while not stop.is_set():
+            get = asyncio.create_task(stdin_q.get())
+            sig = asyncio.create_task(stop.wait())
+            done, pending = await asyncio.wait(
+                {get, sig}, return_when=asyncio.FIRST_COMPLETED)
+            if sig in done:
+                get.cancel()
+                reason = "signal"
+                break
+            sig.cancel()
+            line = get.result()
+            if line is None:
+                reason = "stdin_eof"
+                break
+            text = line.strip()
+            if not text:
+                continue
+            if text == "/quit":
+                reason = "quit"
+                break
+            if text == "/reload":
+                changed = cfg.reload()
+                if changed:
+                    recorder.event("config_reload", changed=changed)
+                print(f"↻ 配置重载：{', '.join(changed) or '无变化'}")
+                continue
+            await kernel.prompt(Envelope(text=text))
+
+        # 优雅停机：中止思维 → 停后台任务 → flush 档案 → 关库 → 释放锁
+        log.info("开始优雅停机（reason=%s）", reason)
+        await kernel.abort()
+        await kernel.wait_idle()
+        stop.set()
+        await asyncio.gather(*tasks, return_exceptions=True)
+        recorder.event("host_stop", reason=reason)
+        recorder.close()
+        store.close()
+        log.info("宿主退出")
+    finally:
+        instance.release(lock)
 
 
 def main() -> None:
