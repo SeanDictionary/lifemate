@@ -75,3 +75,16 @@ def test_masked_hides_secret(tmp_path, monkeypatch):
     m = cfg.masked()
     assert m["llm_api_key"].startswith("***") and "abcdef" not in m["llm_api_key"]
     assert m["llm_api_key"].endswith(m["llm_api_key"][-4:])
+
+
+def test_plugin_namespace_secret_masked(tmp_path, monkeypatch):
+    """plugins 命名空间深度掩码：token 类键不进日志/档案明文。"""
+    cfg = Config(data_dir=tmp_path)
+    cfg.plugins = {"qq": {"enabled": True, "ws_url": "ws://x:1",
+                          "access_token": "sk-abcdef123456789",
+                          "bot_uin": 123}}
+    m = cfg.masked()
+    qq = m["plugins"]["qq"]
+    assert qq["access_token"].startswith("***")
+    assert "123456789" not in qq["access_token"]
+    assert qq["ws_url"] == "ws://x:1" and qq["bot_uin"] == 123  # 非敏感键原样

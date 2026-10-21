@@ -168,11 +168,34 @@ class Config:
 
     # ── 展示 ────────────────────────────────────────────
     def masked(self) -> dict[str, Any]:
-        """掩码导出（日志/UI 展示用，密钥只露尾 4 位）。"""
+        """掩码导出（日志/档案展示用，密钥只露尾 4 位）。
+
+        主白名单键按 _SECRET_KEYS 掩码；plugins 命名空间深度掩码——
+        键名含 token/secret/password/key 的字符串值只露尾 4 位
+        （否则插件的 access_token 会明文进 observe boot 档案）。
+        """
         out: dict[str, Any] = {}
         for k in _JSON_FIELDS:
             v = getattr(self, k)
             if k in _SECRET_KEYS and isinstance(v, str) and len(v) > 8:
                 v = "***" + v[-4:]
+            if k == "plugins" and isinstance(v, dict):
+                v = {name: _mask_secrets(sub) for name, sub in v.items()
+                     if isinstance(sub, dict)}
             out[k] = v
         return out
+
+
+_SECRET_HINT = ("token", "secret", "password", "key")
+
+
+def _mask_secrets(d: dict) -> dict:
+    """插件子对象深度掩码：键名含敏感词的字符串值只露尾 4 位。"""
+    out = {}
+    for k, v in d.items():
+        if (isinstance(v, str) and len(v) > 8
+                and any(h in str(k).lower() for h in _SECRET_HINT)):
+            out[k] = "***" + v[-4:]
+        else:
+            out[k] = v
+    return out
