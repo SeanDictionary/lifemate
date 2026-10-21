@@ -142,6 +142,34 @@ CREATE TABLE IF NOT EXISTS chat_state (
         return out
 
     # ── 已读 ───────────────────────────────────────────
+    def chats(self, self_id: int = 0) -> list[dict[str, Any]]:
+        """会话清单（面板用）：24h 窗口内活跃会话 + 未读数，按最近活跃排序。"""
+        cutoff = time.time() - 86400
+        read_map = {r["chat_id"]: r["last_read_ts"] for r in
+                    self._state.execute(
+                        "SELECT chat_id, last_read_ts FROM chat_state").fetchall()}
+        last_ts: dict[str, float] = {}
+        unread: dict[str, int] = {}
+        for path in self._day_files()[:2]:
+            con = self._open_read(path)
+            try:
+                rows = con.execute(
+                    "SELECT chat_id, ts, sender_id FROM chat_log"
+                    " WHERE ts > ?", (cutoff,)).fetchall()
+            finally:
+                con.close()
+            for r in rows:
+                cid = r["chat_id"]
+                if r["ts"] > last_ts.get(cid, 0):
+                    last_ts[cid] = r["ts"]
+                if self_id and r["sender_id"] == self_id:
+                    continue
+                if r["ts"] > read_map.get(cid, 0):
+                    unread[cid] = unread.get(cid, 0) + 1
+        return [{"chat_id": cid, "last_ts": last_ts[cid],
+                 "unread": unread.get(cid, 0)}
+                for cid in sorted(last_ts, key=lambda c: -last_ts[c])]
+
     def mark_read(self, chat_id: str) -> None:
         self._state.execute(
             "INSERT INTO chat_state (chat_id, last_read_ts) VALUES (?, ?)"

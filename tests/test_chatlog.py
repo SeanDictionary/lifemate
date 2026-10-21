@@ -97,3 +97,23 @@ def test_unread_excludes_self_outbound(tmp_path):
     summary = log.unread_summary(self_id=7)
     assert "2 条" in summary and "3 条" not in summary
     log.close()
+
+
+def test_chats_listing(tmp_path):
+    """会话清单：24h 活跃 + 未读数 + 自我出站不算未读。"""
+    cl = ChatLog(tmp_path)
+    try:
+        now = time.time()
+        cl.append("group_1", 100, "张三", "消息A", ts=now - 60)
+        cl.append("group_1", 200, "self", "我说", ts=now - 30)
+        cl.append("private_9", 100, "李四", "私聊", ts=now - 10)
+        chats = cl.chats(self_id=200)
+        by_id = {c["chat_id"]: c for c in chats}
+        assert set(by_id) == {"group_1", "private_9"}
+        assert by_id["group_1"]["unread"] == 1   # 自己发的不算
+        assert by_id["private_9"]["unread"] == 1
+        assert by_id["private_9"]["last_ts"] > by_id["group_1"]["last_ts"]
+        cl.mark_read("group_1")
+        assert {c["chat_id"]: c for c in cl.chats(200)}["group_1"]["unread"] == 0
+    finally:
+        cl.close()
