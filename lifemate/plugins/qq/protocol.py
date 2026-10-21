@@ -1,0 +1,168 @@
+"""OneBot v11 事件解析（纯函数，零 IO——单测友好）。
+
+OneBot 事件 JSON → ParsedEvent（信封素材），由插件层组装成 Envelope。
+对照协议：../qq-agent/docs/onebot-11/（message/segment、event/*）。
+"""
+from __future__ import annotations
+
+from dataclasses import dataclass, field
+from typing import Any
+
+
+@dataclass
+class ParsedEvent:
+    """解析产物：type 决定后续路由（direct/ambient/platform_event/ignore）。"""
+
+    type: str            # direct / ambient / platform_event / ignore
+    chat_id: str = ""    # group_{id} / private_{id}
+    sender_id: int = 0
+    sender_name: str = ""
+    text: str = ""       # 已拼装的可读文本（含 [图片]/[表情] 等标注）
+    message_id: int = 0
+    image_urls: list[str] = field(default_factory=list)
+    is_owner: bool = False
+    raw: dict = field(default_factory=dict)
+
+
+def _parse_message(event: dict, self_id: int, owner_uin: int) -> ParsedEvent:
+    is_group = event.get("message_type") == "group"
+    sender = event.get("sender") or {}
+    sender_id = event.get("user_id", 0)
+    sender_name = (sender.get("card") or sender.get("nickname")
+                   or str(sender_id))
+    texts: list[str] = []
+    image_urls: list[str] = []
+    at_me = False
+    reply_to_me = False
+    message = event.get("message", [])
+    if isinstance(message, str):  # CQ 码字符串格式兼容
+        texts.append(message)
+        if f"[CQ:at,qq={self_id}]" in message:
+            at_me = True
+    else:
+        for seg in message or []:
+            stype = seg.get("type")
+            data = seg.get("data", {})
+            if stype == "text":
+                texts.append(data.get("text", ""))
+            elif stype == "image":
+                url = data.get("url") or data.get("file") or ""
+                if url:
+                    image_urls.append(url)
+                texts.append("[图片]")
+            elif stype == "at":
+                if str(data.get("qq")) == str(self_id):
+                    at_me = True
+                else:
+                    texts.append(f"@{data.get('qq')}")
+            elif stype == "reply":
+                reply_to_me = True  # 回复链进一步确认成本高，保守视为回应自己
+                texts.append(f"[回复{data.get('id')}]")
+            elif stype == "face":
+                texts.append(f"[表情{data.get('id')}]")
+            elif stype == "record":
+                texts.append("[语音]")
+            elif stype == "video":
+                texts.append("[视频]")
+            elif stype == "forward":
+                texts.append("[合并转发]")
+            elif stype in ("json", "xml"):
+                texts.append(f"[{stype}卡片]")
+            elif stype == "poke":
+                texts.append("[戳一戳]")
+    chat_id = (f"group_{event['group_id']}" if is_group
+               else f"private_{sender_id}")
+    is_owner = bool(owner_uin) and sender_id == owner_uin
+    direct = (not is_group) or at_me or reply_to_me or is_owner
+    return ParsedEvent(
+        type="direct" if direct else "ambient",
+        chat_id=chat_id, sender_id=sender_id, sender_name=sender_name,
+        text="".join(texts).strip(),
+        message_id=event.get("message_id", 0),
+        image_urls=image_urls, is_owner=is_owner, raw=event)
+
+
+def parse_event(event: dict, self_id: int = 0,
+                owner_uin: int = 0) -> ParsedEvent | None:
+    """OneBot 事件 → ParsedEvent；无法翻译的返回 None（调用方忽略）。"""
+    post_type = event.get("post_type", "")
+
+    if post_type == "message":
+        return _parse_message(event, self_id, owner_uin)
+
+    if post_type == "meta_event":
+        return None  # 心跳/生命周期：连接层自理
+
+    if post_type == "request":
+        rt = event.get("request_type", "")
+        if rt == "friend":
+            return ParsedEvent(
+                type="platform_event", chat_id=f"private_{event.get('user_id', 0)}",
+                sender_id=event.get("user_id", 0),
+                text=f"（有人申请加你好友：{event.get('user_id')}，"
+                     f"验证信息：{event.get('comment') or '（无）'}）",
+                raw=event)
+        if rt == "group":
+            return ParsedEvent(
+                type="platform_event", chat_id=f"group_{event.get('group_id', 0)}",
+                sender_id=event.get("user_id", 0),
+                text=f"（有人申请加入群 {event.get('group_id')}："
+                     f"{event.get('user_id')}，验证：{event.get('comment') or '（无）'}）",
+                raw=event)
+        return None
+
+    if post_type == "notice":
+        nt = event.get("notice_type", "")
+        sub = event.get("sub_type", "")
+        uid = event.get("user_id", 0)
+        gid = event.get("group_id", 0)
+        if nt == "group_decrease" and uid == self_id:
+            return ParsedEvent(
+                type="platform_event", chat_id=f"group_{gid}", sender_id=uid,
+                text=f"（你{'被移出' if sub == 'kick_me' else '退出了'}群 {gid}）",
+                raw=event)
+        if nt == "group_increase" and uid == self_id:
+            return ParsedEvent(
+                type="platform_event", chat_id=f"group_{gid}", sender_id=uid,
+                text=f"（你加入了群 {gid}）", raw=event)
+        if nt == "friend_add":
+            return ParsedEvent(
+                type="platform_event", chat_id=f"private_{uid}", sender_id=uid,
+                text=f"（{uid} 和你成为了好友）", raw=event)
+        if nt == "notify" and sub == "poke" and event.get("target_id") == self_id:
+            # 戳一戳自己（user_id=发起方，target_id=被戳方）：显式互动，按强刺激
+            operator = event.get("user_id", 0)
+            return ParsedEvent(
+                type="direct",
+                chat_id=f"group_{gid}" if gid else f"private_{operator}",
+                sender_id=operator,
+                text=f"（{operator} 戳了你一下）", raw=event)
+        if nt in ("group_recall", "friend_recall"):
+            # 自己的消息被撤回：值得知道的自我相关事件
+            user = event.get("user_id", 0)
+            if user == self_id:
+                where = f"群 {gid}" if gid else "私聊"
+                return ParsedEvent(
+                    type="platform_event", chat_id=f"group_{gid}" if gid
+                    else f"private_{event.get('user_id', 0)}",
+                    sender_id=user,
+                    text=f"（你刚刚在{where}发的消息被撤回了）", raw=event)
+        return None
+
+    return None
+
+
+def compose_envelope_text(ev: ParsedEvent) -> str:
+    """ParsedEvent → 信封文本（自然语言信封：场景标注 + 内容）。"""
+    if ev.type == "platform_event":
+        return ev.text
+    where = ev.chat_id
+    if where.startswith("group_"):
+        head = f"[群聊·{where.split('_', 1)[1]}] {ev.sender_name}"
+        if ev.is_owner:
+            head += "（主人）"
+        if ev.type == "direct":
+            return f"{head} 对你说：{ev.text}"
+        return f"{head}：{ev.text}"
+    head = f"[私聊{'·主人' if ev.is_owner else ''}] {ev.sender_name}"
+    return f"{head}：{ev.text}"

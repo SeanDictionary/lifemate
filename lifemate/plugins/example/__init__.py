@@ -7,6 +7,8 @@ SKILL.md 会被 persona 自动并入技能索引。
 from ...kernel.contracts import Tool
 from .. import Plugin, PluginContext
 
+NAME = "example"
+
 
 def create(ctx: PluginContext) -> Plugin | None:
     if not ctx.cfg.plugins.get("example", {}).get("enabled"):
@@ -25,5 +27,5 @@ def create(ctx: PluginContext) -> Plugin | None:
         "inputSchema": {"type": "object", "properties": {}},
     }, func=_hello)
 
-    return Plugin(name="example", tools=[tool],
-                  skills=["example-plugin"])
+    return Plugin(name=NAME, tools=[tool],
+                  skills=[NAME])

@@ -29,7 +29,8 @@
    （重建包固化为常态机制）。
 7. **出站/执行回执制**：工具与适配器永不抛错，返回 `{ok, detail}`；
    失败回执给心智，由它自决重试/放弃/搁置。
-8. **内核/记忆/人格之外的一切新能力必须以器官形式加入**，不进内核。
+8. **内核/记忆/人格之外的一切新能力必须以插件形式加入**（plugins/ 目录，
+   自动发现），不进内核、不改 host/config 主代码。
 9. **记录不可关闭，查看方式可任意**：观测记录（Recorder→data/observe/）
    是项目级日志基础设施，host 无条件挂载，不是器官；查看器（replay/
    将来 WebUI）可拆可换。thinking 不进上下文但必须入档案。
@@ -62,9 +63,11 @@ tests/                 # 单测 + 剥夺测试（必须常绿）
 data/                  # 运行数据（gitignore）：config.json / memory.db /
                       #   sessions/ / observe/ / logs/*.log / backups/ /
                       #   lifemate.lock
-├── organs/            # 器官包（可拆，逐件开发，每器官一文件）
-│   └── ...            #   开发顺序：qq → attention → schedule → sleep →
-│                      #   sandbox → governance → video → webui
+├── plugins/           # 插件目录（一个文件夹=一个插件，自动发现装载）
+│   ├── __init__.py    #   装载器（主代码，写一次）：扫描→create 工厂→注册+start
+│   ├── example/       #   样板插件（默认关）
+│   └── qq/            #   QQ 插件：正向 WS 连 NapCat + 事件→信封 + 工具集
+│                      #   新增插件=加目录+config plugins 命名空间，零主代码改动
 ├── soul/              # 人格（identity.md——数据非代码）
 ├── skills/            # skill 目录：**内置以外**的第三方/扩展功能知情层
 │                      # （器官说明书随器官走；用户自加扩展放这里即生效）
@@ -75,7 +78,7 @@ data/                  # 运行数据（gitignore：memory.db / sessions/）
 .cache/                # 开发副产物 + v1 归档 + 设计文档（gitignore）
 ```
 
-依赖方向（唯一允许）：`host → organs → kernel.contracts ← kernel`；
+依赖方向（唯一允许）：`host → plugins(经装载器) → kernel.contracts ← kernel`；
 `kernel/memory/organs/host → utils`（utils 不依赖任何上层）；器官之间零 import。
 配置体系：业务配置一律进 `utils/config.py` 白名单（即 config.json 键，
 env 仅部署种子）；热重载靠字段原地更新——新组件必须持活引用、用时读取，
@@ -129,9 +132,13 @@ env 仅部署种子）；热重载靠字段原地更新——新组件必须持�
   永不压缩、seq/rid/时间戳/投递语义/执行语义/thinking 全量入档）；
   replay 查看器（思考折叠/工具耗时/按 rid 过滤）；轮换后旧会话文件
   按配置清理（档案职责 100% 归 observe）
-- **待开发器官顺序**：qq → attention → schedule → sleep → sandbox →
-  governance → video → webui（器官开发时同步引入生命周期器官：
-  轮换触发/重建包固化时机）
+- **插件体系 + QQ 插件上线（2026-10-21）**：一个文件夹=一个插件，
+  create(ctx) 工厂自动发现装载（失败隔离）；config plugins 命名空间；
+  QQ 插件（正向 WS 连 NapCat）：强刺激直达（@/私聊/主人/回复/戳），
+  弱刺激背景听觉（chat_log + read_chat_log 自主查看 + 未读身体感受），
+  21 个工具（发消息/媒体/撤回/审批/群管/世界查询/状态/原始 API），
+  出站回执制 + 风控物理钳制；FakeNapCat 端到端测试通过
+- **待开发**：attention（门控升格）→ sandbox → webui → video
 
 ## 验证方式
 
