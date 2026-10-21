@@ -22,6 +22,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 from ..kernel.contracts import PluginPack, Tool
+from ..utils.config import coerce
 
 if TYPE_CHECKING:
     from ..kernel.mind import SelfKernel
@@ -53,6 +54,57 @@ class Plugin(PluginPack):
 
     async def stop(self) -> None:
         """停止感知面（宿主停机时调用）。"""
+
+
+class Field:
+    """插件配置字段声明：默认值即类型与缺省（即文档）。
+
+    访问时从活配置读取（热重载即时生效）并按默认值类型矫正；
+    坏值告警并回落默认，不让配置错误炸排事件处理。
+    """
+
+    __slots__ = ("default", "name")
+
+    def __init__(self, default: Any) -> None:
+        self.default = default
+
+    def __set_name__(self, owner: type, name: str) -> None:
+        self.name = name
+
+    def __get__(self, obj, objtype=None):
+        if obj is None:
+            return self.default
+        raw = obj._live.plugins.get(obj._namespace, {}).get(
+            self.name, self.default)
+        return coerce(raw, self.default,
+                      f"plugins.{obj._namespace}.{self.name}")
+
+
+class PluginConfig:
+    """插件配置基类：声明式字段 + 活配置绑定。
+
+    用法：
+        class QQConfig(PluginConfig):
+            _namespace = "qq"
+            ws_url = Field("ws://127.0.0.1:3001")
+            bot_uin = Field(0)
+
+        conf = QQConfig(ctx.cfg)      # 绑定主 Config 活引用
+        conf.ws_url                   # 用时读+类型矫正（热生效）
+
+    declared() 枚举全部字段（设置页/文档自动渲染用）。
+    """
+
+    _namespace: str = ""
+
+    def __init__(self, cfg) -> None:
+        self._live = cfg  # 主 Config 活引用（热重载原地更新 plugins 字典）
+
+    @classmethod
+    def declared(cls) -> dict[str, Any]:
+        """全部声明字段：{键: 默认值}。"""
+        return {name: f.default for name, f in vars(cls).items()
+                if isinstance(f, Field)}
 
 
 async def load_plugins(ctx: PluginContext) -> list[Plugin]:

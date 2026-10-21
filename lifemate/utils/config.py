@@ -69,9 +69,8 @@ _ENV_SEED = {
 _SECRET_KEYS = {"llm_api_key"}
 
 
-def _coerce(key: str, value: Any) -> Any:
-    """按默认值类型矫正 JSON 读入的值。"""
-    default = _JSON_FIELDS[key]
+def coerce(value: Any, default: Any, key: str = "") -> Any:
+    """按默认值类型矫正值（主白名单与插件配置共用）。"""
     try:
         if isinstance(default, bool):
             return bool(value)
@@ -79,11 +78,18 @@ def _coerce(key: str, value: Any) -> Any:
             return int(value)
         if isinstance(default, float):
             return float(value)
+        if isinstance(default, (list, dict)):
+            return value if isinstance(value, type(default)) else default
         return str(value)
     except (TypeError, ValueError):
         log.warning("配置 %s=%r 类型非法（期望 %s），用默认值",
-                    key, value, type(default).__name__)
+                    key or "?", value, type(default).__name__)
         return default
+
+
+def _coerce(key: str, value: Any) -> Any:
+    """按主白名单默认值类型矫正 JSON 读入的值。"""
+    return coerce(value, _JSON_FIELDS[key], key)
 
 
 class Config:

@@ -17,7 +17,7 @@ import time
 from pathlib import Path
 
 from ...kernel.contracts import AMBIENT, DIRECT, PLATFORM_EVENT, Envelope, Tool
-from .. import Plugin, PluginContext
+from .. import Field, Plugin, PluginConfig, PluginContext
 from .chatlog import ChatLog
 from .connection import OneBotClient
 from .protocol import compose_envelope_text, parse_event
@@ -32,6 +32,21 @@ poke / send_like / set_group_card / leave_group /
 mute_member / kick_member / set_qq_status / set_profile / qq_api"""
 
 
+class QQConfig(PluginConfig):
+    """QQ 插件配置（声明即文档；访问时读，热生效项见各读取点）。"""
+
+    _namespace = "qq"
+    enabled = Field(False)                 # 工厂判断（改后需重启）
+    ws_url = Field("ws://127.0.0.1:3001")  # 建连时读（改后需重启）
+    access_token = Field("")               # 建连时读（改后需重启）
+    bot_uin = Field(0)                     # 每条消息读（热生效）
+    owner_uin = Field(0)                   # 每条消息读（热生效）
+    listen_groups = Field([])              # 每条消息读（热生效；空=全部）
+    chatlog_retention_days = Field(0)      # 日切时读（0=永久）
+    send_min_interval_s = Field(1.0)       # 每次发送读（热生效）
+    send_max_per_min = Field(20)           # 每次发送读（热生效）
+
+
 def _ok(**kw) -> str:
     return json.dumps({"ok": True, **kw}, ensure_ascii=False)
 
@@ -41,9 +56,9 @@ def _err(msg: str, **kw) -> str:
 
 
 class QQPlugin(Plugin):
-    def __init__(self, cfg, data_dir: Path) -> None:
+    def __init__(self, conf: QQConfig, data_dir: Path) -> None:
         super().__init__(name="qq", skills=["qq"])
-        self._cfg = cfg                  # 活配置（热重载即时生效项见 _q）
+        self._conf = conf                # 声明式配置视图（活绑定，用时读）
         self._data_dir = data_dir
         self._client: OneBotClient | None = None
         self._chatlog: ChatLog | None = None
@@ -52,20 +67,16 @@ class QQPlugin(Plugin):
         self._pending_friend: dict[int, str] = {}  # user_id -> flag
         self._pending_group: dict[int, str] = {}   # user_id -> flag
 
-    # ── 配置读取（活引用，部分项热生效） ───────────────
-    def _q(self, key: str, default=None):
-        return self._cfg.plugins.get("qq", {}).get(key, default)
-
     # ── 感知面 ────────────────────────────────────────
     async def start(self, ctx: PluginContext) -> None:
         self._kernel = ctx.kernel
         # 按日分库、不限量；保留期可配（0=永久，默认 0）
         self._chatlog = ChatLog(
             self._data_dir,
-            retention_days=int(self._q("chatlog_retention_days", 0)))
+            retention_days=self._conf.chatlog_retention_days)
         self._client = OneBotClient(
-            ws_url=self._q("ws_url", "ws://127.0.0.1:3001"),
-            access_token=self._q("access_token", ""),
+            ws_url=self._conf.ws_url,
+            access_token=self._conf.access_token,
             on_event=self._on_event)
         self._client.start()
         # 身体感受：未读消息概览挂进每次唤醒
@@ -80,13 +91,13 @@ class QQPlugin(Plugin):
 
     async def _on_event(self, data: dict) -> None:
         """OneBot 事件 → 分诊 → 信封 → notify / 背景听觉。"""
-        self_id = int(self._q("bot_uin", 0) or 0)
-        owner = int(self._q("owner_uin", 0) or 0)
+        self_id = self._conf.bot_uin
+        owner = self._conf.owner_uin
         ev = parse_event(data, self_id=self_id, owner_uin=owner)
         if ev is None or ev.type == "ignore":
             return
         # 群白名单（空=全部）
-        groups = self._q("listen_groups") or []
+        groups = self._conf.listen_groups or []
         if (groups and ev.chat_id.startswith("group_")
                 and ev.chat_id.split("_", 1)[1] not in [str(g) for g in groups]):
             return
@@ -133,10 +144,9 @@ class QQPlugin(Plugin):
         """风控物理钳制（账号生存约束）：最小间隔 + 每分钟上限。"""
         now = time.monotonic()
         self._send_times = [t for t in self._send_times if now - t < 60]
-        if self._send_times and now - self._send_times[-1] < float(
-                self._q("send_min_interval_s", 1.0)):
+        if self._send_times and now - self._send_times[-1] <                 self._conf.send_min_interval_s:
             return "发送过快（最小间隔限制），稍等再试"
-        if len(self._send_times) >= int(self._q("send_max_per_min", 20)):
+        if len(self._send_times) >= self._conf.send_max_per_min:
             return "已达每分钟发送上限，稍等再试"
         self._send_times.append(now)
         return None
@@ -148,9 +158,10 @@ class QQPlugin(Plugin):
 
 
 def create(ctx: PluginContext) -> Plugin | None:
-    if not ctx.cfg.plugins.get("qq", {}).get("enabled"):
+    conf = QQConfig(ctx.cfg)
+    if not conf.enabled:
         return None
-    plugin = QQPlugin(ctx.cfg, ctx.data_dir)
+    plugin = QQPlugin(conf, ctx.data_dir)
     plugin.tools = _build_tools(plugin)
     return plugin
 
@@ -318,7 +329,7 @@ def _build_tools(p: QQPlugin) -> list[Tool]:
     async def set_group_card(args: dict) -> str:
         gid = int(args.get("group_id") or 0)
         card = str(args.get("card") or "")
-        self_id = int(p._q("bot_uin", 0) or 0)
+        self_id = p._conf.bot_uin
         if not gid or not card or not self_id:
             return _err("需要 group_id、card（且配置 bot_uin）")
         return await p._receipt(lambda: p._call(

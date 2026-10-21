@@ -147,7 +147,7 @@ async def _wait_for(predicate, timeout=3.0):
 
 async def test_qq_plugin_end_to_end(tmp_path):
     """FakeNapCat → @bot 群消息 → 心智唤醒（组批信封）→ 工具回复 → API 收到。"""
-    from lifemate.plugins.qq import QQPlugin, _build_tools
+    from lifemate.plugins.qq import QQConfig, QQPlugin, _build_tools
     from lifemate.kernel.compaction import Compactor
     from lifemate.kernel.contracts import ToolCall
     from lifemate.kernel.mind import SelfKernel
@@ -162,7 +162,7 @@ async def test_qq_plugin_end_to_end(tmp_path):
                           "bot_uin": SELF, "owner_uin": OWNER,
                           "send_min_interval_s": 0.0}}
 
-    plugin = QQPlugin(cfg, tmp_path / "plugindata" / "qq")
+    plugin = QQPlugin(QQConfig(cfg), tmp_path / "plugindata" / "qq")
     plugin.tools = _build_tools(plugin)
 
     llm = FakeLLM([
@@ -221,7 +221,7 @@ async def test_qq_plugin_end_to_end(tmp_path):
 
 async def test_ambient_does_not_wake_mind(tmp_path):
     """弱刺激（普通群消息）不唤醒：心智休息如常，只进背景听觉。"""
-    from lifemate.plugins.qq import QQPlugin, _build_tools
+    from lifemate.plugins.qq import QQConfig, QQPlugin, _build_tools
     from lifemate.kernel.compaction import Compactor
     from lifemate.kernel.mind import SelfKernel
     from lifemate.utils.config import Config
@@ -231,7 +231,7 @@ async def test_ambient_does_not_wake_mind(tmp_path):
     url = await napcat.start()
     cfg = Config(data_dir=tmp_path / "cfg")
     cfg.plugins = {"qq": {"enabled": True, "ws_url": url, "bot_uin": SELF}}
-    plugin = QQPlugin(cfg, tmp_path / "plugindata" / "qq")
+    plugin = QQPlugin(QQConfig(cfg), tmp_path / "plugindata" / "qq")
     plugin.tools = _build_tools(plugin)
 
     llm = FakeLLM([LLMResponse(content="我在")])
@@ -300,3 +300,39 @@ async def test_plugin_loader_discovery(tmp_path):
     plugins = await load_plugins(ctx)
     assert "example" in [p.name for p in plugins]
     assert "example_hello" in ctx.kernel.registered and not ctx.kernel.registered or True
+
+
+# ── 插件配置视图（声明式加载器） ────────────────────────
+
+async def test_plugin_config_view(tmp_path):
+    """声明式配置：类型矫正 / 坏值回落 / 热更新 / declared 枚举。"""
+    from lifemate.plugins.qq import QQConfig
+    from lifemate.utils.config import Config
+
+    cfg = Config(data_dir=tmp_path / "cfg")
+    conf = QQConfig(cfg)
+
+    # 默认值（未配置）
+    assert conf.ws_url == "ws://127.0.0.1:3001"
+    assert conf.bot_uin == 0 and conf.send_min_interval_s == 1.0
+
+    # 类型矫正：字符串数字 → int/float
+    cfg.plugins = {"qq": {"bot_uin": "723465745",
+                          "send_min_interval_s": "0.5",
+                          "listen_groups": [1, 2]}}
+    assert conf.bot_uin == 723465745
+    assert conf.send_min_interval_s == 0.5
+    assert conf.listen_groups == [1, 2]
+
+    # 坏值回落默认（不抛异常）
+    cfg.plugins = {"qq": {"bot_uin": "不是数字"}}
+    assert conf.bot_uin == 0
+
+    # 热更新：改 plugins 命名空间即时可见（访问时读）
+    cfg.plugins = {"qq": {"bot_uin": 999}}
+    assert conf.bot_uin == 999
+
+    # declared 枚举（设置页自动渲染用）
+    declared = QQConfig.declared()
+    assert "ws_url" in declared and declared["send_max_per_min"] == 20
+    assert declared["enabled"] is False
