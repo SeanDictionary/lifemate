@@ -83,6 +83,21 @@ class Recorder:
             self._fh.close()
             self._fh = None
 
+    def cleanup(self, retention_days: int) -> int:
+        """保留期清理：删除超期的日档（0=永久保留）。返回删除数。"""
+        if retention_days <= 0:
+            return 0
+        cutoff = time.time() - retention_days * 86400
+        removed = 0
+        for f in self._dir.glob("*.jsonl"):
+            try:
+                if f.stat().st_mtime < cutoff:
+                    f.unlink()
+                    removed += 1
+            except OSError:
+                pass
+        return removed
+
     # ── 内核事件 → 档案行 ──────────────────────────────
     def on_kernel_event(self, ev: MindEvent) -> None:
         d = ev.data

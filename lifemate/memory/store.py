@@ -62,11 +62,25 @@ class Store:
         path.parent.mkdir(parents=True, exist_ok=True)
         self._con = sqlite3.connect(path)
         self._con.row_factory = sqlite3.Row
+        # WAL：读（replay/备份）与写并发不阻塞；进程崩溃自动恢复
+        self._con.execute("PRAGMA journal_mode=WAL")
+        self._con.execute("PRAGMA synchronous=NORMAL")
         self._con.executescript(_SCHEMA)
         self._con.commit()
 
     def close(self) -> None:
         self._con.close()
+
+    def backup(self, dest: Path | str) -> Path:
+        """在线备份（sqlite backup API，写库不停）；返回备份文件路径。"""
+        dest = Path(dest)
+        dest.parent.mkdir(parents=True, exist_ok=True)
+        dst = sqlite3.connect(dest)
+        try:
+            self._con.backup(dst)
+        finally:
+            dst.close()
+        return dest
 
     def _exec(self, sql: str, params: tuple = ()) -> sqlite3.Cursor:
         cur = self._con.execute(sql, params)
