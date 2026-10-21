@@ -9,7 +9,8 @@ from lifemate.kernel.mind import SelfKernel
 from lifemate.kernel.persona import Persona
 from lifemate.kernel.session import Session
 
-from conftest import FakeLLM, make_persona, make_session, text_reply, tool_reply
+from conftest import (FakeLLM, make_config, make_persona, make_session,
+                      text_reply, tool_reply)
 
 
 def make_tool(name: str, result: str = '{"ok": true}',
@@ -26,14 +27,13 @@ def make_tool(name: str, result: str = '{"ok": true}',
 def make_kernel(tmp_path, llm, *, persona: Persona | None = None,
                 tools: list[Tool] | None = None,
                 session: Session | None = None) -> SelfKernel:
-    from lifemate.kernel.llm import LLMClient  # noqa: F401  类型仅注释用
+    cfg = make_config(tmp_path)
     k = SelfKernel(
         llm=llm,  # type: ignore[arg-type]
         persona=persona or make_persona(tmp_path),
         session=session or make_session(tmp_path),
-        compactor=Compactor(llm.chat, threshold_tokens=10**9,  # 测试默认不压缩
-                            keep_recent_tokens=4000),
-        max_turns=5, tool_timeout_s=2.0)
+        compactor=Compactor(llm.chat, cfg),
+        cfg=cfg)
     for t in (tools or []):
         k.register_tool(t)
     return k
@@ -169,9 +169,12 @@ async def test_compaction_triggers_and_persists(tmp_path):
     ])
     session = make_session(tmp_path)
     # keep_recent=40：第 2 轮时截断点落在首条大消息后（保留工具对完整）
-    compactor = Compactor(llm.chat, threshold_tokens=50, keep_recent_tokens=40)
+    cfg = make_config(tmp_path)
+    cfg.compact_threshold_tokens = 50
+    cfg.keep_recent_tokens = 40
+    compactor = Compactor(llm.chat, cfg)
     k = SelfKernel(llm=llm, persona=make_persona(tmp_path), session=session,
-                   compactor=compactor, max_turns=5, tool_timeout_s=2.0)
+                   compactor=compactor, cfg=cfg)
     k.register_tool(make_tool("echo"))
     await k.prompt(Envelope(text=f"触发压缩{big}"))
     await k.wait_idle()

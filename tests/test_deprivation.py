@@ -9,6 +9,7 @@ from lifemate.kernel.contracts import ASSISTANT_MSG, RUN_ENDED, RUN_STARTED, Env
 from lifemate.kernel.mind import SelfKernel
 from lifemate.kernel.persona import Persona
 from lifemate.kernel.session import Session
+from lifemate.utils.config import Config
 from lifemate.memory.store import Store
 from lifemate.memory.tools import build_memory_tools
 
@@ -26,10 +27,13 @@ def build_bare_life(tmp_path, llm) -> tuple[SelfKernel, Store]:
     import pathlib
     repo = pathlib.Path(__file__).resolve().parent.parent
     persona = Persona(repo / "soul", repo / "skills")
+    cfg = Config(data_dir=root_dir / "cfg")
+    cfg.max_turns = 8
+    cfg.compact_threshold_tokens = 10**9
     kernel = SelfKernel(
         llm=llm, persona=persona, session=session,
-        compactor=Compactor(llm.chat, 10**9, 4000),
-        max_turns=8, tool_timeout_s=2.0)
+        compactor=Compactor(llm.chat, cfg),
+        cfg=cfg)
     for t in build_memory_tools(store):
         kernel.register_tool(t)
     return kernel, store

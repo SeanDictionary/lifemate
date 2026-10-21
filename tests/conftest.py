@@ -6,6 +6,17 @@ from typing import Any
 from lifemate.kernel.contracts import LLMResponse, ToolCall
 from lifemate.kernel.persona import Persona
 from lifemate.kernel.session import Session
+from lifemate.utils.config import Config
+
+
+def make_config(tmp_path) -> Config:
+    """隔离的活配置（data_dir 指向临时目录）。"""
+    cfg = Config(data_dir=tmp_path / "cfg")
+    cfg.compact_threshold_tokens = 10**9  # 测试默认不压缩
+    cfg.keep_recent_tokens = 4000
+    cfg.max_turns = 5
+    cfg.tool_timeout_s = 2.0
+    return cfg
 
 
 class FakeLLM:
