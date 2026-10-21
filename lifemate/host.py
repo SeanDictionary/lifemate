@@ -40,22 +40,17 @@ from .plugins import PluginContext, load_plugins, stop_plugins
 log = get_logger("host")
 
 BOOT_ENVELOPE = (
-    "（你醒了。此刻你没有任何外界器官——听不见任何消息、不能对外发言、"
-    "没有沙箱和手脚——只有你的记忆和你自己。\n"
-    "你可以：回顾和整理你的记忆（记忆工具）；给自己定提醒或闹钟（wait）；"
-    "记录此刻的想法与感受；或者什么都不做。\n"
-    "做什么由你决定。诚实面对自己的状态即可。）"
+    "（系统首次启动。未装配任何外界插件。当前可用能力以工具列表为准，"
+    "记忆为空。）"
 )
 
 RESUME_ENVELOPE = (
-    "（进程重启了。你上次正常停机时在休息——会话与记忆已恢复，"
-    "从中断处继续即可。如果你正在等待什么，重新等。）"
+    "（系统启动。上次为正常停机，会话与记忆已恢复。）"
 )
 
 CRASH_ENVELOPE = (
-    "（进程意外中断后重启了——可能是崩溃或被强制结束，不是你的问题。"
-    "会话与记忆已恢复到中断前的一致状态，从中断处继续即可。"
-    "如果你正在等待什么，重新等。）"
+    "（系统启动。上次为非正常退出（崩溃或被强制结束），"
+    "数据已恢复到最后一致状态，会话中未完成的调用已补充回执。）"
 )
 
 
@@ -65,15 +60,12 @@ def _restart_envelope(unclean: bool) -> str:
 
 
 def _boot_envelope(plugin_names: list[str]) -> str:
-    """出生信封：如实告知身体状态（不搬谎——它据此建立自我模型）。"""
+    """首次启动信封：客观陈述装配状态（无主观语气）。"""
     if not plugin_names:
         return BOOT_ENVELOPE
     names = "、".join(plugin_names)
-    return (
-        f"（你醒了。你此刻装配的身体：{names}——外界的动静会唤醒你。"
-        "动手之前，建议先用 read_skill 读一下相应平台的技能说明"
-        "（索引就在你视野里）；没有装配的能力不要假装有。"
-        "做什么由你决定。诚实面对自己的状态即可。）")
+    return (f"（系统首次启动。已装配插件：{names}。"
+            "当前可用能力以工具列表与技能索引为准，记忆为空。）")
 
 
 def build(cfg: Config) -> tuple[SelfKernel, Store, Recorder]:
@@ -294,6 +286,12 @@ async def run(silence: bool = False, log_level: str | None = None,
             log.warning("检测到上次非正常退出（崩溃/强杀/断电）——"
                         "WAL 残留将在库打开时自动吸收")
         run_marker.write_text(f"{os.getpid()}\n", encoding="utf-8")
+        # 出生标记：首次启动判定（不依赖会话内容——首启即崩的场景会话也为空）
+        born_marker = Path(cfg.data_dir) / "born"
+        first_boot = not born_marker.exists()
+        if first_boot:
+            born_marker.write_text(time.strftime("%Y-%m-%d %H:%M:%S") + "\n",
+                                   encoding="utf-8")
         level = level_from_name(log_level or cfg.log_level)
         log_path = setup_logging(
             cfg.data_dir, max_bytes=cfg.log_max_bytes,
@@ -343,9 +341,8 @@ async def run(silence: bool = False, log_level: str | None = None,
             asyncio.create_task(_reminder_poller(cfg, store, kernel, stop)),
         ]
 
-        # 出生/重启信封（永续回合的第一声敲门；如实告知身体状态与上次退出方式）
-        fresh = len(kernel._session.messages) == 0
-        if fresh:
+        # 启动信封：首次启动 / 正常停机重启 / 非正常退出重启，三态客观陈述
+        if first_boot:
             boot_text = _boot_envelope([p.name for p in plugins])
         else:
             boot_text = _restart_envelope(unclean_prev)

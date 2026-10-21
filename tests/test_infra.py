@@ -208,13 +208,24 @@ def test_log_console_off(tmp_path):
         encoding="utf-8")
 
 
-def test_restart_envelope_distinguishes_unclean():
-    """重启信封区分正常停机与意外中断。"""
-    from lifemate.host import _restart_envelope
+def test_boot_envelopes_three_states_objective():
+    """三态启动信封：首次/正常重启/非正常重启，内容客观无主观语气。"""
+    from lifemate.host import BOOT_ENVELOPE, _boot_envelope, _restart_envelope
+    # 首次（有/无插件）
+    assert "首次启动" in BOOT_ENVELOPE and "记忆为空" in BOOT_ENVELOPE
+    with_plug = _boot_envelope(["qq"])
+    assert "首次启动" in with_plug and "qq" in with_plug
+    # 正常停机重启 vs 非正常退出重启
     clean = _restart_envelope(False)
     crash = _restart_envelope(True)
-    assert "正常停机" in clean and "不是你的问题" not in clean
-    assert "意外中断" in crash and "不是你的问题" in crash
+    assert "正常停机" in clean and "非正常退出" not in clean
+    assert "非正常退出" in crash
+    # 客观性：无主观语气词（无安慰/建议/命令式）
+    subjective = ["你醒了", "不是你的问题", "诚实面对", "由你决定",
+                  "即可", "建议"]
+    for text in (BOOT_ENVELOPE, with_plug, clean, crash):
+        for word in subjective:
+            assert word not in text, f"{word!r} 出现在 {text!r}"
 
 
 def test_store_boots_with_wal_residue(tmp_path):
