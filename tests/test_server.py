@@ -220,12 +220,13 @@ async def test_history_dates_usage(env):
 
 async def test_config_get_apply_reload(env):
     port, _, _, cfg, _ = env
+    cfg.server_token = "test-token"            # 本测试全程带鉴权（配置保存会触发空值换新）
     cfg.llm_api_key = "sk-secret-12345678"
-    _, data = await _jget(port, "/api/config")
+    _, data = await _jget(port, "/api/config?token=test-token")
     key = data["config"]["llm_api_key"]
     assert key.startswith("***") and key.endswith("678")   # 掩码
 
-    status, body = await _req(port, "POST", "/api/config", {
+    status, body = await _req(port, "POST", "/api/config?token=test-token", {
         "log_level": "debug",              # 正常应用
         "llm_api_key": "***678",           # 掩码回传 = 未修改
         "bogus_key": 1,                    # 白名单外
@@ -239,15 +240,16 @@ async def test_config_get_apply_reload(env):
     assert '"log_level": "debug"' in cfg.path.read_text(encoding="utf-8")
 
     # 密钥明文新值 → 覆盖
-    status, body = await _req(port, "POST", "/api/config",
+    status, body = await _req(port, "POST", "/api/config?token=test-token",
                               {"llm_api_key": "sk-new-9999"})
     data = json.loads(body)
     assert data["applied"] == ["llm_api_key"]
     assert cfg.llm_api_key == "sk-new-9999"
 
-    _, body = await _req(port, "POST", "/api/config/reload")
+    _, body = await _req(port, "POST", "/api/config/reload?token=test-token")
     data = json.loads(body)
     assert data["ok"] and isinstance(data["changed"], list)
+    cfg.server_token = ""                    # 还原，不影响其他测试
 
 
 # ── 记忆浏览 ───────────────────────────────────────────

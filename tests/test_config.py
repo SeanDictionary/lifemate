@@ -128,3 +128,25 @@ def test_save_and_apply_updates(tmp_path):
     result = cfg.apply_updates({"llm_api_key": "***5678"})
     assert result["skipped_masked"] == ["llm_api_key"]
     assert cfg.llm_api_key == "sk-secret-12345678"
+
+
+def test_server_token_generated_and_reset(tmp_path):
+    """server_token：首启随 config 生成随机值；清空重载即重置（永不裸奔）。"""
+    cfg = Config(data_dir=tmp_path)
+    assert cfg.server_token and len(cfg.server_token) >= 20   # 首启已生成
+    data = json.loads(cfg.path.read_text(encoding="utf-8"))
+    assert data["server_token"] == cfg.server_token           # 已落盘
+
+    # 用户清空（文件层面）→ 热重载发现为空 → 换新随机值并落盘
+    data["server_token"] = ""
+    cfg.path.write_text(json.dumps(data, ensure_ascii=False), encoding="utf-8")
+    old = cfg.server_token
+    cfg.reload()
+    assert cfg.server_token and cfg.server_token != old
+    data = json.loads(cfg.path.read_text(encoding="utf-8"))
+    assert data["server_token"] == cfg.server_token           # 新值已写回
+
+    # 掩码：API/档案不泄露
+    masked = cfg.masked()
+    assert masked["server_token"].startswith("***")
+    assert cfg.server_token not in json.dumps(masked)

@@ -12,6 +12,7 @@ from __future__ import annotations
 import json
 import logging
 import os
+import secrets
 from pathlib import Path
 from typing import Any
 
@@ -56,7 +57,7 @@ _JSON_FIELDS: dict[str, Any] = {
     # 网络服务层（宿主侧，API + 前端静态托管；始终启动，无开关）
     "server_host": "127.0.0.1",       # 绑定地址（暴露局域网是显式行为）
     "server_port": 8300,              # 端口（绑定期读，改后需重启）
-    "server_token": "",               # 非空则全端点校验 ?token=（每请求读，热生效）
+    "server_token": "",               # API 访问令牌：空值自动生成随机值（首启/热重载均保证非空）
     "server_static_dir": "web/out",   # 前端静态导出目录（相对 CWD）
     # 插件命名空间（自由子对象，插件私有键不进主白名单）
     "plugins": {},
@@ -72,7 +73,7 @@ _ENV_SEED = {
     "llm_model": "LIFEMATE_LLM_MODEL",
 }
 
-_SECRET_KEYS = {"llm_api_key"}
+_SECRET_KEYS = {"llm_api_key", "server_token"}
 
 
 def coerce(value: Any, default: Any, key: str = "") -> Any:
@@ -169,7 +170,18 @@ class Config:
             log.info("配置重载生效：%s", ", ".join(
                 f"{k}=***" if k in _SECRET_KEYS else
                 f"{k}={getattr(self, k)}" for k in changed))
+        self._ensure_token()
         return changed
+
+    def _ensure_token(self) -> None:
+        """server_token 空值重置：首启随 config 生成、热重载/保存后发现
+        为空即换随机值并落盘——API 永不裸奔（安全默认）。"""
+        if self.server_token:
+            return
+        self.server_token = secrets.token_urlsafe(24)
+        self.save()
+        log.info("server_token 为空，已重置随机值（config.json 已更新，"
+                 "可在文件中查看）")
 
     def _write_default(self) -> None:
         self.path.parent.mkdir(parents=True, exist_ok=True)
@@ -221,8 +233,10 @@ class Config:
             applied.append(k)
         if applied:
             self.save()
-        return {"applied": applied, "skipped_masked": skipped,
-                "unknown": unknown}
+        result = {"applied": applied, "skipped_masked": skipped,
+                  "unknown": unknown}
+        self._ensure_token()   # 面板清空 token 保存 → 立即换新（不等待重载）
+        return result
 
     def write_plugin_defaults(self, name: str, section: dict) -> bool:
         """把插件默认配置段写入 config.json（仅当该段不存在时）。
