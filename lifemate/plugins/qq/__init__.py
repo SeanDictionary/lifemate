@@ -20,7 +20,7 @@ from ...kernel.contracts import DIRECT, PLATFORM_EVENT, Envelope
 from .. import Plugin, PluginContext
 from .chatlog import ChatLog
 from .config import QQConfig
-from .tools import _build_tools, _err, _ok
+from .tools import build_tools, _err, _ok
 from .connection import OneBotClient
 from .protocol import compose_envelope_text, parse_event
 
@@ -161,5 +161,5 @@ def create(ctx: PluginContext) -> Plugin | None:
     if not conf.enabled:
         return None
     plugin = QQPlugin(conf, ctx.cfg, ctx.data_dir)
-    plugin.tools = _build_tools(plugin)
+    plugin.tools = build_tools(plugin)
     return plugin

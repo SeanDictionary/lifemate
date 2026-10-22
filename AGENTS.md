@@ -102,8 +102,10 @@ data/                  # 运行数据（gitignore：memory.db / sessions/）
 kernel.contracts ← kernel`；
 `kernel/memory/organs/host → utils`（utils 不依赖任何上层）；器官之间零 import。
 工具约定：模块的工具一律住该模块的 `tools.py`，无例外（kernel/memory/
-server/plugins 均如此）——找工具只看 tools.py；工厂依赖作参数传入，
-tools.py 只 import contracts 层，不引入新依赖方向。
+server/plugins 均如此）——找工具只看 tools.py；入口形状：单工具
+`make_X_tool(deps) -> Tool`，多工具 `build_X_tools(deps) -> list[Tool]`，
+一律公开命名（无下划线）；工厂依赖作参数传入，tools.py 只 import
+contracts 层，不引入新依赖方向。
 配置体系：业务配置一律进 `utils/config.py` 白名单（即 config.json 键，
 env 仅部署种子）；热重载靠字段原地更新——新组件必须持活引用、用时读取，
 禁止启动时冻结拷贝。

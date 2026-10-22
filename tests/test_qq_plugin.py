@@ -147,7 +147,7 @@ async def _wait_for(predicate, timeout=3.0):
 
 async def test_qq_plugin_end_to_end(tmp_path):
     """FakeNapCat → @bot 群消息 → 心智唤醒（组批信封）→ 工具回复 → API 收到。"""
-    from lifemate.plugins.qq import QQConfig, QQPlugin, _build_tools
+    from lifemate.plugins.qq import QQConfig, QQPlugin, build_tools
     from lifemate.kernel.compaction import Compactor
     from lifemate.kernel.contracts import ToolCall
     from lifemate.kernel.mind import SelfKernel
@@ -163,7 +163,7 @@ async def test_qq_plugin_end_to_end(tmp_path):
                           "send_min_interval_s": 0.0}}
 
     plugin = QQPlugin(QQConfig(cfg), cfg, tmp_path / "plugindata" / "qq")
-    plugin.tools = _build_tools(plugin)
+    plugin.tools = build_tools(plugin)
 
     llm = FakeLLM([
         LLMResponse(content="被@了，我看看群里聊什么", tool_calls=[
@@ -233,7 +233,7 @@ async def test_qq_plugin_end_to_end(tmp_path):
 
 async def test_ambient_does_not_wake_mind(tmp_path):
     """弱刺激（普通群消息）不唤醒：心智休息如常，只进背景听觉。"""
-    from lifemate.plugins.qq import QQConfig, QQPlugin, _build_tools
+    from lifemate.plugins.qq import QQConfig, QQPlugin, build_tools
     from lifemate.kernel.compaction import Compactor
     from lifemate.kernel.mind import SelfKernel
     from lifemate.utils.config import Config
@@ -244,7 +244,7 @@ async def test_ambient_does_not_wake_mind(tmp_path):
     cfg = Config(data_dir=tmp_path / "cfg")
     cfg.plugins = {"qq": {"enabled": True, "ws_url": url, "bot_uin": SELF}}
     plugin = QQPlugin(QQConfig(cfg), cfg, tmp_path / "plugindata" / "qq")
-    plugin.tools = _build_tools(plugin)
+    plugin.tools = build_tools(plugin)
 
     llm = FakeLLM([LLMResponse(content="我在")])
     kernel = SelfKernel(llm=llm, persona=make_persona(tmp_path),

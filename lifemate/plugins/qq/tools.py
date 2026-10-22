@@ -24,7 +24,7 @@ def _err(msg: str, **kw) -> str:
     return json.dumps({"ok": False, "error": msg, **kw}, ensure_ascii=False)
 
 
-def _build_tools(p: QQPlugin) -> list[Tool]:
+def build_tools(p: QQPlugin) -> list[Tool]:
     tools: list[Tool] = []
 
     # ── 发消息 ────────────────────────────────────────
