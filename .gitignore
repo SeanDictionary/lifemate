@@ -23,3 +23,6 @@ Thumbs.db
 web/node_modules/
 web/.next/
 web/out/
+
+# Playwright MCP 验证副产物
+.playwright-mcp/
