@@ -67,6 +67,8 @@ export interface HistoryResp {
   count: number;
   total: number;
   rows: ObserveRecord[];
+  error?: string;
+  available?: string[];
 }
 
 export interface ChatMessage {
@@ -98,6 +100,25 @@ export interface PluginsResp {
 export interface ConfigResp {
   ok: boolean;
   config: Record<string, unknown>;
+}
+
+/** 配置字段声明（/api/config/schema——设置页数据驱动渲染的依据） */
+export interface SchemaField {
+  type: "string" | "number" | "bool" | "array" | "object";
+  default: unknown;
+  description: string;
+  group?: string;
+  secret?: boolean;
+  restart?: boolean;
+  env_var?: string;
+}
+
+export interface ConfigSchemaResp {
+  ok: boolean;
+  fields: Record<string, SchemaField>;
+  plugins: Record<string, Record<string, SchemaField>>;
+  /** 当前真被环境变量占用的主配置键 */
+  env_set: string[];
 }
 
 export interface ApplyResult {

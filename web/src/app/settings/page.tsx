@@ -1,30 +1,73 @@
 "use client";
-/** 设置：config 只读展示 + 分区表单编辑 + 保存/重载（密钥掩码，env 锁定标注） */
-import { useEffect, useState } from "react";
+/** 设置：schema 驱动渲染（分组/类型/说明/密钥/重启/env 锁定全部来自
+ * /api/config/schema，零硬编码——后端加配置键前端自动出现）。
+ * 插件设置按 plugins.<name>.<key> 点路径读写（后端按插件声明校验）。 */
+import { useEffect, useMemo, useState } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { toast } from "sonner";
 import { apiGet, apiPost } from "@/lib/api";
-import type { ApplyResult, ConfigResp, Receipt } from "@/lib/types";
+import type { ApplyResult, ConfigResp, ConfigSchemaResp, Receipt, SchemaField } from "@/lib/types";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Badge } from "@/components/ui/badge";
 import { Skeleton } from "@/components/ui/skeleton";
+import { Switch } from "@/components/ui/switch";
 
-/** 分区（键名即文档；密钥/布尔/数字的输入形态按默认值类型判断） */
-const GROUPS: { title: string; keys: string[] }[] = [
-  { title: "模型", keys: ["llm_base_url", "llm_model", "llm_api_key", "llm_max_retries", "llm_retry_backoff_s", "llm_fail_alert_streak"] },
-  { title: "内核", keys: ["max_turns", "turns_rest_nudge", "tool_timeout_s", "compact_threshold_tokens", "keep_recent_tokens"] },
-  { title: "网络服务", keys: ["server_host", "server_port", "server_token", "server_static_dir"] },
-  { title: "观测与档案", keys: ["observe_retention_days", "observe_max_field_chars", "session_keep_rotated"] },
-  { title: "系统日志", keys: ["log_level", "log_max_bytes", "log_backup_count"] },
-  { title: "守护", keys: ["watchdog_interval_s", "max_run_s", "reminder_poll_s", "queue_max_steer", "backup_interval_s", "backup_keep", "config_poll_s"] },
-];
+/** 草稿值：主键 + 插件点路径（plugins.<name>.<key>）统一平铺 */
+type Draft = Record<string, string | boolean>;
 
-/** 密钥字段（镜像后端 _SECRET_KEYS——精确集合，不用子串启发：
- *  compact_threshold_tokens 这类"token 数量"键不是凭证） */
-const SECRET_KEYS = new Set(["llm_api_key", "server_token"]);
+function toDraftValue(v: unknown): string | boolean {
+  if (typeof v === "boolean") return v;
+  if (Array.isArray(v)) return v.join(","); // 数组 → 逗号分隔编辑
+  return v === null || v === undefined ? "" : String(v);
+}
+
+function fromDraftValue(v: string | boolean, f: SchemaField): unknown {
+  if (f.type === "bool") return Boolean(v);
+  if (f.type === "number") return Number(v);
+  if (f.type === "array")
+    return String(v).split(",").map((s) => s.trim()).filter(Boolean);
+  return String(v);
+}
+
+/** 单个字段渲染：按 schema 类型选控件，元数据出角标（id 用全路径防跨插件重名） */
+function FieldRow({
+  id, label, f, value, envLocked, onChange,
+}: {
+  id: string; label: string; f: SchemaField; value: string | boolean | undefined;
+  envLocked: boolean; onChange: (v: string | boolean) => void;
+}) {
+  return (
+    <div className="space-y-1">
+      <div className="flex items-center gap-2">
+        <Label htmlFor={id} className="font-mono text-xs">{label}</Label>
+        {f.secret && <Badge variant="outline" className="text-[10px]">密钥</Badge>}
+        {f.restart && <Badge variant="outline" className="text-[10px]">需重启</Badge>}
+        {envLocked && <Badge variant="outline" className="text-[10px]">env 锁定</Badge>}
+      </div>
+      {f.description && (
+        <p className="text-[11px] leading-tight text-muted-foreground">{f.description}</p>
+      )}
+      {f.type === "bool" ? (
+        <div className="flex items-center gap-2 pt-1">
+          <Switch id={id} checked={Boolean(value)} onCheckedChange={onChange} />
+          <span className="text-xs text-muted-foreground">{value ? "开" : "关"}</span>
+        </div>
+      ) : (
+        <Input
+          id={id}
+          type={f.secret ? "password" : f.type === "number" ? "number" : "text"}
+          step={f.type === "number" ? "any" : undefined}
+          className="h-8 font-mono text-xs"
+          value={value === undefined ? "" : String(value)}
+          onChange={(e) => onChange(e.target.value)}
+        />
+      )}
+    </div>
+  );
+}
 
 export default function SettingsPage() {
   const qc = useQueryClient();
@@ -32,29 +75,68 @@ export default function SettingsPage() {
     queryKey: ["config"],
     queryFn: () => apiGet<ConfigResp>("/api/config"),
   });
-  const [draft, setDraft] = useState<Record<string, string>>({});
+  const { data: schema } = useQuery({
+    queryKey: ["configSchema"],
+    queryFn: () => apiGet<ConfigSchemaResp>("/api/config/schema"),
+  });
+  const [draft, setDraft] = useState<Draft>({});
 
   useEffect(() => {
-    if (data) {
-      const d: Record<string, string> = {};
-      for (const [k, v] of Object.entries(data.config)) {
-        if (k === "plugins" || k.startsWith("soul_") || k.startsWith("skills_")) continue;
-        d[k] = v === null || v === undefined ? "" : String(v);
-      }
-      setDraft(d);
+    if (!data || !schema) return;
+    const d: Draft = {};
+    for (const [k, v] of Object.entries(data.config)) {
+      if (k === "plugins") continue;
+      d[k] = toDraftValue(v);
     }
-  }, [data]);
+    // 插件段 → 点路径平铺（值经后端掩码，密钥显示 *** 尾）
+    const plug = (data.config.plugins ?? {}) as Record<string, Record<string, unknown>>;
+    for (const [name, section] of Object.entries(plug)) {
+      if (!section || typeof section !== "object") continue;
+      for (const [fk, v] of Object.entries(section)) {
+        d[`plugins.${name}.${fk}`] = toDraftValue(v);
+      }
+    }
+    setDraft(d);
+  }, [data, schema]);
 
-  const secretOf = (k: string) => SECRET_KEYS.has(k);
+  /** 主配置按声明分组（保持声明顺序）；未分组键归"其他" */
+  const groups = useMemo(() => {
+    if (!schema) return [];
+    const acc: { title: string; items: [string, SchemaField][] }[] = [];
+    const idx = new Map<string, number>();
+    for (const [k, f] of Object.entries(schema.fields)) {
+      if (k === "plugins") continue;
+      const title = f.group || "其他";
+      if (!idx.has(title)) {
+        idx.set(title, acc.length);
+        acc.push({ title, items: [] });
+      }
+      acc[idx.get(title)!].items.push([k, f]);
+    }
+    return acc;
+  }, [schema]);
+
   const envLocked = (k: string) =>
-    (data?.config?.env_locked as string[] | undefined)?.includes?.(k) ?? false;
+    schema?.env_set?.includes(k) ?? false;
 
   const save = async () => {
     if (!data) return;
-    // 只提交有变化的键；掩码形态原样回传（后端跳过 = 未修改）
-    const updates: Record<string, string> = {};
+    const updates: Record<string, unknown> = {};
     for (const [k, v] of Object.entries(draft)) {
-      if (String(data.config[k] ?? "") !== v) updates[k] = v;
+      const orig = (() => {
+        if (k.startsWith("plugins.")) {
+          const [, name, fk] = k.split(".");
+          const plug = (data.config.plugins ?? {}) as Record<string, Record<string, unknown>>;
+          return toDraftValue(plug?.[name]?.[fk]);
+        }
+        return toDraftValue(data.config[k]);
+      })();
+      if (orig !== v) {
+        const f = k.startsWith("plugins.")
+          ? schema?.plugins?.[k.split(".")[1]]?.[k.split(".")[2]]
+          : schema?.fields?.[k];
+        if (f) updates[k] = fromDraftValue(v, f);
+      }
     }
     if (!Object.keys(updates).length) return toast.info("没有改动");
     try {
@@ -92,7 +174,7 @@ export default function SettingsPage() {
     <div className="space-y-4">
       <div className="flex items-center gap-3">
         <h1 className="text-lg font-semibold">设置</h1>
-        <span className="text-xs text-muted-foreground">保存即热生效并写入 config.json</span>
+        <span className="text-xs text-muted-foreground">保存即热生效并写入 config.json（标&quot;需重启&quot;的除外）</span>
         <div className="ml-auto flex gap-2">
           <Button variant="outline" size="sm" onClick={reload}>从文件重载</Button>
           <Button size="sm" onClick={save}>保存</Button>
@@ -100,33 +182,51 @@ export default function SettingsPage() {
       </div>
 
       <div className="grid gap-4 md:grid-cols-2">
-        {GROUPS.map((g) => (
+        {groups.map((g) => (
           <Card key={g.title}>
             <CardHeader className="pb-3">
               <CardTitle className="text-sm">{g.title}</CardTitle>
             </CardHeader>
             <CardContent className="space-y-3">
-              {g.keys
-                .filter((k) => k in draft)
-                .map((k) => (
-                  <div key={k} className="space-y-1">
-                    <div className="flex items-center gap-2">
-                      <Label htmlFor={k} className="font-mono text-xs">{k}</Label>
-                      {secretOf(k) && <Badge variant="outline" className="text-[10px]">密钥</Badge>}
-                      {envLocked(k) && <Badge variant="outline" className="text-[10px]">env 锁定</Badge>}
-                    </div>
-                    <Input
-                      id={k}
-                      className="h-8 font-mono text-xs"
-                      value={draft[k] ?? ""}
-                      onChange={(e) => setDraft((d) => ({ ...d, [k]: e.target.value }))}
-                    />
-                  </div>
-                ))}
+              {g.items.map(([k, f]) => (
+                <FieldRow
+                  key={k} id={k} label={k} f={f} envLocked={envLocked(k)}
+                  value={draft[k]}
+                  onChange={(v) => setDraft((d) => ({ ...d, [k]: v }))}
+                />
+              ))}
             </CardContent>
           </Card>
         ))}
       </div>
+
+      {/* 插件设置：按已声明插件分组（含未启用的——值来自 config.json 预设段） */}
+      {schema && Object.keys(schema.plugins).length > 0 && (
+        <>
+          <h2 className="pt-2 text-sm font-semibold">插件</h2>
+          <div className="grid gap-4 md:grid-cols-2">
+            {Object.entries(schema.plugins).map(([name, fields]) => (
+              <Card key={name}>
+                <CardHeader className="pb-3">
+                  <CardTitle className="text-sm font-mono">{name}</CardTitle>
+                </CardHeader>
+                <CardContent className="space-y-3">
+                  {Object.entries(fields).map(([fk, f]) => {
+                    const k = `plugins.${name}.${fk}`;
+                    return (
+                      <FieldRow
+                        key={k} id={k} label={fk} f={f} envLocked={false}
+                        value={draft[k]}
+                        onChange={(v) => setDraft((d) => ({ ...d, [k]: v }))}
+                      />
+                    );
+                  })}
+                </CardContent>
+              </Card>
+            ))}
+          </div>
+        </>
+      )}
     </div>
   );
 }

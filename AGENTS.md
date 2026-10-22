@@ -183,6 +183,16 @@ env 仅部署种子）；热重载靠字段原地更新——新组件必须持�
   发觉不对→撤销/补救/铭记，不可逆动作出手前慢一拍）；出站回执复述动作
   事实（contracts 约定，qq 发送回执带 text）；qq 自发消息落 chat_log
   （带 message_id 句柄，read_chat_log 可见，未读统计排除自己）
+- **配置声明化 + 设置页 schema 驱动（2026-10-22）**：utils/config 新增
+  Setting（默认值即类型，description/secret/restart/group 元数据即文档），
+  _JSON_FIELDS 全量声明化（行注释转正为 description），_SECRET_KEYS
+  由声明派生；插件 Field 继承 Setting（共用 schema 投影），
+  PluginConfig.declared_fields() + 装载器登记（register_plugin_schema，
+  含未启用插件）；qq 配置抽到独立 plugins/qq/config.py；
+  新端点 GET /api/config/schema（声明投影 + env_set），
+  apply_updates 支持 plugins.<name>.<key> 点路径（按声明校验+coerce）；
+  前端设置页 schema 驱动重写（分组/类型控件/密码框/重启角标/env
+  锁定/插件设置区，零硬编码）
 - **时间感全链路闭环（2026-10-22）**：数据层——会话消息全类型带 ts
   （user 取 Envelope.ts、assistant/tool 写入时刻；build_request 发 API
   前剥离；JSONL 持久化/重启恢复不再丢时间），压缩摘要带时间范围
