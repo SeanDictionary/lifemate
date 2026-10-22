@@ -301,12 +301,15 @@ def test_plugin_schema_fill_missing_keys(tmp_path):
     cfg.reload()
     assert cfg.plugins["qq"]["enabled"] is True
     # 新版本声明新增字段 → 注册时补全
-    cfg.register_plugin_schema("qq", {
-        "enabled": Setting(False),
-        "ws_url": Setting("ws://x"),
-        "wake_aliases": Setting([], description="唤醒别名"),
-        "envelope_context_n": Setting(4),
-    })
+    cfg.register_plugin_schema(
+        "qq",
+        {
+            "enabled": Setting(False),
+            "ws_url": Setting("ws://x"),
+            "wake_aliases": Setting([], description="唤醒别名"),
+            "envelope_context_n": Setting(4),
+        },
+    )
     assert "wake_aliases" in cfg.plugins["qq"]
     assert cfg.plugins["qq"]["envelope_context_n"] == 4
     assert cfg.plugins["qq"]["enabled"] is True  # 用户已改值未被碰
@@ -315,9 +318,7 @@ def test_plugin_schema_fill_missing_keys(tmp_path):
     assert "wake_aliases" in data["plugins"]["qq"]
     assert data["plugins"]["qq"]["enabled"] is True
     # 幂等：重复注册不再写
-    cfg.register_plugin_schema("qq", {
-        "enabled": Setting(False), "wake_aliases": Setting([]),
-        "envelope_context_n": Setting(4), "ws_url": Setting("ws://x")})
+    cfg.register_plugin_schema("qq", {"enabled": Setting(False), "wake_aliases": Setting([]), "envelope_context_n": Setting(4), "ws_url": Setting("ws://x")})
     assert cfg.plugins["qq"]["enabled"] is True
 
 
