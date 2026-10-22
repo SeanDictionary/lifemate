@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import re
 from dataclasses import dataclass
 from typing import Any, Awaitable, Callable
 from urllib.parse import parse_qs
@@ -125,7 +126,8 @@ _MIME = {
 
 
 def static_resp(root, rel: str) -> bytes:
-    """受控静态文件：防穿越；解析顺序 文件 → 路径/index.html → 路径.html。
+    """受控静态文件：防穿越；解析顺序 文件 → 路径/index.html → 路径.html
+    → Next 预取翻译（__next.<seg>.__PAGE__.txt → __next.<seg>/__PAGE__.txt）。
 
     Next 静态导出的资源带内容哈希，_next/static/ 发 immutable 缓存头。
     """
@@ -139,11 +141,20 @@ def static_resp(root, rel: str) -> bytes:
     if base.suffix == "":
         cands.append(base / "index.html")
         cands.append(base.with_name(base.name + ".html"))
+    if "__next." in rel:  # RSC 预取 URL 的点号 → 文件系统斜杠
+        translated = re.sub(r"\.([^.]+)\.txt$", r"/\1.txt", rel)
+        cands.append((root / translated).resolve())
     for c in cands:
         if c.is_file():
             ctype = _MIME.get(c.suffix.lower(), "application/octet-stream")
-            extra = ({"Cache-Control": "public, max-age=31536000, immutable"}
-                     if rel.startswith("_next/static/") else None)
+            if rel.startswith("_next/static/"):
+                # 内容哈希资源：永久缓存
+                extra = {"Cache-Control": "public, max-age=31536000, immutable"}
+            elif ctype.startswith("text/html"):
+                # HTML 引用哈希资源：必须每次回源，否则重建后用户永远拿旧页面
+                extra = {"Cache-Control": "no-cache"}
+            else:
+                extra = None
             return resp_bytes(200, ctype, c.read_bytes(), extra)
     return resp_bytes(404, "text/plain; charset=utf-8", b"not found")
 

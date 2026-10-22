@@ -304,3 +304,13 @@ async def test_plugin_without_panel_listed(env):
     # env fixture 用空插件表；这里直接验证 404 语义即可
     status, data = await _jget(port, "/api/plugins/qq/status")
     assert status == 404
+
+
+async def test_static_next_rsc_translation(tmp_path):
+    """Next 16 RSC 预取：URL 点号 → 文件斜杠（__next.x.__PAGE__.txt）。"""
+    from lifemate.server.http import static_resp, json_resp
+    out = tmp_path / "out"
+    (out / "events" / "__next.events").mkdir(parents=True)
+    (out / "events" / "__next.events" / "__PAGE__.txt").write_text("rsc", encoding="utf-8")
+    resp = static_resp(out, "/events/__next.events.__PAGE__.txt")
+    assert resp.split(b"\r\n\r\n", 1)[1] == b"rsc"
