@@ -12,6 +12,7 @@ from typing import Any, Protocol
 
 from .contracts import LLMResponse
 from .session import Session, _MSG_OVERHEAD, estimate_tokens
+from ..utils import clock
 
 log = logging.getLogger("kernel.compaction")
 
@@ -62,15 +63,27 @@ class Compactor:
         except Exception:  # noqa: BLE001
             log.exception("压缩调用失败（跳过本轮）")
             return None
-        session.apply_compaction(summary, kept)
-        log.info("会话压缩：丢弃 %d 条，保留 %d 条，摘要 %d 字",
-                 len(dropped), len(kept), len(summary))
+        session.apply_compaction(summary, kept, span=self._span_of(dropped))
+        log.info("会话压缩：丢弃 %d 条，保留 %d 条，摘要 %d 字（%s）",
+                 len(dropped), len(kept), len(summary), span or "无时间范围")
         return {
             "dropped": len(dropped), "kept": len(kept),
             "summary_chars": len(summary),
             "prompt_tokens": resp.prompt_tokens,
             "completion_tokens": resp.completion_tokens,
         }
+
+    def _span_of(self, dropped: list[dict[str, Any]]) -> str:
+        """被压缩部分的时间范围（首尾消息 ts，主体时区，人读）。"""
+        stamps = [m["ts"] for m in dropped if m.get("ts")]
+        if not stamps:
+            return ""  # 旧格式消息无 ts：不标注，不臆造
+        tz = self._cfg.timezone
+        a, b = (clock.datetime_at(stamps[0], tz),
+                clock.datetime_at(stamps[-1], tz))
+        fmt = "%Y-%m-%d %H:%M" if (a.year != b.year
+                                    or (b - a).days > 180) else "%m-%d %H:%M"
+        return f"{a.strftime(fmt)} 至 {b.strftime(fmt)}"
 
     @staticmethod
     def _find_cut(messages: list[dict[str, Any]],

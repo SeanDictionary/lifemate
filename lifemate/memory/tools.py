@@ -85,8 +85,12 @@ def build_memory_tools(store: Store) -> list[Tool]:
         return _ok()
 
     async def latest_rebuild_packet(args: dict) -> str:
-        packet = store.latest_packet()
-        return packet if packet is not None else _err("还没有重建包")
+        row = store.latest_packet()
+        if row is None:
+            return _err("还没有重建包")
+        return json.dumps(
+            {"ok": True, "content": row["content"], "ts": row["ts"]},
+            ensure_ascii=False)
 
     tools.extend([
         Tool(schema={

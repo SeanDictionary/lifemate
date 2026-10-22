@@ -48,6 +48,7 @@ class Session:
         self.session_id = file.stem.split("_", 1)[-1]
         self.created = time.time()
         self.summary = ""
+        self.span = ""  # 摘要覆盖的时间范围（人读，如"10-20 09:00 至 10-21 15:30"）
         self.messages: list[dict[str, Any]] = []
         file.parent.mkdir(parents=True, exist_ok=True)
         with file.open("a", encoding="utf-8") as f:
@@ -65,14 +66,16 @@ class Session:
                                ensure_ascii=False) + "\n")
 
     def apply_compaction(self, summary: str,
-                         kept: list[dict[str, Any]]) -> None:
+                         kept: list[dict[str, Any]],
+                         span: str = "") -> None:
         """压缩提交：更新摘要、截断消息，整体重写文件。"""
         self.summary = summary
+        self.span = span
         self.messages = kept
         lines = [{
             "type": HEADER_TYPE, "version": 1,
             "session_id": self.session_id, "created": self.created,
-        }, {"type": SUMMARY_TYPE, "content": summary}]
+        }, {"type": SUMMARY_TYPE, "content": summary, "span": span}]
         for m in kept:
             lines.append({"type": MSG_TYPE, "msg": m})
         tmp = self.file.with_suffix(".jsonl.tmp")
@@ -83,12 +86,17 @@ class Session:
 
     # ── 读取 ─────────────────────────────────────────────
     def build_request(self) -> list[dict[str, Any]]:
-        """构建发给模型的完整消息序列（人格由思维循环拼在最前）。"""
+        """构建发给模型的完整消息序列（人格由思维循环拼在最前）。
+
+        消息内部的 ts（时间戳，给持久化/时间感用）不进 API——
+        OpenAI 协议不接受额外字段。"""
         out: list[dict[str, Any]] = []
         if self.summary:
+            span = f"（{self.span}）" if self.span else ""
             out.append({"role": "system",
-                        "content": f"[此前会话的摘要]\n{self.summary}"})
-        out.extend(self.messages)
+                        "content": f"[此前会话的摘要{span}]\n{self.summary}"})
+        out.extend({k: v for k, v in m.items() if k != "ts"}
+                   for m in self.messages)
         return out
 
     def total_tokens(self) -> int:
@@ -129,6 +137,7 @@ class Session:
         sess.file = files[-1]
         sess.session_id = sess.file.stem.split("_", 1)[-1]
         sess.summary = ""
+        sess.span = ""
         sess.messages = []
         created_seen = 0.0
         with sess.file.open(encoding="utf-8") as f:
@@ -142,6 +151,7 @@ class Session:
                     created_seen = float(entry.get("created") or 0)
                 elif t == SUMMARY_TYPE:
                     sess.summary = str(entry.get("content") or "")
+                    sess.span = str(entry.get("span") or "")
                 elif t == MSG_TYPE:
                     sess.messages.append(entry.get("msg") or {})
         sess.created = created_seen or sess.file.stat().st_mtime

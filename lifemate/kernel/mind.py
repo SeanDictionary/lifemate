@@ -220,7 +220,8 @@ class SelfKernel:
                            arguments=tc.arguments[:500])
                 result, ok, latency_ms = await self._exec_tool(tc)
                 self._session.append(
-                    {"role": "tool", "tool_call_id": tc.id, "content": result})
+                    {"role": "tool", "tool_call_id": tc.id, "content": result,
+                     "ts": round(time.time(), 3)})
                 self._emit(TOOL_RESULT, rid=self._rid, tool_call_id=tc.id,
                            name=tc.name, ok=ok, latency_ms=latency_ms,
                            result=result[:500])
@@ -287,7 +288,8 @@ class SelfKernel:
 
     def _deliver(self, env: Envelope) -> None:
         """信封送达心智（进上下文）并发观测事件。"""
-        self._session.append({"role": "user", "content": env.text})
+        self._session.append(
+            {"role": "user", "content": env.text, "ts": round(env.ts, 3)})
         self._emit(USER_MSG, rid=self._rid, text=env.text, env={
             "origin": env.origin, "kind": env.kind, "source": env.source,
             "delivery": env.delivery or "wake",
@@ -311,7 +313,8 @@ class SelfKernel:
 
     # ── 消息与模型 ──────────────────────────────────────
     def _record_assistant(self, resp: LLMResponse) -> None:
-        msg: dict[str, Any] = {"role": "assistant", "content": resp.content}
+        msg: dict[str, Any] = {"role": "assistant", "content": resp.content,
+                               "ts": round(time.time(), 3)}
         if resp.tool_calls:
             msg["tool_calls"] = [
                 {"id": c.id, "type": "function",

@@ -213,11 +213,12 @@ class Store:
         self._exec("INSERT INTO rebuild_packets (ts, content) VALUES (?, ?)",
                    (time.time(), content))
 
-    def latest_packet(self) -> str | None:
+    def latest_packet(self) -> dict[str, Any] | None:
+        """最近一份重建包：{"content", "ts"}（写给新我的信 + 写下时刻）。"""
         row = self._exec(
-            "SELECT content FROM rebuild_packets ORDER BY ts DESC LIMIT 1"
+            "SELECT content, ts FROM rebuild_packets ORDER BY ts DESC LIMIT 1"
         ).fetchone()
-        return row["content"] if row else None
+        return dict(row) if row else None
 
     # ── 观测辅助 ────────────────────────────────────────
     def stats(self) -> dict[str, Any]:

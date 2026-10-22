@@ -84,6 +84,12 @@ data/                  # 运行数据（gitignore）：config.json / memory.db /
 ├── host.py            # 运行时服务：思维循环驱动+基建任务+插件装载（Host 类）
 └── __main__.py        # 入口=组合根（CLI：-v/-l/-s/--no-stdin）：共享准备+服务编排；
                       #   stdin 每行=调试信封）
+web/                  # 前端观测台（Next.js 源码，pnpm；node_modules/out 不入库）
+├── src/app/           #   8 页面：概览/事件流/历史回放/对话/记忆/用量/设置/插件
+├── src/lib/           #   api(token/401门)/sse/use-sse(Context 挂 globalThis：对
+│                      #   Turbopack 模块复制免疫)/types(契约镜像)/render(emoji 图标)
+├── src/components/    #   layout(侧栏/生命标识/Vitals)+plugins/qq+ui(shadcn)
+└── out/               #   pnpm build 产物，由 server 同源托管（运行时零 Node）
 tests/                 # 单测 + 剥夺测试（必须常绿）
 data/                  # 运行数据（gitignore：memory.db / sessions/）
 .cache/                # 开发副产物 + v1 归档 + 设计文档（gitignore）
@@ -177,6 +183,11 @@ env 仅部署种子）；热重载靠字段原地更新——新组件必须持�
   发觉不对→撤销/补救/铭记，不可逆动作出手前慢一拍）；出站回执复述动作
   事实（contracts 约定，qq 发送回执带 text）；qq 自发消息落 chat_log
   （带 message_id 句柄，read_chat_log 可见，未读统计排除自己）
+- **会话时间戳（2026-10-22）**：数据层——消息全类型带 ts（user 取
+  Envelope.ts、assistant/tool 写入时刻；build_request 发 API 前剥离；
+  JSONL 持久化/重启恢复不再丢时间），压缩摘要带时间范围（span：
+  被压缩部分首尾，session.span 持久化，API 摘要行渲染），
+  latest_packet 返回 {content, ts}
 - **config 缺字段自动补全（2026-10-21）**：reload 发现白名单键缺失
   （升级新增键/手改丢失）时——内存回落默认值，并按默认生成的顺序与
   内容回写 config.json（文件始终保持完整自文档）；未知键在补全/
@@ -197,11 +208,20 @@ env 仅部署种子）；热重载靠字段原地更新——新组件必须持�
   （chatlog.format_ts：今天 HH:MM/昨天/前天/今年 MM-DD/跨年带年份），
   get_message_detail 回执补可读 time 字段——修复心智把旧消息当成刚发的；
   存储侧 ts 本就全量落库，问题仅在展示层丢弃
+- **webui 前端上线（2026-10-22）**：web/（Next.js 16 静态导出 + shadcn +
+  react-query + pnpm）——概览/事件流(SSE·rid 周期分组)/历史回放/对话/
+  记忆/用量/设置(读写·密钥掩码)/插件面板(?name=)；深浅双主题；
+  token 门（无账号体系，来自 config.json server_token，空值自动换新）；
+  排障修复：Turbopack 模块复制→Context globalThis 单例、HTML no-cache
+  （防重建后旧页）、Next16 RSC 预取 URL 翻译；Playwright 端到端验证通过
 - **待开发**：attention（门控升格）→ sandbox → webui → video
 
 ## 验证方式
 
 - 单测：`pytest`（剥夺测试必须常绿）
 - 剥夺模式运行：`python -m lifemate`（无器官启动；stdin 每行=一封信封，
-  `/reload` 热重载配置，`/quit` 退出；`--help` 看启动参数）
+  `/reload` 热重载配置，`/quit` 退出；`--help` 看启动参数；
+  浏览器面板 http://127.0.0.1:8300，token 见 config.json）
+- 前端：`cd web && pnpm build`（产物 out/ 由 server 托管）；
+  开发 `pnpm dev`（:3000，/api 代理到 :8300）
 - 语法/风格：`ruff check`（如安装）

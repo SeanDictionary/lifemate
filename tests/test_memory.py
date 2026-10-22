@@ -1,4 +1,5 @@
 """记忆系统单测。"""
+import json
 import time
 
 from lifemate.memory.store import Store
@@ -52,7 +53,7 @@ def test_rebuild_packet(tmp_path):
     s = _store(tmp_path)
     assert s.latest_packet() is None
     s.save_packet("我是大肥鱼，正在过 v2 的日子")
-    assert "v2" in (s.latest_packet() or "")
+    assert "v2" in (s.latest_packet() or {}).get("content", "")
 
 
 async def test_memory_tools_callable(tmp_path):
@@ -68,3 +69,12 @@ async def test_memory_tools_callable(tmp_path):
     assert '"ok": true' in r
     r = await tools["latest_rebuild_packet"].func({})
     assert '"ok": false' in r  # 还没有重建包
+
+
+def test_latest_packet_returns_ts(tmp_path):
+    s = _store(tmp_path)
+    assert s.latest_packet() is None
+    before = time.time()
+    s.save_packet("v1")
+    row = s.latest_packet()
+    assert row["content"] == "v1" and row["ts"] >= before

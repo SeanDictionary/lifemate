@@ -97,7 +97,7 @@ async def test_deprivation_rotation_rebirth(tmp_path):
     await kernel.wait_idle()
 
     assert kernel.session_id != old_id
-    assert "大肥鱼" in (store.latest_packet() or "")
+    assert "大肥鱼" in (store.latest_packet() or {}).get("content", "")
     store.close()
 
 

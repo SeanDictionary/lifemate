@@ -207,6 +207,44 @@ async def test_forced_rest_after_max_turns(tmp_path):
 
 # ── 深睡转身：swap_session + rest ──────────────────────
 
+async def test_session_messages_carry_ts_stripped_for_api(tmp_path):
+    """消息时间戳：user/assistant/tool 全带、持久化可恢复、不进 API。"""
+    llm = FakeLLM([tool_reply("调用", cid="c1"), text_reply("好")])
+    probe = make_tool("probe", '{"ok": true}')
+    k = make_kernel(tmp_path, llm, tools=[probe])
+    k.notify(Envelope(text="几点了"))
+    await k.wait_idle()
+    msgs = k._session.messages
+    roles = {m["role"] for m in msgs}
+    assert {"user", "assistant", "tool"} <= roles
+    assert all(m.get("ts") for m in msgs)          # 全类型带时间戳
+    api = k._build_messages()
+    assert all("ts" not in m for m in api)          # API 序列剥离
+    # 重启恢复：时间戳随 JSONL 带回
+    restored = Session.load_latest(k._session.file.parent)
+    assert [m.get("ts") for m in restored.messages] == \
+        [m.get("ts") for m in msgs]
+
+
+def test_compaction_span_roundtrip(tmp_path):
+    """压缩摘要时间范围：入文件、可恢复、进 API 摘要行。"""
+    cfg = make_config(tmp_path)
+    chat = FakeLLM([text_reply("摘要")]).chat
+    comp = Compactor(chat, cfg)
+    dropped = [{"role": "user", "content": "a", "ts": 1_000_000.0},
+               {"role": "assistant", "content": "b", "ts": 1_000_100.0}]
+    span = comp._span_of(dropped)
+    assert "至" in span and "ts" not in span
+    assert comp._span_of([{"role": "user", "content": "旧格式"}]) == ""
+    s = make_session(tmp_path)
+    s.append({"role": "user", "content": "留下的", "ts": 1_000_200.0})
+    s.apply_compaction("滚动摘要", s.messages, span=span)
+    restored = Session.load_latest(s.file.parent)
+    assert restored.span == span
+    req = restored.build_request()
+    assert span in req[0]["content"] and "滚动摘要" in req[0]["content"]
+
+
 async def test_swap_session_seeds_new_session(tmp_path):
     llm = FakeLLM([text_reply("旧会话的一天"), text_reply("新会话的我")])
     k = make_kernel(tmp_path, llm)
@@ -242,7 +280,7 @@ async def test_deep_sleep_tool_full_cycle(tmp_path):
                for m in k._session.messages):
             break
         await asyncio.sleep(0.02)
-    assert "大肥鱼" in (store.latest_packet() or "")
+    assert "大肥鱼" in (store.latest_packet() or {}).get("content", "")
     assert k.session_id != old_id
     users = [m["content"] for m in k._session.messages if m.get("role") == "user"]
     assert any("留下的信" in u for u in users)
