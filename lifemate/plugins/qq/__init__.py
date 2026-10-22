@@ -70,10 +70,7 @@ class QQPlugin(Plugin):
         """OneBot 事件 → 分诊 → 信封 → notify / 背景听觉。"""
         self_id = self._conf.bot_uin
         owner = self._conf.owner_uin
-        ev = parse_event(data, self_id=self_id, owner_uin=owner,
-                         reply_lookup=(self._chatlog.message_of
-                                       if self._chatlog else None),
-                         aliases=[str(a) for a in (self._conf.wake_aliases or [])])
+        ev = parse_event(data, self_id=self_id, owner_uin=owner, reply_lookup=(self._chatlog.message_of if self._chatlog else None), aliases=[str(a) for a in (self._conf.wake_aliases or [])])
         if ev is None or ev.type == "ignore":
             return
         # 群白名单（空=全部）
@@ -89,9 +86,7 @@ class QQPlugin(Plugin):
         text = compose_envelope_text(ev)
         # 对话延续窗口：我发言后 N 秒内的群消息升格为强刺激（仅路由，
         # 文本保持背景形态——对方不一定在对我说话，"对你说"是过度断言）
-        in_window = (ev.type == "ambient"
-                     and self._conf.conversation_window_s > 0
-                     and time.time() - self._last_outbound.get(ev.chat_id, 0.0) < self._conf.conversation_window_s)
+        in_window = ev.type == "ambient" and self._conf.conversation_window_s > 0 and time.time() - self._last_outbound.get(ev.chat_id, 0.0) < self._conf.conversation_window_s
         if ev.type == "ambient" and not in_window:
             # 弱刺激：背景听觉（不直达；图片暂不收集，文本入档）
             self._chatlog.append(ev.chat_id, ev.sender_id, ev.sender_name, ev.text, ev.message_id)
@@ -159,8 +154,7 @@ class QQPlugin(Plugin):
             return  # 冷却中
         unread, earliest = self._chatlog.unread_state(chat_id, self_id=self._conf.bot_uin)
         # 兜底看"最早未读已等多久"（而非距上次唤醒）——首次唤醒也须经受等待
-        if not (unread >= threshold
-                or (unread >= 2 and earliest and now - earliest >= self._conf.ambient_wake_gap_s)):
+        if not (unread >= threshold or (unread >= 2 and earliest and now - earliest >= self._conf.ambient_wake_gap_s)):
             return
         rows = self._chatlog.recent(chat_id, 12)
         self._chatlog.mark_read(chat_id)

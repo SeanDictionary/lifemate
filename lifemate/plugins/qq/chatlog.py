@@ -39,6 +39,8 @@ def _day_of(ts: float, tz_name: str = "") -> str:
 
 # 回复链反查回溯天数：被回复消息几乎都在近期；超出接保守直达
 _REPLY_LOOKUP_MAX_DAYS = 7
+
+
 class ChatLog:
     """按日分库的聊天记录（asyncio 单线程事件循环内使用）。
 
@@ -171,9 +173,7 @@ CREATE TABLE IF NOT EXISTS chat_state (
         for path in self._day_files()[:_REPLY_LOOKUP_MAX_DAYS]:
             con = self._open_read(path)
             try:
-                row = con.execute(
-                    "SELECT sender_id, sender_name, text FROM chat_log"
-                    " WHERE message_id = ? LIMIT 1", (message_id,)).fetchone()
+                row = con.execute("SELECT sender_id, sender_name, text FROM chat_log WHERE message_id = ? LIMIT 1", (message_id,)).fetchone()
             finally:
                 con.close()
             if row is not None:
@@ -184,15 +184,15 @@ CREATE TABLE IF NOT EXISTS chat_state (
         self._state.execute("INSERT INTO chat_state (chat_id, last_read_ts) VALUES (?, ?) ON CONFLICT(chat_id) DO UPDATE SET last_read_ts = excluded.last_read_ts", (chat_id, time.time()))
         self._state.commit()
 
-    def unread_summary(self, self_id: int = 0, top: int = 3) -> str:
-        """未读概览（身体感受）：24h 窗口内 ts > last_read_ts 的精确统计。
+    def _unread_scan(self, self_id: int = 0) -> dict[str, list]:
+        """未读扫描内核：{会话: [未读数, 最早未读时刻]}。
 
-        self_id 非零时排除自己的出站消息（自己发的不算未读）。
+        24h 窗口、精确到已读线；self_id 非零时排除自己的出站。
+        unread_summary（身体感受）与 unread_state（攒批判定）共用。
         """
         cutoff = time.time() - 86400
         read_map = {r["chat_id"]: r["last_read_ts"] for r in self._state.execute("SELECT chat_id, last_read_ts FROM chat_state").fetchall()}
-        counts: dict[str, int] = {}
-        earliest = 0.0  # 最早一条未读的时刻（概览给相对时间）
+        out: dict[str, list] = {}
         # 24h 窗口最多涉及最近两个日库
         for path in self._day_files()[:2]:
             con = self._open_read(path)
@@ -202,11 +202,24 @@ CREATE TABLE IF NOT EXISTS chat_state (
                     if self_id and r["sender_id"] == self_id:
                         continue
                     if r["ts"] > read_map.get(r["chat_id"], 0):
-                        counts[r["chat_id"]] = counts.get(r["chat_id"], 0) + 1
-                        if not earliest or r["ts"] < earliest:
-                            earliest = r["ts"]
+                        st = out.setdefault(r["chat_id"], [0, 0.0])
+                        st[0] += 1
+                        if not st[1] or r["ts"] < st[1]:
+                            st[1] = r["ts"]
             finally:
                 con.close()
+        return out
+
+    def unread_state(self, chat_id: str, self_id: int = 0) -> tuple[int, float]:
+        """单会话未读 (数量, 最早未读时刻)——攒批唤醒判定用。"""
+        st = self._unread_scan(self_id).get(chat_id)
+        return (st[0], st[1]) if st else (0, 0.0)
+
+    def unread_summary(self, self_id: int = 0, top: int = 3) -> str:
+        """未读概览（身体感受）：24h 窗口内 ts > last_read_ts 的精确统计。"""
+        scan = self._unread_scan(self_id)
+        counts = {cid: st[0] for cid, st in scan.items()}
+        earliest = min((st[1] for st in scan.values() if st[1]), default=0.0)
         if not counts:
             return ""
         top_items = sorted(counts.items(), key=lambda x: -x[1])[:top]

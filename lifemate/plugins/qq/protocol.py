@@ -24,8 +24,7 @@ class ParsedEvent:
     raw: dict = field(default_factory=dict)
 
 
-def _parse_message(event: dict, self_id: int, owner_uin: int,
-                    reply_lookup=None) -> ParsedEvent:
+def _parse_message(event: dict, self_id: int, owner_uin: int, reply_lookup=None, aliases=None) -> ParsedEvent:
     is_group = event.get("message_type") == "group"
     sender = event.get("sender") or {}
     sender_id = event.get("user_id", 0)
@@ -56,12 +55,6 @@ def _parse_message(event: dict, self_id: int, owner_uin: int,
                 else:
                     texts.append(f"@{data.get('qq')}")
             elif stype == "reply":
-                # 回复链解引用（chat_log 本地反查）：被回复消息是
-                # 自己发的才算回自己，与 @ 无关（回复时客户端自动
-                # 带的 @ 可被用户删除）；查到则内联引用内容（心智
-                # 醒来即有上下文）；查不到降级背景听觉（自己发的
-                # 消息全在档，查不到几乎必非回自己）；无反查通道
-                # （降级场景）保守直达
                 target = data.get("id")
                 if reply_lookup is None:
                     reply_to_me = True
@@ -93,21 +86,23 @@ def _parse_message(event: dict, self_id: int, owner_uin: int,
                 texts.append("[戳一戳]")
     chat_id = f"group_{event['group_id']}" if is_group else f"private_{sender_id}"
     is_owner = bool(owner_uin) and sender_id == owner_uin
-    direct = (not is_group) or at_me or reply_to_me or is_owner
-    return ParsedEvent(type="direct" if direct else "ambient", chat_id=chat_id, sender_id=sender_id, sender_name=sender_name, text="".join(texts).strip(), message_id=event.get("message_id", 0), image_urls=image_urls, is_owner=is_owner, raw=event)
+    text = "".join(texts).strip()
+    # 唤醒别名：叫名字不@也算呼叫（误报只是多看一眼，漏报伤社交）
+    alias_hit = any(a and a in text for a in (aliases or []))
+    direct = (not is_group) or at_me or reply_to_me or is_owner or alias_hit
+    return ParsedEvent(type="direct" if direct else "ambient", chat_id=chat_id, sender_id=sender_id, sender_name=sender_name, text=text, message_id=event.get("message_id", 0), image_urls=image_urls, is_owner=is_owner, raw=event)
 
 
-def parse_event(event: dict, self_id: int = 0, owner_uin: int = 0,
-                reply_lookup=None) -> ParsedEvent | None:
+def parse_event(event: dict, self_id: int = 0, owner_uin: int = 0, reply_lookup=None, aliases: list[str] | None = None) -> ParsedEvent | None:
     """OneBot 事件 → ParsedEvent；无法翻译的返回 None（调用方忽略）。
 
     reply_lookup(message_id) -> {sender_id, sender_name, text} | None：
     回复链解引用通道（chat_log 本地反查）；None（无通道）时保守直达。
-    """
+    aliases：唤醒别名表——消息文本含任一别名即强刺激（叫名字不@）。"""
     post_type = event.get("post_type", "")
 
     if post_type == "message":
-        return _parse_message(event, self_id, owner_uin, reply_lookup)
+        return _parse_message(event, self_id, owner_uin, reply_lookup, aliases)
 
     if post_type == "meta_event":
         return None  # 心跳/生命周期：连接层自理

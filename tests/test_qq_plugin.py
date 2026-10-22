@@ -53,6 +53,19 @@ def test_image_and_media_segments():
     assert ev.type == "direct"  # reply 视为回应自己
 
 
+def test_alias_hit_is_direct():
+    """唤醒别名：叫名字不@也算呼叫（误报只是多看一眼）。"""
+    ev = parse_event(_group_msg(text="大肥鱼在吗"), self_id=SELF, owner_uin=OWNER, aliases=["大肥鱼", "肥鱼"])
+    assert ev.type == "direct"
+    assert "对你说" in compose_envelope_text(ev)
+    # 无别名不命中
+    assert parse_event(_group_msg(text="今天天气不错"), self_id=SELF, owner_uin=OWNER, aliases=["大肥鱼"]).type == "ambient"
+    # 子串别名也命中（叫"肥鱼"）
+    assert parse_event(_group_msg(text="肥鱼快出来"), self_id=SELF, owner_uin=OWNER, aliases=["大肥鱼", "肥鱼"]).type == "direct"
+    # 谈论而非呼叫也命中——宁可多看一眼，判断权在心智
+    assert parse_event(_group_msg(text="大肥鱼今天怎么不理人"), self_id=SELF, owner_uin=OWNER, aliases=["大肥鱼"]).type == "direct"
+
+
 def test_friend_request_event():
     ev = parse_event({"post_type": "request", "request_type": "friend", "user_id": 999, "comment": "我是群友", "flag": "f1"}, SELF, OWNER)
     assert ev.type == "platform_event" and "申请加你好友" in ev.text
@@ -246,6 +259,130 @@ async def test_ambient_does_not_wake_mind(tmp_path):
         await napcat.stop()
 
 
+async def _ambient_harness(tmp_path, extra_cfg: dict | None = None, replies=None):
+    """弱刺激端到端测试公用装配。返回 (napcat, plugin, kernel, llm)。"""
+    import types
+
+    from conftest import FakeLLM, LLMResponse, make_persona, make_session
+
+    from lifemate.kernel.compaction import Compactor
+    from lifemate.kernel.mind import SelfKernel
+    from lifemate.plugins.qq import QQConfig, QQPlugin, build_tools
+    from lifemate.utils.config import Config
+
+    napcat = FakeNapCat()
+    url = await napcat.start()
+    cfg = Config(data_dir=tmp_path / "cfg")
+    section = {"enabled": True, "ws_url": url, "bot_uin": SELF}
+    section.update(extra_cfg or {})
+    cfg.plugins = {"qq": section}
+    plugin = QQPlugin(QQConfig(cfg), cfg, tmp_path / "plugindata" / "qq")
+    plugin.tools = build_tools(plugin)
+    llm = FakeLLM(replies if replies is not None else [LLMResponse(content="嗯")])
+    kernel = SelfKernel(llm=llm, persona=make_persona(tmp_path), session=make_session(tmp_path), compactor=Compactor(llm.chat, cfg), cfg=cfg)
+    kernel.register_plugin(plugin)
+    await plugin.start(types.SimpleNamespace(kernel=kernel))
+    return napcat, plugin, kernel, llm
+
+
+async def test_conversation_window_upgrades_followup(tmp_path):
+    """对话延续窗口：我发言后的跟话直达（文本保持背景形态，不标"对你说"）。"""
+    import time
+
+    napcat, plugin, kernel, _ = await _ambient_harness(tmp_path)
+    try:
+        assert await _wait_for(lambda: plugin._client.connected)
+        from lifemate.kernel.contracts import Envelope
+
+        kernel.notify(Envelope(text="（你醒了）", kind="boot"))
+        await kernel.wait_idle()
+        # 模拟我刚在群里发言（_log_sent 即出站路径的窗口刷新点）
+        plugin._log_sent("group_777", "我说了句笑话", 999)
+        assert "group_777" in plugin._last_outbound
+        await napcat.push(_group_msg(text="哈哈哈哈确实"))
+        await _wait_for(lambda: any("哈哈哈哈确实" in m.get("content", "") for m in kernel._session.messages if m.get("role") == "user"))
+        users = [m["content"] for m in kernel._session.messages if m.get("role") == "user"]
+        # 升格直达但文本不标"对你说"（对方不一定在对我说话）
+        assert not any("对你说" in u and "哈哈哈哈确实" in u for u in users)
+        await kernel.wait_idle()
+        # 窗口过期：跟话回到背景听觉（不唤醒）
+        plugin._last_outbound["group_777"] = time.time() - 700
+        await napcat.push(_group_msg(text="这都过去十分钟了"))
+        await asyncio.sleep(0.3)
+        users = [m["content"] for m in kernel._session.messages if m.get("role") == "user"]
+        assert not any("这都过去十分钟了" in u for u in users)
+        assert any(r["text"] == "这都过去十分钟了" for r in plugin._chatlog.recent("group_777", 5))
+    finally:
+        await plugin.stop()
+        await napcat.stop()
+
+
+async def test_ambient_threshold_wake(tmp_path):
+    """攒批唤醒：未读攒满阈值即递到眼前（含时间行）；已读同步+冷却钳制。"""
+    napcat, plugin, kernel, _ = await _ambient_harness(tmp_path, {"ambient_wake_threshold": 3, "ambient_wake_cooldown_s": 60, "ambient_wake_gap_s": 3600})
+    try:
+        assert await _wait_for(lambda: plugin._client.connected)
+        from lifemate.kernel.contracts import Envelope
+
+        kernel.notify(Envelope(text="（你醒了）", kind="boot"))
+        await kernel.wait_idle()
+        for i in range(3):
+            await napcat.push(_group_msg(text=f"闲聊{i}"))
+        await _wait_for(lambda: any("你不在时聊了 3 条" in m.get("content", "") for m in kernel._session.messages if m.get("role") == "user"))
+        # 信封里是带时间标注的消息行
+        assert any("闲聊2" in m["content"] for m in kernel._session.messages if m.get("role") == "user")
+        await kernel.wait_idle()
+        # 已读同步：未读归零（下次身体感受不重复唠叨）
+        assert plugin._chatlog.unread_state("group_777", SELF)[0] == 0
+        # 冷却钳制：冷却期内再攒 3 条不重复唤醒
+        for i in range(3):
+            await napcat.push(_group_msg(text=f"更多{i}"))
+        await asyncio.sleep(0.3)
+        wakes = [m["content"] for m in kernel._session.messages if m.get("role") == "user" and "你不在时聊了" in m["content"]]
+        assert len(wakes) == 1
+    finally:
+        await plugin.stop()
+        await napcat.stop()
+
+
+async def test_ambient_gap_fallback_wake(tmp_path):
+    """兜底唤醒：慢速闲聊攒不满阈值，最早未读等够 gap 即唤醒。"""
+    napcat, plugin, kernel, _ = await _ambient_harness(tmp_path, {"ambient_wake_threshold": 10, "ambient_wake_gap_s": 0.15, "ambient_wake_cooldown_s": 60})
+    try:
+        assert await _wait_for(lambda: plugin._client.connected)
+        from lifemate.kernel.contracts import Envelope
+
+        kernel.notify(Envelope(text="（你醒了）", kind="boot"))
+        await kernel.wait_idle()
+        await napcat.push(_group_msg(text="慢速一条"))
+        await asyncio.sleep(0.2)  # 最早未读已等 0.2s ≥ gap
+        await napcat.push(_group_msg(text="慢速两条"))
+        await _wait_for(lambda: any("你不在时聊了 2 条" in m.get("content", "") for m in kernel._session.messages if m.get("role") == "user"))
+    finally:
+        await plugin.stop()
+        await napcat.stop()
+
+
+async def test_ambient_wake_disabled(tmp_path):
+    """阈值 0 = 关闭：纯背景听觉，攒再多也不唤醒（回归现状行为）。"""
+    napcat, plugin, kernel, _ = await _ambient_harness(tmp_path, {"ambient_wake_threshold": 0})
+    try:
+        assert await _wait_for(lambda: plugin._client.connected)
+        from lifemate.kernel.contracts import Envelope
+
+        kernel.notify(Envelope(text="（你醒了）", kind="boot"))
+        await kernel.wait_idle()
+        for i in range(10):
+            await napcat.push(_group_msg(text=f"刷屏{i}"))
+        await asyncio.sleep(0.3)
+        users = [m["content"] for m in kernel._session.messages if m.get("role") == "user"]
+        assert not any("刷屏" in u for u in users)
+        assert not kernel.is_busy
+    finally:
+        await plugin.stop()
+        await napcat.stop()
+
+
 async def test_plugin_loader_discovery(tmp_path):
     """装载器：example 插件默认关；启用后自动发现（零主代码改动）。"""
     from lifemate.plugins import PluginContext, load_plugins
@@ -321,6 +458,7 @@ async def test_plugin_config_view(tmp_path):
 
 # ── 回复链判定（reply 指针解引用） ──────────────────────
 
+
 def _reply_msg(reply_id, at=None, text="在", sender=12345, gid=777):
     segs = [{"type": "reply", "data": {"id": str(reply_id)}}]
     if at is not None:
@@ -383,11 +521,12 @@ def test_reply_quote_snippet_truncated():
     """引用内容截断到 30 字，换行折成空格。"""
     long_text = "很长" * 40 + "\n带换行"
     ev = parse_event(_reply_msg(100), SELF, OWNER, reply_lookup=lambda mid: _origin(999, "甲", long_text))
-    quote = ev.text[ev.text.index("[回复"):]
+    quote = ev.text[ev.text.index("[回复") :]
     assert len(quote) < 60 and "\n" not in quote
 
 
 # ── 跨会话切换：信封附来源会话上下文 ─────────────────────
+
 
 async def test_envelope_context_on_chat_switch(tmp_path):
     """跨会话切换时信封附该会话最近几条；同会话连续直达不重复附加。"""
@@ -439,8 +578,7 @@ async def test_envelope_context_disabled(tmp_path):
     from lifemate.utils.config import Config
 
     cfg = Config(data_dir=tmp_path / "cfg")
-    cfg.plugins = {"qq": {"enabled": True, "bot_uin": SELF,
-                          "owner_uin": OWNER, "envelope_context_n": 0}}
+    cfg.plugins = {"qq": {"enabled": True, "bot_uin": SELF, "owner_uin": OWNER, "envelope_context_n": 0}}
     plugin = QQPlugin(QQConfig(cfg), cfg, tmp_path / "pd")
     plugin._chatlog = ChatLog(tmp_path / "pd" / "cl")
 
