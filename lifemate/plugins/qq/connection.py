@@ -4,6 +4,7 @@
 - 断线指数退避重连（1s→60s 封顶）；重连期间 API 调用回执 unreachable
 - access_token 走 Authorization: Bearer 头（协议 authorization 规范）
 """
+
 from __future__ import annotations
 
 import asyncio
@@ -11,7 +12,8 @@ import json
 import logging
 import time
 import uuid
-from typing import Any, Awaitable, Callable
+from collections.abc import Awaitable, Callable
+from typing import Any
 
 log = logging.getLogger("plugins.qq.conn")
 
@@ -19,9 +21,7 @@ log = logging.getLogger("plugins.qq.conn")
 class OneBotClient:
     """单连接客户端：收包循环 + echo RPC。"""
 
-    def __init__(self, ws_url: str, access_token: str = "",
-                 on_event: Callable[[dict], Awaitable[None]] | None = None,
-                 call_timeout: float = 30.0) -> None:
+    def __init__(self, ws_url: str, access_token: str = "", on_event: Callable[[dict], Awaitable[None]] | None = None, call_timeout: float = 30.0) -> None:
         self._url = ws_url
         self._token = access_token
         self._on_event = on_event
@@ -59,6 +59,7 @@ class OneBotClient:
     # ── 连接循环 ───────────────────────────────────────
     async def _run_loop(self) -> None:
         import websockets  # 惰性导入
+
         backoff = 1.0
         while not self._stop.is_set():
             try:
@@ -97,7 +98,7 @@ class OneBotClient:
 
     async def _serve(self, conn) -> None:
         """收包循环：echo 响应结算，事件交给回调。"""
-        import websockets
+
         async for raw in conn:
             try:
                 data = json.loads(raw)
@@ -139,7 +140,5 @@ class OneBotClient:
         finally:
             self._pending.pop(echo, None)
         if resp.get("retcode") not in (0, None) or resp.get("status") == "failed":
-            raise RuntimeError(
-                f"API {action} 失败: retcode={resp.get('retcode')} "
-                f"{resp.get('word') or ''}")
+            raise RuntimeError(f"API {action} 失败: retcode={resp.get('retcode')} {resp.get('word') or ''}")
         return resp.get("data") or {}

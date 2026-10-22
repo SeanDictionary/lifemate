@@ -7,6 +7,7 @@
 - data_dir 由 env LIFEMATE_DATA_DIR 引导（config.json 住在里面，鸡生蛋问题）
 - 业务配置一律进 config.json 白名单；未知键告警忽略；密钥有掩码导出
 """
+
 from __future__ import annotations
 
 import json
@@ -17,6 +18,7 @@ from pathlib import Path
 from typing import Any
 
 log = logging.getLogger("utils.config")
+
 
 class Setting:
     """配置字段声明：默认值即类型与缺省，元数据即文档（声明即文档）。
@@ -29,9 +31,7 @@ class Setting:
 
     __slots__ = ("default", "description", "secret", "restart", "group")
 
-    def __init__(self, default: Any, *, description: str = "",
-                 secret: bool = False, restart: bool = False,
-                 group: str = "") -> None:
+    def __init__(self, default: Any, *, description: str = "", secret: bool = False, restart: bool = False, group: str = "") -> None:
         self.default = default
         self.description = description
         self.secret = secret
@@ -52,8 +52,7 @@ class Setting:
 
     def schema_entry(self) -> dict[str, Any]:
         """schema 投影（API 契约）：类型/默认/说明/元数据。"""
-        e: dict[str, Any] = {"type": self.type_name(), "default": self.default,
-                             "description": self.description}
+        e: dict[str, Any] = {"type": self.type_name(), "default": self.default, "description": self.description}
         if self.group:
             e["group"] = self.group
         if self.secret:
@@ -66,69 +65,45 @@ class Setting:
 # JSON 白名单（声明即文档：元数据经 /api/config/schema 投影给前端）
 _JSON_FIELDS: dict[str, Setting] = {
     # 模型
-    "llm_base_url": Setting("", description="LLM API 基础地址（OpenAI 兼容）",
-                             group="模型"),
-    "llm_api_key": Setting("", description="LLM API 密钥",
-                           secret=True, group="模型"),
+    "llm_base_url": Setting("", description="LLM API 基础地址（OpenAI 兼容）", group="模型"),
+    "llm_api_key": Setting("", description="LLM API 密钥", secret=True, group="模型"),
     "llm_model": Setting("", description="模型名", group="模型"),
     "llm_max_retries": Setting(3, description="瞬态错误重试次数", group="模型"),
-    "llm_retry_backoff_s": Setting(2.0, description="重试退避基数（指数：2/4/8s）",
-                                    group="模型"),
-    "llm_fail_alert_streak": Setting(5, description="连续失败告警阈值（回调触发）",
-                                      group="模型"),
+    "llm_retry_backoff_s": Setting(2.0, description="重试退避基数（指数：2/4/8s）", group="模型"),
+    "llm_fail_alert_streak": Setting(5, description="连续失败告警阈值（回调触发）", group="模型"),
     # 内核
-    "timezone": Setting("", description="主体时区（IANA 名如 Asia/Shanghai；空=本机时区）。"
-                         "昼夜/作息/社交时间感的事实源，换机器不换人生", group="内核"),
-    "max_turns": Setting(24, description="单个唤醒周期内最大模型轮数（超过强制休息）",
-                         group="内核"),
-    "turns_rest_nudge": Setting(16, description="连续轮数提醒阈值（先提示后强制）",
-                                group="内核"),
-    "tool_timeout_s": Setting(120.0, description="单工具执行超时秒（wait 除外）",
-                              group="内核"),
-    "compact_threshold_tokens": Setting(24_000, description="超过触发压缩（估算 token）",
-                                         group="内核"),
-    "keep_recent_tokens": Setting(8_000, description="压缩保留最近消息的估算 token",
-                                  group="内核"),
+    "timezone": Setting("", description="主体时区（IANA 名如 Asia/Shanghai；空=本机时区）。昼夜/作息/社交时间感的事实源，换机器不换人生", group="内核"),
+    "max_turns": Setting(24, description="单个唤醒周期内最大模型轮数（超过强制休息）", group="内核"),
+    "turns_rest_nudge": Setting(16, description="连续轮数提醒阈值（先提示后强制）", group="内核"),
+    "tool_timeout_s": Setting(120.0, description="单工具执行超时秒（wait 除外）", group="内核"),
+    "compact_threshold_tokens": Setting(24_000, description="超过触发压缩（估算 token）", group="内核"),
+    "keep_recent_tokens": Setting(8_000, description="压缩保留最近消息的估算 token", group="内核"),
     # 路径（相对宿主 CWD）
     "soul_dir": Setting("soul", description="人格目录（相对宿主 CWD）", group="路径"),
     "skills_dir": Setting("skills", description="技能目录（相对宿主 CWD）", group="路径"),
     # 系统日志
-    "log_max_bytes": Setting(10_485_760, description="单份 .log 上限字节（10MB）",
-                             group="系统日志"),
+    "log_max_bytes": Setting(10_485_760, description="单份 .log 上限字节（10MB）", group="系统日志"),
     "log_backup_count": Setting(5, description="轮转保留份数", group="系统日志"),
-    "log_level": Setting("info", description="日志等级 debug/info/warning/error/critical"
-                          "（CLI -l 覆盖）", group="系统日志"),
+    "log_level": Setting("info", description="日志等级 debug/info/warning/error/critical（CLI -l 覆盖）", group="系统日志"),
     # 排队背压 / watchdog / 磁盘治理 / 永续回合 / 元配置 → 守护
-    "queue_max_steer": Setting(16, description="插话队列上限（溢出丢最旧并存证）",
-                               group="守护"),
+    "queue_max_steer": Setting(16, description="插话队列上限（溢出丢最旧并存证）", group="守护"),
     "watchdog_interval_s": Setting(30.0, description="健康检查间隔秒", group="守护"),
-    "max_run_s": Setting(3600.0, description="单次运行最大时长秒（超时中止并自愈）",
-                         group="守护"),
-    "backup_interval_s": Setting(86400.0, description="memory.db 备份间隔秒",
-                                  group="守护"),
+    "max_run_s": Setting(3600.0, description="单次运行最大时长秒（超时中止并自愈）", group="守护"),
+    "backup_interval_s": Setting(86400.0, description="memory.db 备份间隔秒", group="守护"),
     "backup_keep": Setting(7, description="备份保留份数", group="守护"),
-    "reminder_poll_s": Setting(15.0, description="到期提醒轮询间隔秒（闹钟兑现周期）",
-                               group="守护"),
+    "reminder_poll_s": Setting(15.0, description="到期提醒轮询间隔秒（闹钟兑现周期）", group="守护"),
     "config_poll_s": Setting(30.0, description="热重载轮询间隔秒", group="守护"),
     # 网络服务层（宿主侧，API + 前端静态托管；始终启动，无开关）
-    "server_host": Setting("127.0.0.1", description="API 绑定地址（暴露局域网是显式"
-                            "行为；改后需重启）", restart=True, group="网络服务"),
-    "server_port": Setting(8300, description="API 端口（改后需重启）",
-                           restart=True, group="网络服务"),
-    "server_token": Setting("", description="API 访问令牌（空值自动生成随机值，永不裸奔）",
-                            secret=True, group="网络服务"),
-    "server_static_dir": Setting("web/out", description="前端静态导出目录（相对 CWD）",
-                                 group="网络服务"),
+    "server_host": Setting("127.0.0.1", description="API 绑定地址（暴露局域网是显式行为；改后需重启）", restart=True, group="网络服务"),
+    "server_port": Setting(8300, description="API 端口（改后需重启）", restart=True, group="网络服务"),
+    "server_token": Setting("", description="API 访问令牌（空值自动生成随机值，永不裸奔）", secret=True, group="网络服务"),
+    "server_static_dir": Setting("web/out", description="前端静态导出目录（相对 CWD）", group="网络服务"),
     # 插件命名空间（自由子对象，按各插件声明校验）
-    "plugins": Setting({}, description="插件命名空间：各插件配置段"
-                        "（设置页按插件分组展示与编辑）"),
+    "plugins": Setting({}, description="插件命名空间：各插件配置段（设置页按插件分组展示与编辑）"),
     # 观测与档案
-    "observe_retention_days": Setting(90, description="观测档案保留天数（0=永久）",
-                                       group="观测与档案"),
-    "observe_max_field_chars": Setting(65_536, description="观测行单字段截断上限字符",
-                                       group="观测与档案"),
-    "session_keep_rotated": Setting(2, description="轮换后保留的旧会话文件数"
-                                     "（档案在 observe）", group="观测与档案"),
+    "observe_retention_days": Setting(90, description="观测档案保留天数（0=永久）", group="观测与档案"),
+    "observe_max_field_chars": Setting(65_536, description="观测行单字段截断上限字符", group="观测与档案"),
+    "session_keep_rotated": Setting(2, description="轮换后保留的旧会话文件数（档案在 observe）", group="观测与档案"),
 }
 
 # env 种子：显式设置时覆盖 JSON（容器部署用）
@@ -136,7 +111,7 @@ _ENV_SEED = {
     "llm_base_url": "LIFEMATE_LLM_BASE_URL",
     "llm_api_key": "LIFEMATE_LLM_API_KEY",
     "llm_model": "LIFEMATE_LLM_MODEL",
-    "timezone": "LIFEMATE_TIMEZONE",   # 容器默认 UTC，部署时必设
+    "timezone": "LIFEMATE_TIMEZONE",  # 容器默认 UTC，部署时必设
 }
 
 # 密钥集合由声明派生（单一真相源）
@@ -156,8 +131,7 @@ def coerce(value: Any, default: Any, key: str = "") -> Any:
             return value if isinstance(value, type(default)) else default
         return str(value)
     except (TypeError, ValueError):
-        log.warning("配置 %s=%r 类型非法（期望 %s），用默认值",
-                    key or "?", value, type(default).__name__)
+        log.warning("配置 %s=%r 类型非法（期望 %s），用默认值", key or "?", value, type(default).__name__)
         return default
 
 
@@ -234,8 +208,7 @@ class Config:
                 if k not in rebuilt:
                     rebuilt[k] = v
             self._atomic_write(rebuilt)
-            log.info("配置补全缺失字段（已按默认顺序回写）：%s",
-                     ", ".join(missing))
+            log.info("配置补全缺失字段（已按默认顺序回写）：%s", ", ".join(missing))
         for key, raw in data.items():
             if key not in _JSON_FIELDS:
                 log.warning("未知配置键 %r（白名单外，忽略）", key)
@@ -252,15 +225,12 @@ class Config:
             if k not in changed:
                 changed.append(k)
         if changed:
-            log.info("配置重载生效：%s", ", ".join(
-                f"{k}=***" if k in _SECRET_KEYS else
-                f"{k}={getattr(self, k)}" for k in changed))
+            log.info("配置重载生效：%s", ", ".join(f"{k}=***" if k in _SECRET_KEYS else f"{k}={getattr(self, k)}" for k in changed))
         self._ensure_token()
         return changed
 
     # ── 插件声明登记与 schema 投影 ─────────────────────
-    def register_plugin_schema(self, name: str,
-                               fields: dict[str, Setting]) -> None:
+    def register_plugin_schema(self, name: str, fields: dict[str, Setting]) -> None:
         """登记插件配置声明（装载器扫描时调用）。
 
         schema 端点聚合与 plugins.<name>.<key> 写路径的校验依据。"""
@@ -274,18 +244,14 @@ class Config:
         fields: dict[str, Any] = {}
         for k, f in _JSON_FIELDS.items():
             if k == "plugins":
-                fields[k] = {"type": "object", "default": {},
-                             "description": "插件命名空间：各插件配置段"
-                                            "（见 plugins 段，按插件分组）"}
+                fields[k] = {"type": "object", "default": {}, "description": "插件命名空间：各插件配置段（见 plugins 段，按插件分组）"}
                 continue
             e = f.schema_entry()
             env_var = _ENV_SEED.get(k)
             if env_var:
                 e["env_var"] = env_var
             fields[k] = e
-        plugins = {name: {fk: f.schema_entry()
-                          for fk, f in fs.items()}
-                   for name, fs in self._plugin_schemas.items()}
+        plugins = {name: {fk: f.schema_entry() for fk, f in fs.items()} for name, fs in self._plugin_schemas.items()}
         return {"fields": fields, "plugins": plugins}
 
     def _apply_env_seeds(self, skip: frozenset[str] = frozenset()) -> list[str]:
@@ -323,11 +289,9 @@ class Config:
         self.server_token = secrets.token_urlsafe(24)
         if persist:
             self.save()
-            log.info("server_token 为空，已重置随机值（config.json 已更新，"
-                     "可在文件中查看）")
+            log.info("server_token 为空，已重置随机值（config.json 已更新，可在文件中查看）")
         else:
-            log.warning("server_token 为空，已重置随机值（仅内存——"
-                        "配置文件异常，暂不落盘）")
+            log.warning("server_token 为空，已重置随机值（仅内存——配置文件异常，暂不落盘）")
 
     def _write_default(self) -> None:
         self._atomic_write({k: f.default for k, f in _JSON_FIELDS.items()})
@@ -337,9 +301,7 @@ class Config:
         """原子写回（临时文件 + replace，防半写）+ 同步戳（防重复解析）。"""
         self.path.parent.mkdir(parents=True, exist_ok=True)
         tmp = self.path.with_suffix(".json.tmp")
-        tmp.write_text(
-            json.dumps(data, ensure_ascii=False, indent=2) + "\n",
-            encoding="utf-8")
+        tmp.write_text(json.dumps(data, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
         tmp.replace(self.path)
         try:
             st = self.path.stat()
@@ -388,13 +350,11 @@ class Config:
                     _, pname, fkey = parts
                     f = self._plugin_schemas.get(pname, {}).get(fkey)
                     if f is not None:
-                        if (f.secret and isinstance(v, str)
-                                and v.startswith("***")):
+                        if f.secret and isinstance(v, str) and v.startswith("***"):
                             skipped.append(k)  # 掩码回传 = 未修改
                             continue
                         section = dict(self.plugins.get(pname) or {})
-                        section[fkey] = coerce(v, f.default,
-                                               f"plugins.{pname}.{fkey}")
+                        section[fkey] = coerce(v, f.default, f"plugins.{pname}.{fkey}")
                         self.plugins[pname] = section
                         applied.append(k)
                         continue
@@ -403,17 +363,15 @@ class Config:
             if k not in _JSON_FIELDS or k == "plugins":
                 unknown.append(k)
                 continue
-            if (_JSON_FIELDS[k].secret and isinstance(v, str)
-                    and v.startswith("***")):
+            if _JSON_FIELDS[k].secret and isinstance(v, str) and v.startswith("***"):
                 skipped.append(k)  # 掩码回传 = 未修改
                 continue
             setattr(self, k, _coerce(k, v))
             applied.append(k)
         if applied:
             self.save()
-        result = {"applied": applied, "skipped_masked": skipped,
-                  "unknown": unknown}
-        self._ensure_token()   # 面板清空 token 保存 → 立即换新（不等待重载）
+        result = {"applied": applied, "skipped_masked": skipped, "unknown": unknown}
+        self._ensure_token()  # 面板清空 token 保存 → 立即换新（不等待重载）
         return result
 
     def write_plugin_defaults(self, name: str, section: dict) -> bool:
@@ -431,9 +389,7 @@ class Config:
             if name in (data.get("plugins") or {}):
                 return False  # 文件里有但内存没有（异常态）：以文件为准
             data.setdefault("plugins", {})[name] = section
-            self.path.write_text(
-                json.dumps(data, ensure_ascii=False, indent=2) + "\n",
-                encoding="utf-8")
+            self.path.write_text(json.dumps(data, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
         except (OSError, ValueError) as e:
             log.warning("插件 %s 默认配置写入失败：%s", name, e)
             return False
@@ -462,8 +418,7 @@ class Config:
             if k in _SECRET_KEYS and isinstance(v, str) and len(v) > 8:
                 v = "***" + v[-4:]
             if k == "plugins" and isinstance(v, dict):
-                v = {name: _mask_secrets(sub, self._plugin_schemas.get(name))
-                     for name, sub in v.items() if isinstance(sub, dict)}
+                v = {name: _mask_secrets(sub, self._plugin_schemas.get(name)) for name, sub in v.items() if isinstance(sub, dict)}
             out[k] = v
         return out
 
@@ -479,9 +434,7 @@ def _mask_secrets(d: dict, fields: dict[str, Setting] | None = None) -> dict:
     out = {}
     for k, v in d.items():
         f = (fields or {}).get(k)
-        secret = bool(f is not None and f.secret) or (
-            isinstance(v, str) and len(v) > 8
-            and any(str(k).lower().endswith(h) for h in _SECRET_HINT))
+        secret = bool(f is not None and f.secret) or (isinstance(v, str) and len(v) > 8 and any(str(k).lower().endswith(h) for h in _SECRET_HINT))
         if secret and isinstance(v, str):
             out[k] = "***" + v[-4:]
         else:

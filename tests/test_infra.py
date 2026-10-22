@@ -1,20 +1,19 @@
 """基建测试：重试/背压/自愈/WAL/备份/清理/单实例锁/日志。"""
-import asyncio
+
 import logging
 import sqlite3
 
 import pytest
+from conftest import FakeLLM, make_config, make_persona, make_session, text_reply
 
+from lifemate.kernel.compaction import Compactor
 from lifemate.kernel.contracts import QUEUE_DROP, Envelope
 from lifemate.kernel.llm import _FailStreak, chat_with_retry, is_retryable
+from lifemate.kernel.mind import SelfKernel
+from lifemate.memory.store import Store
 from lifemate.utils.instance import acquire, release
 from lifemate.utils.log import level_from_name, setup_logging
 from lifemate.utils.recorder import Recorder
-
-from conftest import FakeLLM, make_config, make_persona, make_session, text_reply
-from lifemate.kernel.compaction import Compactor
-from lifemate.kernel.mind import SelfKernel
-from lifemate.memory.store import Store
 
 
 class TransientError(Exception):
@@ -22,6 +21,7 @@ class TransientError(Exception):
 
 
 # ── 1. LLM 重试 ────────────────────────────────────────
+
 
 async def test_retry_transient_then_success():
     calls = {"n": 0}
@@ -64,8 +64,7 @@ async def test_retry_exhausted_alerts_streak():
     try:
         for _ in range(2):
             with pytest.raises(TransientError):
-                await chat_with_retry(always_dead, max_retries=1, backoff_s=0,
-                                      fail_streak=streak)
+                await chat_with_retry(always_dead, max_retries=1, backoff_s=0, fail_streak=streak)
     finally:
         TransientError.__name__ = "TransientError"
     assert streak.count == 2 and alerts == [2]  # 第二次失败触发一次告警
@@ -86,13 +85,12 @@ def test_is_retryable_classification():
 
 # ── 5. 排队背压 ────────────────────────────────────────
 
+
 async def test_queue_backpressure_drops_oldest(tmp_path):
     llm = FakeLLM([text_reply("嗯")])
     cfg = make_config(tmp_path)
     cfg.queue_max_steer = 3
-    k = SelfKernel(llm=llm, persona=make_persona(tmp_path),
-                   session=make_session(tmp_path),
-                   compactor=Compactor(llm.chat, cfg), cfg=cfg)
+    k = SelfKernel(llm=llm, persona=make_persona(tmp_path), session=make_session(tmp_path), compactor=Compactor(llm.chat, cfg), cfg=cfg)
     drops: list[dict] = []
     k.subscribe(lambda ev: drops.append(ev.data) if ev.type == QUEUE_DROP else None)
 
@@ -108,23 +106,21 @@ async def test_queue_backpressure_drops_oldest(tmp_path):
 
 # ── 6. watchdog 自愈 ──────────────────────────────────
 
+
 async def test_heal_revives_zombie_queue(tmp_path):
     """task 死了但队列非满 → heal 重新拉起运行。"""
     llm = FakeLLM([text_reply("复活后处理")])
-    k = SelfKernel(llm=llm, persona=make_persona(tmp_path),
-                   session=make_session(tmp_path),
-                   compactor=Compactor(llm.chat, make_config(tmp_path)),
-                   cfg=make_config(tmp_path))
+    k = SelfKernel(llm=llm, persona=make_persona(tmp_path), session=make_session(tmp_path), compactor=Compactor(llm.chat, make_config(tmp_path)), cfg=make_config(tmp_path))
     k._task = None  # 模拟 task 消亡
     k._steer_q.append(Envelope(text="僵尸队列里的信"))
     info = await k.heal()
     assert info["healed"] == "revived"
     await k.wait_idle()
-    assert any(m.get("content") == "僵尸队列里的信"
-               for m in k._session.messages)
+    assert any(m.get("content") == "僵尸队列里的信" for m in k._session.messages)
 
 
 # ── 7/8. WAL / 备份 / 保留期清理 ──────────────────────
+
 
 def test_sqlite_wal_mode(tmp_path):
     s = Store(tmp_path / "m.db")
@@ -144,6 +140,7 @@ def test_store_backup_roundtrip(tmp_path):
 
 def test_observe_retention_cleanup(tmp_path):
     import os
+
     r = Recorder(tmp_path / "observe")
     r.event("boot", x=1)
     r.close()
@@ -151,7 +148,7 @@ def test_observe_retention_cleanup(tmp_path):
     f = list((tmp_path / "observe").glob("*.jsonl"))[0]
     old = time.time() - 100 * 86400
     os.utime(f, (old, old))
-    import time as _t
+
     assert r.cleanup(90) == 1
     assert not list((tmp_path / "observe").glob("*.jsonl"))
     assert r.cleanup(0) == 0  # 0=永久保留
@@ -159,8 +156,8 @@ def test_observe_retention_cleanup(tmp_path):
 
 import time  # noqa: E402
 
-
 # ── 4. 单实例锁 ────────────────────────────────────────
+
 
 def test_single_instance_lock(tmp_path):
     lock1 = acquire(tmp_path)
@@ -172,6 +169,7 @@ def test_single_instance_lock(tmp_path):
 
 
 # ── 2. 全局日志 ────────────────────────────────────────
+
 
 def test_log_file_written(tmp_path):
     path = setup_logging(tmp_path, max_bytes=1024, backup_count=1)
@@ -192,7 +190,7 @@ def test_level_from_name():
     assert level_from_name(" INFO ") == logging.INFO
     assert level_from_name(None) == logging.INFO
     assert level_from_name("") == logging.INFO
-    assert level_from_name("infoo") == logging.INFO        # 未知→回落 default
+    assert level_from_name("infoo") == logging.INFO  # 未知→回落 default
     assert level_from_name("infoo", default=logging.ERROR) == logging.ERROR
 
 
@@ -204,13 +202,13 @@ def test_log_console_off(tmp_path):
     logging.getLogger("lifemate.test").warning("静默测试")
     for h in handlers:
         h.flush()
-    assert "静默测试" in (tmp_path / "logs" / "lifemate.log").read_text(
-        encoding="utf-8")
+    assert "静默测试" in (tmp_path / "logs" / "lifemate.log").read_text(encoding="utf-8")
 
 
 def test_boot_envelopes_three_states_objective():
     """三态启动信封：首次/正常重启/非正常重启，内容客观无主观语气。"""
     from lifemate.host import BOOT_ENVELOPE, _boot_envelope, _restart_envelope
+
     # 首次（有/无插件）
     assert "首次启动" in BOOT_ENVELOPE and "记忆为空" in BOOT_ENVELOPE
     with_plug = _boot_envelope(["qq"])
@@ -224,8 +222,7 @@ def test_boot_envelopes_three_states_objective():
     for text in (with_plug, clean, crash, _boot_envelope([])):
         assert "现在" in text
     # 客观性：无主观语气词（无安慰/建议/命令式）
-    subjective = ["你醒了", "不是你的问题", "诚实面对", "由你决定",
-                  "即可", "建议"]
+    subjective = ["你醒了", "不是你的问题", "诚实面对", "由你决定", "即可", "建议"]
     for text in (BOOT_ENVELOPE, with_plug, clean, crash):
         for word in subjective:
             assert word not in text, f"{word!r} 出现在 {text!r}"
@@ -233,14 +230,15 @@ def test_boot_envelopes_three_states_objective():
 
 def test_store_boots_with_wal_residue(tmp_path):
     """强杀残留吸收：有残留连接时 Store 仍能正常打开并读到全部数据。"""
-    from lifemate.memory.store import Store
     import sqlite3
+
+    from lifemate.memory.store import Store
+
     s1 = Store(tmp_path / "m.db")
     s1.record_episode("强杀前的记忆")
     # 模拟另一个进程持库写入后未及关闭（wal 有已提交数据）
     raw = sqlite3.connect(tmp_path / "m.db")
-    raw.execute("INSERT INTO episodes (ts, source, kind, summary, salience)"
-                " VALUES (?, '', 'life', '残留wal里的记忆', 1)", (time.time(),))
+    raw.execute("INSERT INTO episodes (ts, source, kind, summary, salience) VALUES (?, '', 'life', '残留wal里的记忆', 1)", (time.time(),))
     raw.commit()
     # 不 close raw——进程内持有，模拟强杀现场
     s2 = Store(tmp_path / "m.db")  # 启动吸收（checkpoint 可能 busy，但恢复不阻塞）

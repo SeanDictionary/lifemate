@@ -7,6 +7,7 @@
 - start()：起 stdin 守护线程（阻塞读隔离在线程里，不堵事件循环）
 - run(stop)：消费输入直到停止；返回退出原因（signal/quit/stdin_eof）
 """
+
 from __future__ import annotations
 
 import asyncio
@@ -25,8 +26,7 @@ if TYPE_CHECKING:
 class Console:
     """宿主的开发控制台：stdin → 命令（控制面）/ 信封（感知面）。"""
 
-    def __init__(self, kernel: "SelfKernel", cfg: "Config",
-                 recorder: "Recorder") -> None:
+    def __init__(self, kernel: SelfKernel, cfg: Config, recorder: Recorder) -> None:
         self._kernel = kernel
         self._cfg = cfg
         self._recorder = recorder
@@ -54,8 +54,7 @@ class Console:
         while not stop.is_set():
             get = asyncio.create_task(self._queue.get())
             sig = asyncio.create_task(stop.wait())
-            done, _ = await asyncio.wait(
-                {get, sig}, return_when=asyncio.FIRST_COMPLETED)
+            done, _ = await asyncio.wait({get, sig}, return_when=asyncio.FIRST_COMPLETED)
             if sig in done:
                 get.cancel()
                 return "signal"

@@ -5,27 +5,26 @@
 - 压缩：从尾部保留最近 keep_recent 估算 token，其余连同旧摘要交给模型
   生成滚动摘要，整体提交回会话
 """
+
 from __future__ import annotations
 
 import logging
 from typing import Any, Protocol
 
-from .contracts import LLMResponse
-from .session import Session, _MSG_OVERHEAD, estimate_tokens
 from ..utils import clock
+from .contracts import LLMResponse
+from .session import _MSG_OVERHEAD, Session, estimate_tokens
 
 log = logging.getLogger("kernel.compaction")
 
-_COMPACT_PROMPT = (
-    "把以下对话历史压缩成一份摘要（保留：聊过的话题、对方的偏好与事实、"
-    "未完成的事项、你的状态与打算；不超400字）。"
-    "旧摘要仍有效的要点可以保留。\n\n旧摘要：\n{old}\n\n对话历史：\n{transcript}"
-)
+_COMPACT_PROMPT = "把以下对话历史压缩成一份摘要（保留：聊过的话题、对方的偏好与事实、未完成的事项、你的状态与打算；不超400字）。旧摘要仍有效的要点可以保留。\n\n旧摘要：\n{old}\n\n对话历史：\n{transcript}"
 
 
 class _ChatFn(Protocol):
     async def __call__(
-        self, messages: list[dict[str, Any]], tools: list | None = None,
+        self,
+        messages: list[dict[str, Any]],
+        tools: list | None = None,
     ) -> LLMResponse: ...
 
 
@@ -36,8 +35,7 @@ class Compactor:
         self._chat = chat
         self._cfg = cfg
 
-    def needs_compaction(self, session: Session,
-                         last_prompt_tokens: int) -> bool:
+    def needs_compaction(self, session: Session, last_prompt_tokens: int) -> bool:
         if last_prompt_tokens > 0:
             return last_prompt_tokens > self._cfg.compact_threshold_tokens
         return session.total_tokens() > self._cfg.compact_threshold_tokens
@@ -49,26 +47,27 @@ class Compactor:
             return None
         dropped = session.messages[:cut]
         kept = session.messages[cut:]
-        transcript = "\n".join(
-            f"[{m.get('role')}]: {str(m.get('content') or '')[:400]}" for m in dropped)
+        transcript = "\n".join(f"[{m.get('role')}]: {str(m.get('content') or '')[:400]}" for m in dropped)
         try:
-            resp = await self._chat(messages=[{
-                "role": "user",
-                "content": _COMPACT_PROMPT.format(
-                    old=session.summary or "（无）", transcript=transcript),
-            }])
+            resp = await self._chat(
+                messages=[
+                    {
+                        "role": "user",
+                        "content": _COMPACT_PROMPT.format(old=session.summary or "（无）", transcript=transcript),
+                    }
+                ]
+            )
             summary = (resp.content or "").strip()
             if not summary:
                 return None
         except Exception:  # noqa: BLE001
             log.exception("压缩调用失败（跳过本轮）")
             return None
-        span = self._span_of(dropped)
-        session.apply_compaction(summary, kept, span=span)
-        log.info("会话压缩：丢弃 %d 条，保留 %d 条，摘要 %d 字（%s）",
-                 len(dropped), len(kept), len(summary), span or "无时间范围")
+        session.apply_compaction(summary, kept, span=self._span_of(dropped))
+        log.info("会话压缩：丢弃 %d 条，保留 %d 条，摘要 %d 字（%s）", len(dropped), len(kept), len(summary), self._span_of(dropped) or "无时间范围")
         return {
-            "dropped": len(dropped), "kept": len(kept),
+            "dropped": len(dropped),
+            "kept": len(kept),
             "summary_chars": len(summary),
             "prompt_tokens": resp.prompt_tokens,
             "completion_tokens": resp.completion_tokens,
@@ -80,15 +79,12 @@ class Compactor:
         if not stamps:
             return ""  # 旧格式消息无 ts：不标注，不臆造
         tz = self._cfg.timezone
-        a, b = (clock.datetime_at(stamps[0], tz),
-                clock.datetime_at(stamps[-1], tz))
-        fmt = "%Y-%m-%d %H:%M" if (a.year != b.year
-                                    or (b - a).days > 180) else "%m-%d %H:%M"
+        a, b = (clock.datetime_at(stamps[0], tz), clock.datetime_at(stamps[-1], tz))
+        fmt = "%Y-%m-%d %H:%M" if (a.year != b.year or (b - a).days > 180) else "%m-%d %H:%M"
         return f"{a.strftime(fmt)} 至 {b.strftime(fmt)}"
 
     @staticmethod
-    def _find_cut(messages: list[dict[str, Any]],
-                  keep_recent_tokens: int) -> int:
+    def _find_cut(messages: list[dict[str, Any]], keep_recent_tokens: int) -> int:
         """从尾部累计 keep_recent token，返回截断点（不切在工具响应中间）。"""
         acc = 0
         cut = len(messages)

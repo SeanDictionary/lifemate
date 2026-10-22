@@ -11,6 +11,7 @@
 - 基建任务：配置热重载 / watchdog 自愈 / 磁盘治理 / 闹钟兑现
 - 收尾：中止思维 → 停基建任务 → 停插件（档案/关库由入口收尾）
 """
+
 from __future__ import annotations
 
 import asyncio
@@ -19,8 +20,9 @@ import time
 from pathlib import Path
 
 from . import __version__
+from .console import Console
 from .kernel.compaction import Compactor
-from .kernel.contracts import BOOT, REMINDER, Envelope, Tool
+from .kernel.contracts import BOOT, REMINDER, Envelope
 from .kernel.llm import OpenAILLM
 from .kernel.mind import SelfKernel
 from .kernel.persona import Persona
@@ -28,28 +30,19 @@ from .kernel.session import Session
 from .kernel.tools import make_deep_sleep_tool, make_read_skill_tool
 from .memory.store import Store
 from .memory.tools import build_memory_tools
-from .utils.config import Config
+from .plugins import stop_plugins
 from .utils import clock
+from .utils.config import Config
 from .utils.log import get_logger
 from .utils.recorder import Recorder
-from .console import Console
-from .plugins import PluginContext, stop_plugins
 
 log = get_logger("host")
 
-BOOT_ENVELOPE = (
-    "（系统首次启动。未装配任何外界插件。当前可用能力以工具列表为准，"
-    "记忆为空。）"
-)
+BOOT_ENVELOPE = "（系统首次启动。未装配任何外界插件。当前可用能力以工具列表为准，记忆为空。）"
 
-RESUME_ENVELOPE = (
-    "（系统启动。上次为正常停机，会话与记忆已恢复。）"
-)
+RESUME_ENVELOPE = "（系统启动。上次为正常停机，会话与记忆已恢复。）"
 
-CRASH_ENVELOPE = (
-    "（系统启动。上次为非正常退出（崩溃或被强制结束），"
-    "数据已恢复到最后一致状态，会话中未完成的调用已补充回执。）"
-)
+CRASH_ENVELOPE = "（系统启动。上次为非正常退出（崩溃或被强制结束），数据已恢复到最后一致状态，会话中未完成的调用已补充回执。）"
 
 
 def _with_now(text: str, tz_name: str) -> str:
@@ -62,8 +55,7 @@ def _with_now(text: str, tz_name: str) -> str:
 
 def _restart_envelope(unclean: bool, tz_name: str = "") -> str:
     """重启信封：区分正常停机与意外中断（强杀/崩溃/断电）。"""
-    return _with_now(
-        CRASH_ENVELOPE if unclean else RESUME_ENVELOPE, tz_name)
+    return _with_now(CRASH_ENVELOPE if unclean else RESUME_ENVELOPE, tz_name)
 
 
 def _boot_envelope(plugin_names: list[str], tz_name: str = "") -> str:
@@ -71,35 +63,28 @@ def _boot_envelope(plugin_names: list[str], tz_name: str = "") -> str:
     if not plugin_names:
         return _with_now(BOOT_ENVELOPE, tz_name)
     names = "、".join(plugin_names)
-    return _with_now(
-        f"（系统首次启动。已装配插件：{names}。"
-        "当前可用能力以工具列表与技能索引为准，记忆为空。）", tz_name)
+    return _with_now(f"（系统首次启动。已装配插件：{names}。当前可用能力以工具列表与技能索引为准，记忆为空。）", tz_name)
 
 
 def build(cfg: Config) -> tuple[SelfKernel, Store, Recorder]:
     """装配内核 + 记忆 + 观测记录器（剥夺模式：不装载任何器官）。"""
     if not cfg.llm_base_url or not cfg.llm_model:
-        raise SystemExit(
-            "需要配置 llm_base_url 与 llm_model"
-            "（config.json 或 env LIFEMATE_LLM_*；内核无法思考）")
+        raise SystemExit("需要配置 llm_base_url 与 llm_model（config.json 或 env LIFEMATE_LLM_*；内核无法思考）")
 
     # 观测记录器先行（黑匣子原则：任何后续装配失败也有档可查）
-    recorder = Recorder(Path(cfg.data_dir) / "observe",
-                        sid_fn=lambda: kernel.session_id,  # noqa: F821 惰性闭包
-                        max_field_chars=cfg.observe_max_field_chars)
+    recorder = Recorder(
+        Path(cfg.data_dir) / "observe",
+        sid_fn=lambda: kernel.session_id,  # noqa: F821 惰性闭包
+        max_field_chars=cfg.observe_max_field_chars,
+    )
 
-    llm = OpenAILLM(
-        cfg,
-        on_persistent_failure=lambda streak: recorder.event(
-            "error", where="llm",
-            error=f"连续失败 {streak} 次——自主性受影响，请检查网关/渠道"))
+    llm = OpenAILLM(cfg, on_persistent_failure=lambda streak: recorder.event("error", where="llm", error=f"连续失败 {streak} 次——自主性受影响，请检查网关/渠道"))
 
     store = Store(Path(cfg.data_dir) / "memory.db")
     session = Session.load_latest(Path(cfg.data_dir) / "sessions")
     persona = Persona(cfg.soul_dir, cfg.skills_dir)
     compactor = Compactor(llm.chat, cfg)
-    kernel = SelfKernel(
-        llm=llm, persona=persona, session=session, compactor=compactor, cfg=cfg)
+    kernel = SelfKernel(llm=llm, persona=persona, session=session, compactor=compactor, cfg=cfg)
     kernel.subscribe(recorder.on_kernel_event)
 
     # 内核自带：记忆工具 + read_skill + deep_sleep（wait 由内核内置；
@@ -118,6 +103,7 @@ def build(cfg: Config) -> tuple[SelfKernel, Store, Recorder]:
         items = "；".join(r["intent"][:30] for r in pend[:3])
         rel = clock.format_rel(pend[0]["due_at"], tz_name=cfg.timezone)
         return f"（你还有 {len(pend)} 条待办提醒，最近一条 {rel}，如：{items}。）"
+
     kernel.add_wake_extras(_extras)
 
     return kernel, store, recorder
@@ -125,11 +111,10 @@ def build(cfg: Config) -> tuple[SelfKernel, Store, Recorder]:
 
 def _console_printer() -> None:
     """控制台呈现（开发调试用；正式观测走 observe 档案 + replay）。"""
-    from .kernel.contracts import (ASSISTANT_MSG, REST, SESSION_ROTATED,
-                                   TOOL_CALL, TOOL_RESULT, WAKE)
+    from .kernel.contracts import ASSISTANT_MSG, REST, SESSION_ROTATED, TOOL_CALL, TOOL_RESULT, WAKE
+
     # 图标语言：与 replay.py / web(src/lib/render.ts) 同一套通用 emoji
-    glyph = {WAKE: "☀️", ASSISTANT_MSG: "💬", TOOL_CALL: "🔧",
-             TOOL_RESULT: "📥", REST: "🌙", SESSION_ROTATED: "🔄"}
+    glyph = {WAKE: "☀️", ASSISTANT_MSG: "💬", TOOL_CALL: "🔧", TOOL_RESULT: "📥", REST: "🌙", SESSION_ROTATED: "🔄"}
 
     def _print(ev) -> None:
         g = glyph.get(ev.type, "⚪")
@@ -155,8 +140,8 @@ def _console_printer() -> None:
 
 # ── 后台基建任务 ────────────────────────────────────────
 
-async def _config_watcher(cfg: Config, stop: asyncio.Event,
-                          recorder: Recorder) -> None:
+
+async def _config_watcher(cfg: Config, stop: asyncio.Event, recorder: Recorder) -> None:
     """配置热重载轮询：mtime 变化即原地重载（间隔自身也是配置项）。"""
     while not stop.is_set():
         try:
@@ -170,8 +155,7 @@ async def _config_watcher(cfg: Config, stop: asyncio.Event,
                 log.exception("配置重载异常")
 
 
-async def _watchdog(cfg: Config, kernel: SelfKernel,
-                    stop: asyncio.Event) -> None:
+async def _watchdog(cfg: Config, kernel: SelfKernel, stop: asyncio.Event) -> None:
     """健康巡检：僵尸队列复活 / 卡死运行处置（自愈入口在内核 heal）。"""
     while not stop.is_set():
         try:
@@ -185,8 +169,7 @@ async def _watchdog(cfg: Config, kernel: SelfKernel,
                 log.exception("watchdog 巡检异常")
 
 
-async def _maintenance(cfg: Config, store: Store, recorder: Recorder,
-                       stop: asyncio.Event) -> None:
+async def _maintenance(cfg: Config, store: Store, recorder: Recorder, stop: asyncio.Event) -> None:
     """磁盘治理：observe 保留期清理 + memory.db 定期在线备份。"""
     last_backup = 0.0
     while not stop.is_set():
@@ -220,8 +203,7 @@ def _prune_backups(directory: Path, keep: int) -> None:
 # ── 闹钟兑现器 ─────────────────────────────────────────
 
 
-async def _reminder_poller(cfg: Config, store: Store, kernel: SelfKernel,
-                            stop: asyncio.Event) -> None:
+async def _reminder_poller(cfg: Config, store: Store, kernel: SelfKernel, stop: asyncio.Event) -> None:
     """闹钟兑现器：到期提醒 → notify（它的意志，机制兑现）。"""
     while not stop.is_set():
         try:
@@ -229,10 +211,7 @@ async def _reminder_poller(cfg: Config, store: Store, kernel: SelfKernel,
         except TimeoutError:
             try:
                 for r in store.due_reminders(3):
-                    kernel.notify(Envelope(
-                        text=f"（你自己定的提醒到点了：{r['intent']}。"
-                             f"现在 {clock.hm(time.time(), cfg.timezone)}。）",
-                        kind=REMINDER, origin="host"))
+                    kernel.notify(Envelope(text=f"（你自己定的提醒到点了：{r['intent']}。现在 {clock.hm(time.time(), cfg.timezone)}。）", kind=REMINDER, origin="host"))
             except Exception:  # noqa: BLE001
                 log.exception("提醒轮询异常")
 
@@ -240,16 +219,13 @@ async def _reminder_poller(cfg: Config, store: Store, kernel: SelfKernel,
 class Host:
     """运行时服务（职责见模块 docstring）。run() 返回退出原因。"""
 
-    def __init__(self, kernel: SelfKernel, store: Store, recorder: Recorder,
-                 cfg: Config, stop: asyncio.Event, *,
-                 plugins: list | None = None, no_stdin: bool = False,
-                 first_boot: bool = False, unclean_prev: bool = False) -> None:
+    def __init__(self, kernel: SelfKernel, store: Store, recorder: Recorder, cfg: Config, stop: asyncio.Event, *, plugins: list | None = None, no_stdin: bool = False, first_boot: bool = False, unclean_prev: bool = False) -> None:
         self._kernel = kernel
         self._store = store
         self._recorder = recorder
         self._cfg = cfg
         self._stop = stop
-        self._plugins = list(plugins or [])   # 组合根装载（与 server 共享）
+        self._plugins = list(plugins or [])  # 组合根装载（与 server 共享）
         self._no_stdin = no_stdin
         self._first_boot = first_boot
         self._unclean_prev = unclean_prev
@@ -262,31 +238,21 @@ class Host:
 
         # 启动快照（含插件工具，复现它当时看到的世界）
         persona = Persona(cfg.soul_dir, cfg.skills_dir)
-        self._recorder.event(
-            "boot", version=__version__, config=cfg.masked(),
-            persona_hash=hashlib.sha256(
-                persona.system_prompt().encode("utf-8")).hexdigest()[:12],
-            skills=sorted(persona.skills()), tools=kernel.tool_names())
-        self._recorder.event("session_load",
-                             msgs=len(kernel._session.messages),
-                             summary_chars=len(kernel._session.summary))
+        self._recorder.event("boot", version=__version__, config=cfg.masked(), persona_hash=hashlib.sha256(persona.system_prompt().encode("utf-8")).hexdigest()[:12], skills=sorted(persona.skills()), tools=kernel.tool_names())
+        self._recorder.event("session_load", msgs=len(kernel._session.messages), summary_chars=len(kernel._session.summary))
 
-        log.info("运行时启动（session=%s, 记忆=%s, 插件=%s）",
-                 kernel.session_id, self._store.stats(), [p.name for p in plugins])
+        log.info("运行时启动（session=%s, 记忆=%s, 插件=%s）", kernel.session_id, self._store.stats(), [p.name for p in plugins])
 
         tasks = [
             asyncio.create_task(_config_watcher(cfg, self._stop, self._recorder)),
             asyncio.create_task(_watchdog(cfg, kernel, self._stop)),
-            asyncio.create_task(_maintenance(cfg, self._store, self._recorder,
-                                             self._stop)),
-            asyncio.create_task(_reminder_poller(cfg, self._store, kernel,
-                                                 self._stop)),
+            asyncio.create_task(_maintenance(cfg, self._store, self._recorder, self._stop)),
+            asyncio.create_task(_reminder_poller(cfg, self._store, kernel, self._stop)),
         ]
 
         # 启动信封：首次启动 / 正常停机重启 / 非正常退出重启，三态客观陈述
         if self._first_boot:
-            boot_text = _boot_envelope([p.name for p in plugins],
-                                       self._cfg.timezone)
+            boot_text = _boot_envelope([p.name for p in plugins], self._cfg.timezone)
         else:
             boot_text = _restart_envelope(self._unclean_prev, self._cfg.timezone)
         kernel.notify(Envelope(text=boot_text, kind=BOOT, origin="host"))
@@ -309,10 +275,9 @@ class Host:
         await kernel.wait_idle()
         self._stop.set()
         results = await asyncio.gather(*tasks, return_exceptions=True)
-        for t, r in zip(tasks, results):
+        for t, r in zip(tasks, results, strict=False):
             if isinstance(r, BaseException):
-                log.warning("停机（host）：基建任务 %s 异常退出：%r",
-                            t.get_name(), r)
+                log.warning("停机（host）：基建任务 %s 异常退出：%r", t.get_name(), r)
         log.info("停机（host）：基建任务已停止（%d 项）", len(tasks))
         await stop_plugins(plugins)
         log.info("停机（host）：插件已停止（%d 个）", len(plugins))

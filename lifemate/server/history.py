@@ -2,6 +2,7 @@
 
 档案布局（recorder 契约）：{data_dir}/observe/YYYY-MM-DD.jsonl，一行一记录。
 """
+
 from __future__ import annotations
 
 import json
@@ -16,8 +17,7 @@ def available_dates(observe_dir: Path) -> list[str]:
     return sorted(f.stem for f in observe_dir.glob("*.jsonl"))
 
 
-def read_day(observe_dir: Path, date: str, rid: str = "",
-             limit: int = 500, offset: int = 0, tail: int = 0) -> dict[str, Any] | None:
+def read_day(observe_dir: Path, date: str, rid: str = "", limit: int = 500, offset: int = 0, tail: int = 0) -> dict[str, Any] | None:
     """读一天档案（可按 rid 过滤、分页或取尾部 N 条）。无档案 → None。
 
     tail>0 时取过滤后的最后 N 条（概览“最近动态”轮询用，忽略 offset/limit）。
@@ -40,7 +40,7 @@ def read_day(observe_dir: Path, date: str, rid: str = "",
         rows.append(rec)
     if tail:
         return {"total": len(rows), "rows": rows[-tail:]}
-    return {"total": len(rows), "rows": rows[offset:offset + limit]}
+    return {"total": len(rows), "rows": rows[offset : offset + limit]}
 
 
 def usage_of_day(observe_dir: Path, date: str) -> dict[str, Any]:
@@ -59,17 +59,14 @@ def usage_of_day(observe_dir: Path, date: str) -> dict[str, Any]:
         if not rec.get("prompt_tokens"):
             continue
         m = str(rec.get("model") or "?")
-        a = agg.setdefault(m, {"calls": 0, "tokens_in": 0, "tokens_out": 0,
-                               "latency_sum": 0})
+        a = agg.setdefault(m, {"calls": 0, "tokens_in": 0, "tokens_out": 0, "latency_sum": 0})
         a["calls"] += 1
         a["tokens_in"] += rec.get("prompt_tokens") or 0
         a["tokens_out"] += rec.get("completion_tokens") or 0
         a["latency_sum"] += rec.get("latency_ms") or 0
     out: dict[str, Any] = {}
     for m, a in agg.items():
-        out[m] = {"calls": a["calls"], "tokens_in": a["tokens_in"],
-                  "tokens_out": a["tokens_out"],
-                  "latency_ms_avg": round(a["latency_sum"] / a["calls"])}
+        out[m] = {"calls": a["calls"], "tokens_in": a["tokens_in"], "tokens_out": a["tokens_out"], "latency_ms_avg": round(a["latency_sum"] / a["calls"])}
     return out
 
 

@@ -3,6 +3,7 @@
 广播器：每客户端一个有界队列，满则丢最旧并计数——慢客户端绝不反压
 心智循环（订阅回调运行在思维循环里，只做 put_nowait）。
 """
+
 from __future__ import annotations
 
 import asyncio
@@ -34,7 +35,7 @@ class Broadcaster:
                 n += 1
             except asyncio.QueueFull:
                 try:
-                    q.get_nowait()   # 丢最旧
+                    q.get_nowait()  # 丢最旧
                     q.put_nowait(obj)
                     self.dropped += 1
                     n += 1

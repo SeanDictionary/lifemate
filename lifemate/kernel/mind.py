@@ -11,6 +11,7 @@
 - 防不睡：连续轮次超阈值先提示后强制休息（睡眠剥夺→昏睡）
 - 崩溃恢复：悬空工具调用补合成回执，全链兜底延伸到生死边界
 """
+
 from __future__ import annotations
 
 import asyncio
@@ -19,16 +20,14 @@ import logging
 import time
 import uuid
 from collections import deque
-from typing import Any, Callable
+from collections.abc import Callable
+from typing import Any
 
+from ..utils import clock
 from .compaction import Compactor
-from .contracts import (ASSISTANT_MSG, COMPACTED, DIRECT, Envelope, ERROR,
-                        EventCallback, MindEvent, PluginPack, QUEUE_DROP, REST,
-                        SEED, SESSION_ROTATED, TOOL_CALL, TOOL_RESULT, Tool,
-                        USER_MSG, WAKE)
+from .contracts import ASSISTANT_MSG, COMPACTED, DIRECT, ERROR, QUEUE_DROP, REST, SEED, SESSION_ROTATED, TOOL_CALL, TOOL_RESULT, USER_MSG, WAKE, Envelope, EventCallback, MindEvent, PluginPack, Tool
 from .llm import LLMClient, LLMResponse
 from .persona import Persona
-from ..utils import clock
 from .session import Session
 from .tools import make_wait_tool
 
@@ -45,7 +44,7 @@ def _cap(text: str, n: int = _TOOL_RESULT_MAX) -> str:
     if len(text) <= n:
         return text
     cut = len(text) - n
-    return text[: n // 2] + f"\n…（中间省略 {cut} 字符）…\n" + text[-n // 2:]
+    return text[: n // 2] + f"\n…（中间省略 {cut} 字符）…\n" + text[-n // 2 :]
 
 
 class _Waiting:
@@ -57,8 +56,7 @@ class _Waiting:
 
     __slots__ = ("future", "reason", "since", "intent", "timeout_s")
 
-    def __init__(self, future: asyncio.Future, reason: str,
-                 intent: str = "", timeout_s: float | None = None) -> None:
+    def __init__(self, future: asyncio.Future, reason: str, intent: str = "", timeout_s: float | None = None) -> None:
         self.future = future
         self.reason = reason
         self.since = time.monotonic()
@@ -67,8 +65,7 @@ class _Waiting:
 
 
 class SelfKernel:
-    def __init__(self, *, llm: LLMClient, persona: Persona, session: Session,
-                 compactor: Compactor, cfg) -> None:
+    def __init__(self, *, llm: LLMClient, persona: Persona, session: Session, compactor: Compactor, cfg) -> None:
         self._llm = llm
         self._persona = persona
         self._session = session
@@ -77,22 +74,22 @@ class SelfKernel:
 
         self._tools: dict[str, Tool] = {}
         self._plugins: dict[str, PluginPack] = {}
-        self._steer_q: deque[Envelope] = deque()      # 思考中的插话队列
-        self._pending: list[Envelope] = []            # 等待期间累积的事件（组批）
+        self._steer_q: deque[Envelope] = deque()  # 思考中的插话队列
+        self._pending: list[Envelope] = []  # 等待期间累积的事件（组批）
         self._task: asyncio.Task | None = None
         self._subs: list[EventCallback] = []
         self._last_prompt_tokens = 0
-        self._rid = ""                                # 当前唤醒周期 id（观测归组）
+        self._rid = ""  # 当前唤醒周期 id（观测归组）
         self._wait: _Waiting | None = None
         self._wake_extras: list[Callable[[], str]] = []
         self._current_tool: asyncio.Task | None = None
         self._current_tool_interruptible = False
         self._interrupted: Envelope | None = None
-        self._last_activity = time.time()             # 墙钟：唤醒差值
-        self._last_activity_mono = time.monotonic()   # 单调钟：卡死检测
+        self._last_activity = time.time()  # 墙钟：唤醒差值
+        self._last_activity_mono = time.monotonic()  # 单调钟：卡死检测
 
         self._wait_tool = make_wait_tool(self)
-        self.register_tool(self._wait_tool)            # 等待是思维的一部分
+        self.register_tool(self._wait_tool)  # 等待是思维的一部分
         self._repair_dangling()
 
     # ── 事件 ─────────────────────────────────────────────
@@ -102,6 +99,7 @@ class SelfKernel:
         def _unsub() -> None:
             if cb in self._subs:
                 self._subs.remove(cb)
+
         return _unsub
 
     def _emit(self, type_: str, **data: Any) -> None:
@@ -158,9 +156,7 @@ class SelfKernel:
             return
         self._steer_q.append(env)
         self._trim_steer()
-        if ((env.kind == DIRECT or env.meta.get("urgent"))
-                and self._current_tool is not None
-                and self._current_tool_interruptible):
+        if (env.kind == DIRECT or env.meta.get("urgent")) and self._current_tool is not None and self._current_tool_interruptible:
             self._interrupted = env
             self._current_tool.cancel()
         self._ensure_run()
@@ -172,8 +168,7 @@ class SelfKernel:
             dropped.append(self._steer_q.popleft())
         if dropped:
             log.warning("插话队列溢出：丢弃最旧 %d 封", len(dropped))
-            self._emit(QUEUE_DROP, reason="overflow_steer",
-                       texts=[e.text for e in dropped])
+            self._emit(QUEUE_DROP, reason="overflow_steer", texts=[e.text for e in dropped])
 
     def _ensure_run(self) -> None:
         if self._task is None or self._task.done():
@@ -186,7 +181,7 @@ class SelfKernel:
             wake_env: Envelope | None = None
             first = True
             if self._steer_q:
-                wake_env = self._steer_q.popleft()   # 出生/重启信封
+                wake_env = self._steer_q.popleft()  # 出生/重启信封
             while True:
                 if wake_env is None:
                     # 无待处理输入：休息等敲门
@@ -209,8 +204,7 @@ class SelfKernel:
         nudged = False
         while True:
             await self._maybe_compact()
-            resp = await self._llm.chat(
-                self._build_messages(), tools=self._tool_schemas() or None)
+            resp = await self._llm.chat(self._build_messages(), tools=self._tool_schemas() or None)
             self._last_prompt_tokens = resp.prompt_tokens
             self._touch()
             self._record_assistant(resp)
@@ -224,15 +218,10 @@ class SelfKernel:
                 return await self._do_wait(None, "auto")
 
             for tc in resp.tool_calls:
-                self._emit(TOOL_CALL, rid=self._rid, name=tc.name,
-                           arguments=tc.arguments[:500])
+                self._emit(TOOL_CALL, rid=self._rid, name=tc.name, arguments=tc.arguments[:500])
                 result, ok, latency_ms = await self._exec_tool(tc)
-                self._session.append(
-                    {"role": "tool", "tool_call_id": tc.id, "content": result,
-                     "ts": round(time.time(), 3)})
-                self._emit(TOOL_RESULT, rid=self._rid, tool_call_id=tc.id,
-                           name=tc.name, ok=ok, latency_ms=latency_ms,
-                           result=result[:500])
+                self._session.append({"role": "tool", "tool_call_id": tc.id, "content": result, "ts": round(time.time(), 3)})
+                self._emit(TOOL_RESULT, rid=self._rid, tool_call_id=tc.id, name=tc.name, ok=ok, latency_ms=latency_ms, result=result[:500])
             self._drain_steer()  # 工具批次后、下次模型调用前送达插话
 
             # 防不睡：连续轮次超阈值先提示、再强制（睡眠剥夺→昏睡）
@@ -242,12 +231,10 @@ class SelfKernel:
                 return await self._do_wait(None, "auto")
             if turns >= self._cfg.turns_rest_nudge and not nudged:
                 nudged = True
-                self._deliver(Envelope(text=_NUDGE, kind="system",
-                                       delivery="nudge"))
+                self._deliver(Envelope(text=_NUDGE, kind="system", delivery="nudge"))
 
     # ── 等待与唤醒 ──────────────────────────────────────
-    async def _do_wait(self, timeout_s: float | None, reason: str,
-                       intent: str = "") -> str:
+    async def _do_wait(self, timeout_s: float | None, reason: str, intent: str = "") -> str:
         """挂起等待。返回唤醒信封（组批事件 + 差值 + 附加事实）。"""
         fut: asyncio.Future = asyncio.get_event_loop().create_future()
         self._wait = _Waiting(fut, reason, intent, timeout_s)
@@ -264,8 +251,7 @@ class SelfKernel:
             w = self._wait
             self._wait = None
         # 被事件唤醒时，未到点的闹钟意图随本次唤醒失效——还给它自决
-        superseded = (None if expired or timeout_s is None or not w.intent
-                      else w.intent)
+        superseded = None if expired or timeout_s is None or not w.intent else w.intent
         return self._compose_wake(superseded)
 
     def _compose_wake(self, superseded_alarm: str | None = None) -> str:
@@ -282,8 +268,7 @@ class SelfKernel:
                 text = env.text if len(env.text) <= 800 else env.text[:800] + "…"
                 lines.append(f"{mark} [{tag}] {text}" if tag else f"{mark} {text}")
             if superseded_alarm:
-                lines.append(f"（你之前定的闹钟「{superseded_alarm}」已被这次唤醒"
-                             "取代——还要等的话重新定。）")
+                lines.append(f"（你之前定的闹钟「{superseded_alarm}」已被这次唤醒取代——还要等的话重新定。）")
             body = "\n".join(lines) + "）"
         else:
             body = head + "没有新事件——是你设的闹钟或等待自然到期。）"
@@ -299,18 +284,13 @@ class SelfKernel:
 
     def _begin_cycle(self, env: Envelope, trigger: str = "event") -> None:
         self._new_rid()
-        self._emit(WAKE, rid=self._rid, trigger=trigger,
-                   kind=env.kind, source=env.source)
+        self._emit(WAKE, rid=self._rid, trigger=trigger, kind=env.kind, source=env.source)
         self._deliver(env)
 
     def _deliver(self, env: Envelope) -> None:
         """信封送达心智（进上下文）并发观测事件。"""
-        self._session.append(
-            {"role": "user", "content": env.text, "ts": round(env.ts, 3)})
-        self._emit(USER_MSG, rid=self._rid, text=env.text, env={
-            "origin": env.origin, "kind": env.kind, "source": env.source,
-            "delivery": env.delivery or "wake",
-            "arrived_ts": round(env.ts, 3)})
+        self._session.append({"role": "user", "content": env.text, "ts": round(env.ts, 3)})
+        self._emit(USER_MSG, rid=self._rid, text=env.text, env={"origin": env.origin, "kind": env.kind, "source": env.source, "delivery": env.delivery or "wake", "arrived_ts": round(env.ts, 3)})
         self._touch()
 
     def _drain_steer(self) -> bool:
@@ -334,31 +314,18 @@ class SelfKernel:
 
     # ── 消息与模型 ──────────────────────────────────────
     def _record_assistant(self, resp: LLMResponse) -> None:
-        msg: dict[str, Any] = {"role": "assistant", "content": resp.content,
-                               "ts": round(time.time(), 3)}
+        msg: dict[str, Any] = {"role": "assistant", "content": resp.content, "ts": round(time.time(), 3)}
         if resp.tool_calls:
-            msg["tool_calls"] = [
-                {"id": c.id, "type": "function",
-                 "function": {"name": c.name, "arguments": c.arguments}}
-                for c in resp.tool_calls]
+            msg["tool_calls"] = [{"id": c.id, "type": "function", "function": {"name": c.name, "arguments": c.arguments}} for c in resp.tool_calls]
         self._session.append(msg)
-        self._emit(ASSISTANT_MSG, rid=self._rid, content=resp.content,
-                   thinking=resp.thinking,
-                   tool_calls=[{"name": c.name, "arguments": c.arguments[:500]}
-                               for c in resp.tool_calls],
-                   model=resp.model, stop_reason=resp.stop_reason,
-                   prompt_tokens=resp.prompt_tokens,
-                   completion_tokens=resp.completion_tokens,
-                   latency_ms=resp.latency_ms)
+        self._emit(ASSISTANT_MSG, rid=self._rid, content=resp.content, thinking=resp.thinking, tool_calls=[{"name": c.name, "arguments": c.arguments[:500]} for c in resp.tool_calls], model=resp.model, stop_reason=resp.stop_reason, prompt_tokens=resp.prompt_tokens, completion_tokens=resp.completion_tokens, latency_ms=resp.latency_ms)
 
     def _build_messages(self) -> list[dict[str, Any]]:
-        return ([{"role": "system", "content": self._persona.system_prompt()}]
-                + self._session.build_request())
+        return [{"role": "system", "content": self._persona.system_prompt()}] + self._session.build_request()
 
     async def _maybe_compact(self) -> None:
         try:
-            if self._compactor.needs_compaction(self._session,
-                                                self._last_prompt_tokens):
+            if self._compactor.needs_compaction(self._session, self._last_prompt_tokens):
                 info = await self._compactor.compact(self._session)
                 if info:
                     self._emit(COMPACTED, rid=self._rid, **info)
@@ -381,10 +348,7 @@ class SelfKernel:
             args = {}
         tool = self._tools.get(tc.name)
         if tool is None:
-            return (json.dumps(
-                {"ok": False,
-                 "error": f"工具不存在: {tc.name}（对应器官可能已被摘除）"},
-                ensure_ascii=False), False, 0)
+            return (json.dumps({"ok": False, "error": f"工具不存在: {tc.name}（对应器官可能已被摘除）"}, ensure_ascii=False), False, 0)
 
         if tool is self._wait_tool:
             try:
@@ -397,16 +361,12 @@ class SelfKernel:
         self._current_tool = task
         self._current_tool_interruptible = tool.interruptible
         try:
-            result = await asyncio.wait_for(
-                task, timeout=self._cfg.tool_timeout_s)
-            text = result if isinstance(result, str) else json.dumps(
-                result, ensure_ascii=False)
+            result = await asyncio.wait_for(task, timeout=self._cfg.tool_timeout_s)
+            text = result if isinstance(result, str) else json.dumps(result, ensure_ascii=False)
             return _cap(text), True, int((time.monotonic() - t0) * 1000)
         except TimeoutError:
             log.warning("工具超时: %s", tc.name)
-            return (json.dumps({"ok": False, "error": "工具执行超时"},
-                               ensure_ascii=False),
-                    False, int((time.monotonic() - t0) * 1000))
+            return (json.dumps({"ok": False, "error": "工具执行超时"}, ensure_ascii=False), False, int((time.monotonic() - t0) * 1000))
         except asyncio.CancelledError:
             env = self._interrupted
             if env is not None:
@@ -415,16 +375,11 @@ class SelfKernel:
                 await asyncio.gather(task, return_exceptions=True)
                 secs = int(time.monotonic() - t0)
                 tag = "·".join(x for x in (env.kind, env.source) if x)
-                return (json.dumps(
-                    {"ok": False, "interrupted": True,
-                     "note": f"被 [{tag}] 打断（执行了 {secs} 秒，未完成）"},
-                    ensure_ascii=False), False, secs * 1000)
+                return (json.dumps({"ok": False, "interrupted": True, "note": f"被 [{tag}] 打断（执行了 {secs} 秒，未完成）"}, ensure_ascii=False), False, secs * 1000)
             raise  # 运行级取消（abort）：穿透
         except Exception as e:  # noqa: BLE001
             log.warning("工具 %s 执行异常: %s", tc.name, e)
-            return (json.dumps(
-                {"ok": False, "error": f"{type(e).__name__}: {e}"},
-                ensure_ascii=False), False, int((time.monotonic() - t0) * 1000))
+            return (json.dumps({"ok": False, "error": f"{type(e).__name__}: {e}"}, ensure_ascii=False), False, int((time.monotonic() - t0) * 1000))
         finally:
             self._current_tool = None
             self._current_tool_interruptible = False
@@ -433,16 +388,12 @@ class SelfKernel:
     def swap_session(self, seed: str) -> None:
         """睡眠中转身：换新会话并播种（运行不中断；deep_sleep 调用）。"""
         old_id = self._session.session_id
-        self._session = self._session.rotate(
-            keep=getattr(self._cfg, "session_keep_rotated", 2))
-        self._emit(SESSION_ROTATED, old=old_id,
-                   new=self._session.session_id, seed_chars=len(seed))
+        self._session = self._session.rotate(keep=getattr(self._cfg, "session_keep_rotated", 2))
+        self._emit(SESSION_ROTATED, old=old_id, new=self._session.session_id, seed_chars=len(seed))
         self._new_rid()
         self._emit(WAKE, rid=self._rid, trigger="rebirth")
         now = clock.now(self._cfg.timezone).strftime("%Y-%m-%d %H:%M")
-        self._deliver(Envelope(
-            text=f"（轮换完成。现在是 {now}。）\n\n{seed}",
-            kind=SEED, delivery="seed"))
+        self._deliver(Envelope(text=f"（轮换完成。现在是 {now}。）\n\n{seed}", kind=SEED, delivery="seed"))
 
     async def rest(self, timeout_s: float | None) -> str:
         """公开的休息原语（deep_sleep 等宿主工具使用）。"""
@@ -455,8 +406,7 @@ class SelfKernel:
     async def abort(self) -> None:
         """中止（停机用）：取消永续循环，插话丢弃并存证。"""
         if self._steer_q:
-            self._emit(QUEUE_DROP, reason="abort",
-                       texts=[e.text for e in self._steer_q])
+            self._emit(QUEUE_DROP, reason="abort", texts=[e.text for e in self._steer_q])
             self._steer_q.clear()
         task = self._task
         if task is not None and not task.done():
@@ -467,9 +417,7 @@ class SelfKernel:
     # ── 自愈（watchdog 入口） ───────────────────────────
     async def heal(self) -> dict[str, Any]:
         """健康检查与自愈：循环复活 + 思考卡死处置。"""
-        info: dict[str, Any] = {
-            "busy": self.is_busy, "resting": self._wait is not None,
-            "steer": len(self._steer_q)}
+        info: dict[str, Any] = {"busy": self.is_busy, "resting": self._wait is not None, "steer": len(self._steer_q)}
         task = self._task
         if task is None or task.done():
             log.warning("永续循环已死，重新拉起")
@@ -477,13 +425,10 @@ class SelfKernel:
             info["healed"] = "revived"
             return info
         # 思考卡死：非等待状态长时间无活动（休息不算卡死）
-        if (self._wait is None
-                and time.monotonic() - self._last_activity_mono
-                > self._cfg.max_run_s):
+        if self._wait is None and time.monotonic() - self._last_activity_mono > self._cfg.max_run_s:
             elapsed = time.monotonic() - self._last_activity_mono
             log.error("思考卡死（%.0fs 无活动），中止自愈", elapsed)
-            self._emit(ERROR, error="think_stuck",
-                       detail={"elapsed_s": round(elapsed, 1), "rid": self._rid})
+            self._emit(ERROR, error="think_stuck", detail={"elapsed_s": round(elapsed, 1), "rid": self._rid})
             await self.abort()
             self._ensure_run()
             info["healed"] = "think_stuck"
@@ -498,17 +443,11 @@ class SelfKernel:
         last = msgs[-1]
         if last.get("role") != "assistant" or not last.get("tool_calls"):
             return
-        answered = {m.get("tool_call_id") for m in msgs
-                    if m.get("role") == "tool"}
+        answered = {m.get("tool_call_id") for m in msgs if m.get("role") == "tool"}
         repaired = 0
         for tc in last["tool_calls"]:
             if tc.get("id") not in answered:
-                self._session.append({
-                    "role": "tool", "tool_call_id": tc["id"],
-                    "content": json.dumps(
-                        {"ok": False,
-                         "note": "进程重启，该调用未返回结果。"},
-                        ensure_ascii=False)})
+                self._session.append({"role": "tool", "tool_call_id": tc["id"], "content": json.dumps({"ok": False, "note": "进程重启，该调用未返回结果。"}, ensure_ascii=False)})
                 repaired += 1
         if repaired:
             log.warning("修复悬空工具调用 %d 个（崩溃恢复）", repaired)
@@ -521,8 +460,7 @@ class SelfKernel:
     @property
     def is_busy(self) -> bool:
         """思考中（任务活着且不在等待）。"""
-        return (self._task is not None and not self._task.done()
-                and self._wait is None)
+        return self._task is not None and not self._task.done() and self._wait is None
 
     def tool_names(self) -> list[str]:
         return sorted(self._tools)

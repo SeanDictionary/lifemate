@@ -5,13 +5,15 @@
 - 连接：普通请求 Connection: close；SSE 由调用方特判接管（唯一流式端点）
 - 路由：(method, pattern, handler) 有序匹配；pattern 支持 {name} 段
 """
+
 from __future__ import annotations
 
 import asyncio
 import json
 import re
+from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
-from typing import Any, Awaitable, Callable
+from typing import Any
 from urllib.parse import parse_qs
 
 MAX_BODY = 1024 * 1024
@@ -39,7 +41,7 @@ class Request:
 @dataclass
 class Route:
     method: str
-    pattern: str          # 如 "/api/memory/{table}"
+    pattern: str  # 如 "/api/memory/{table}"
     handler: Handler
 
     def match(self, method: str, path: str) -> dict[str, str] | None:
@@ -50,7 +52,7 @@ class Route:
         if len(ps) != len(ts):
             return None
         params: dict[str, str] = {}
-        for p, t in zip(ps, ts):
+        for p, t in zip(ps, ts, strict=True):
             if p.startswith("{") and p.endswith("}"):
                 params[p[1:-1]] = t
             elif p != t:
@@ -69,8 +71,7 @@ async def read_request(reader: asyncio.StreamReader) -> Request | None:
     """读一个完整请求头+体。解析失败/连接断开 → None。"""
     try:
         head = await reader.readuntil(b"\r\n\r\n")
-    except (asyncio.IncompleteReadError, asyncio.LimitOverrunError,
-            ConnectionError, OSError):
+    except (asyncio.IncompleteReadError, asyncio.LimitOverrunError, ConnectionError, OSError):
         return None
     try:
         lines = head.decode("latin-1").split("\r\n")
@@ -92,36 +93,36 @@ async def read_request(reader: asyncio.StreamReader) -> Request | None:
         except (asyncio.IncompleteReadError, ConnectionError):
             return None
     path, _, qraw = target.partition("?")
-    return Request(method=method.upper(), path=path,
-                   query=parse_query(qraw), headers=headers, body=body)
+    return Request(method=method.upper(), path=path, query=parse_query(qraw), headers=headers, body=body)
 
 
-_REASONS = {200: "OK", 400: "Bad Request", 401: "Unauthorized",
-            403: "Forbidden", 404: "Not Found", 500: "Internal Server Error"}
+_REASONS = {200: "OK", 400: "Bad Request", 401: "Unauthorized", 403: "Forbidden", 404: "Not Found", 500: "Internal Server Error"}
 
 
-def resp_bytes(status: int, ctype: str, body: bytes,
-               extra: dict[str, str] | None = None) -> bytes:
-    head = (f"HTTP/1.1 {status} {_REASONS.get(status, 'OK')}\r\n"
-            f"Content-Type: {ctype}\r\n"
-            f"Content-Length: {len(body)}\r\n"
-            f"Connection: close\r\n")
+def resp_bytes(status: int, ctype: str, body: bytes, extra: dict[str, str] | None = None) -> bytes:
+    head = f"HTTP/1.1 {status} {_REASONS.get(status, 'OK')}\r\nContent-Type: {ctype}\r\nContent-Length: {len(body)}\r\nConnection: close\r\n"
     for k, v in (extra or {}).items():
         head += f"{k}: {v}\r\n"
     return (head + "\r\n").encode("latin-1") + body
 
 
 def json_resp(obj: Any, status: int = 200) -> bytes:
-    return resp_bytes(status, "application/json; charset=utf-8",
-                      json.dumps(obj, ensure_ascii=False).encode("utf-8"))
+    return resp_bytes(status, "application/json; charset=utf-8", json.dumps(obj, ensure_ascii=False).encode("utf-8"))
 
 
 _MIME = {
-    ".html": "text/html; charset=utf-8", ".js": "text/javascript; charset=utf-8",
-    ".css": "text/css; charset=utf-8", ".svg": "image/svg+xml",
-    ".png": "image/png", ".jpg": "image/jpeg", ".ico": "image/x-icon",
-    ".json": "application/json", ".txt": "text/plain; charset=utf-8",
-    ".map": "application/json", ".woff2": "font/woff2", ".webp": "image/webp",
+    ".html": "text/html; charset=utf-8",
+    ".js": "text/javascript; charset=utf-8",
+    ".css": "text/css; charset=utf-8",
+    ".svg": "image/svg+xml",
+    ".png": "image/png",
+    ".jpg": "image/jpeg",
+    ".ico": "image/x-icon",
+    ".json": "application/json",
+    ".txt": "text/plain; charset=utf-8",
+    ".map": "application/json",
+    ".woff2": "font/woff2",
+    ".webp": "image/webp",
 }
 
 
@@ -161,9 +162,5 @@ def static_resp(root, rel: str) -> bytes:
 
 def no_build_page() -> bytes:
     """静态目录缺失时的提示页（API 不受影响）。"""
-    html = ("<!doctype html><meta charset='utf-8'><title>lifemate</title>"
-            "<body style='font-family:system-ui;padding:2rem;line-height:1.8'>"
-            "<h2>前端未构建</h2><p>在 web/ 目录执行 <code>npm run build</code> "
-            "后刷新本页。API 已就绪：<a href='/api/status'>/api/status</a></p>"
-            "</body>")
+    html = "<!doctype html><meta charset='utf-8'><title>lifemate</title><body style='font-family:system-ui;padding:2rem;line-height:1.8'><h2>前端未构建</h2><p>在 web/ 目录执行 <code>npm run build</code> 后刷新本页。API 已就绪：<a href='/api/status'>/api/status</a></p></body>"
     return resp_bytes(200, "text/html; charset=utf-8", html.encode("utf-8"))

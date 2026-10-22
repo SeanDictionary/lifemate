@@ -1,4 +1,5 @@
 """记忆系统单测。"""
+
 import json
 import time
 
@@ -38,8 +39,8 @@ def test_need_dedup(tmp_path):
 
 def test_reminders_due_and_daily_roll(tmp_path):
     s = _store(tmp_path)
-    s.add_reminder(time.time() - 10, "看一眼新消息")            # 已到期
-    s.add_reminder(time.time() + 3600, "一小时后写作")          # 未到期
+    s.add_reminder(time.time() - 10, "看一眼新消息")  # 已到期
+    s.add_reminder(time.time() + 3600, "一小时后写作")  # 未到期
     s.add_reminder(time.time() - 10, "每晚复盘", repeat="daily")  # 到期但滚动
     due = s.due_reminders()
     assert len(due) == 2
@@ -64,8 +65,7 @@ async def test_memory_tools_callable(tmp_path):
     assert '"ok": true' in r
     r = await tools["recent_episodes"].func({})
     assert "工具链验证" in r
-    r = await tools["set_reminder"].func(
-        {"delay_minutes": 0.1, "intent": "测试"})
+    r = await tools["set_reminder"].func({"delay_minutes": 0.1, "intent": "测试"})
     assert '"ok": true' in r
     r = await tools["latest_rebuild_packet"].func({})
     assert '"ok": false' in r  # 还没有重建包

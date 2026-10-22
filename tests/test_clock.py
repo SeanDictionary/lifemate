@@ -1,4 +1,5 @@
 """主体时钟测试：时区解析 / 回落 / 换算（config.timezone 的消费端）。"""
+
 import time
 from datetime import datetime
 from zoneinfo import ZoneInfo
@@ -27,10 +28,9 @@ def test_valid_name_resolves_and_cache_survives_switch():
 def test_hm_timezone_shift():
     """同一时刻在不同时区的 HH:MM 表达；空=本机时区与旧行为一致。"""
     pytest.importorskip("tzdata")
-    ts = datetime(2026, 10, 21, 15, 0,
-                  tzinfo=ZoneInfo("Asia/Shanghai")).timestamp()
+    ts = datetime(2026, 10, 21, 15, 0, tzinfo=ZoneInfo("Asia/Shanghai")).timestamp()
     assert clock.hm(ts, "Asia/Shanghai") == "15:00"
-    assert clock.hm(ts, "UTC") == "07:00"                 # 固定 8h 偏移
+    assert clock.hm(ts, "UTC") == "07:00"  # 固定 8h 偏移
     assert clock.hm(ts) == time.strftime("%H:%M", time.localtime(ts))
 
 

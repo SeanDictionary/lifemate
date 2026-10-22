@@ -9,22 +9,23 @@
 - PluginPack 插件包：工具+skill 的挂载单元（适配器感知面由插件自持 start/stop）
 - MindKernel：认知自我的行为契约（思维循环 + 两接口 + 会话原语）
 """
+
 from __future__ import annotations
 
+import time
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field
-import time
 from typing import Any, Protocol, runtime_checkable
 
 # ── 信封来源类型（envelope.kind）─────────────────────────────
-DIRECT = "direct"          # 直接对话（被@/私聊/回复）
-AMBIENT = "ambient"        # 环境对话（经注意力门控升格后同样走强刺激路径）
+DIRECT = "direct"  # 直接对话（被@/私聊/回复）
+AMBIENT = "ambient"  # 环境对话（经注意力门控升格后同样走强刺激路径）
 PLATFORM_EVENT = "platform_event"  # 平台事件（好友申请/群成员变动等）
-REMINDER = "reminder"      # 到期提醒（它自己定的闹钟被兑现）
-TICK = "tick"              # 内部时钟（保留）
-WAKE = "wake"              # 唤醒信封（等待解决后的组批消息）
-BOOT = "boot"              # 出生/启动
-SEED = "seed"              # 会话轮换后的播种信封
+REMINDER = "reminder"  # 到期提醒（它自己定的闹钟被兑现）
+TICK = "tick"  # 内部时钟（保留）
+WAKE = "wake"  # 唤醒信封（等待解决后的组批消息）
+BOOT = "boot"  # 出生/启动
+SEED = "seed"  # 会话轮换后的播种信封
 
 STRONG_KINDS = frozenset({DIRECT, AMBIENT, PLATFORM_EVENT, REMINDER, TICK, WAKE, BOOT, SEED})
 
@@ -47,7 +48,7 @@ class Envelope:
     meta: dict[str, Any] = field(default_factory=dict)
     ts: float = field(default_factory=time.time)
     delivery: str = ""
-    origin: str = ""       # 投递者标识（插件名/console/host）——信封溯源
+    origin: str = ""  # 投递者标识（插件名/console/host）——信封溯源
 
 
 # ── 工具（MCP tool schema 形状）──────────────────────────────
@@ -91,9 +92,9 @@ class LLMResponse:
 
     content: str
     tool_calls: list[ToolCall] = field(default_factory=list)
-    thinking: str = ""      # 归一化思考（不进上下文，仅供观测）
-    stop_reason: str = ""   # stop/length/toolUse/…（raw 保真）
-    model: str = ""         # 实际应答模型
+    thinking: str = ""  # 归一化思考（不进上下文，仅供观测）
+    stop_reason: str = ""  # stop/length/toolUse/…（raw 保真）
+    model: str = ""  # 实际应答模型
     latency_ms: int = 0
     prompt_tokens: int = 0
     completion_tokens: int = 0
@@ -114,15 +115,15 @@ class PluginPack:
 
 # ── 事件（观测/呈现的唯一来源）───────────────────────────────
 
-WAKE = "wake"                      # 唤醒周期开始（wait 解决/出生/重生）
-ASSISTANT_MSG = "assistant_msg"    # 一条助手消息（文本与/或工具调用）
-USER_MSG = "user_msg"              # 一封送达心智的信封（含投递语义）
-TOOL_CALL = "tool_call"            # 一次工具调用开始
-TOOL_RESULT = "tool_result"        # 一次工具回执（含执行语义）
-REST = "rest"                      # 进入休息（收敛/显式/强制/中止）
+WAKE = "wake"  # 唤醒周期开始（wait 解决/出生/重生）
+ASSISTANT_MSG = "assistant_msg"  # 一条助手消息（文本与/或工具调用）
+USER_MSG = "user_msg"  # 一封送达心智的信封（含投递语义）
+TOOL_CALL = "tool_call"  # 一次工具调用开始
+TOOL_RESULT = "tool_result"  # 一次工具回执（含执行语义）
+REST = "rest"  # 进入休息（收敛/显式/强制/中止）
 SESSION_ROTATED = "session_rotated"  # 会话轮换完成
-COMPACTED = "compacted"            # 上下文压缩完成
-QUEUE_DROP = "queue_drop"          # 排队信封被丢弃（rotate/abort）
+COMPACTED = "compacted"  # 上下文压缩完成
+QUEUE_DROP = "queue_drop"  # 排队信封被丢弃（rotate/abort）
 ERROR = "error"
 
 EventCallback = Callable[["MindEvent"], None]
@@ -135,6 +136,7 @@ class MindEvent:
 
 
 # ── 内核行为契约 ────────────────────────────────────────────
+
 
 @runtime_checkable
 class MindKernel(Protocol):

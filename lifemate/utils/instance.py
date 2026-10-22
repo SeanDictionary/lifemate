@@ -2,6 +2,7 @@
 
 双开进程会同时写 memory.db 与 sessions/，静默损坏——所以入口必须持锁。
 """
+
 from __future__ import annotations
 
 import os
@@ -19,9 +20,11 @@ def acquire(data_dir: str | Path) -> IO:
         f.seek(0)
         if sys.platform == "win32":
             import msvcrt
+
             msvcrt.locking(f.fileno(), msvcrt.LK_NBLCK, 1)
         else:
             import fcntl
+
             fcntl.flock(f, fcntl.LOCK_EX | fcntl.LOCK_NB)
     except OSError:
         f.close()

@@ -191,6 +191,12 @@ env 仅部署种子）；热重载靠字段原地更新——新组件必须持�
   发觉不对→撤销/补救/铭记，不可逆动作出手前慢一拍）；出站回执复述动作
   事实（contracts 约定，qq 发送回执带 text）；qq 自发消息落 chat_log
   （带 message_id 句柄，read_chat_log 可见，未读统计排除自己）
+- **全量 ruff format + lint 清零（2026-10-22）**：line-length 100→500
+  （声明式配置一字段一行）；ruff 首次实际接入：46 文件重排 +
+  存量 79 告警清零（引号注解/import 排序/未用导入/collections.abc
+  迁移等），掲出并修复两个潜伏 NameError（压缩 span/存储 logger）；
+  工具入口命名规范同步约定（单工具 make_X_tool、多工具
+  build_X_tools，公开命名）
 - **配置声明化 + 设置页 schema 驱动（2026-10-22）**：utils/config 新增
   Setting（默认值即类型，description/secret/restart/group 元数据即文档），
   _JSON_FIELDS 全量声明化（行注释转正为 description），_SECRET_KEYS
@@ -261,4 +267,4 @@ env 仅部署种子）；热重载靠字段原地更新——新组件必须持�
   浏览器面板 http://127.0.0.1:8300，token 见 config.json）
 - 前端：`cd web && pnpm build`（产物 out/ 由 server 托管）；
   开发 `pnpm dev`（:3000，/api 代理到 :8300）
-- 语法/风格：`ruff check`（如安装）
+- 语法/风格：`ruff check`（已装；lint 保持零告警，提交前过 `ruff format`）

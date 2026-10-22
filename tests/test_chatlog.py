@@ -1,6 +1,6 @@
 """chatlog 按日分库测试：跨天穿透 / 保留期清理 / 未读精确性。"""
+
 import time
-from pathlib import Path
 
 import pytest
 
@@ -12,6 +12,7 @@ DAY = 86400
 def test_format_ts_time_sense():
     """时间标注分档：今天/昨天/前天/今年更早/跨年。"""
     import re
+
     now = time.mktime(time.strptime("2026-10-21 15:00", "%Y-%m-%d %H:%M"))
     assert format_ts(now, now) == "15:00"
     assert format_ts(now - 0.5 * DAY, now) == "03:00"  # 今天凌晨也不算昨天
@@ -20,9 +21,9 @@ def test_format_ts_time_sense():
     q = now - 2 * DAY
     assert format_ts(q, now).startswith("前天 ")
     old = time.mktime(time.strptime("2026-06-01 09:30", "%Y-%m-%d %H:%M"))
-    assert format_ts(old, now) == "06-01 09:30"          # 今年更早：不带年份
+    assert format_ts(old, now) == "06-01 09:30"  # 今年更早：不带年份
     older = time.mktime(time.strptime("2025-06-01 09:30", "%Y-%m-%d %H:%M"))
-    assert format_ts(older, now) == "2025-06-01 09:30"   # 跨年带年份
+    assert format_ts(older, now) == "2025-06-01 09:30"  # 跨年带年份
     assert re.fullmatch(r"\d{2}:\d{2}", format_ts(now, now))
 
 
@@ -93,16 +94,11 @@ def test_format_ts_timezone():
         return datetime(*args, tzinfo=ZoneInfo("Asia/Shanghai")).timestamp()
 
     now = at(2026, 10, 21, 15, 0)
-    assert format_ts(at(2026, 10, 21, 3, 0), now,
-                     tz_name="Asia/Shanghai") == "03:00"
-    assert format_ts(at(2026, 10, 20, 14, 32), now,
-                     tz_name="Asia/Shanghai") == "昨天 14:32"
-    assert format_ts(at(2026, 10, 19, 9, 5), now,
-                     tz_name="Asia/Shanghai") == "前天 09:05"
-    assert format_ts(at(2026, 6, 1, 9, 30), now,
-                     tz_name="Asia/Shanghai") == "06-01 09:30"
-    assert format_ts(at(2025, 6, 1, 9, 30), now,
-                     tz_name="Asia/Shanghai") == "2025-06-01 09:30"
+    assert format_ts(at(2026, 10, 21, 3, 0), now, tz_name="Asia/Shanghai") == "03:00"
+    assert format_ts(at(2026, 10, 20, 14, 32), now, tz_name="Asia/Shanghai") == "昨天 14:32"
+    assert format_ts(at(2026, 10, 19, 9, 5), now, tz_name="Asia/Shanghai") == "前天 09:05"
+    assert format_ts(at(2026, 6, 1, 9, 30), now, tz_name="Asia/Shanghai") == "06-01 09:30"
+    assert format_ts(at(2025, 6, 1, 9, 30), now, tz_name="Asia/Shanghai") == "2025-06-01 09:30"
 
 
 def test_unread_precision_after_read(tmp_path):
@@ -151,7 +147,7 @@ def test_chats_listing(tmp_path):
         chats = cl.chats(self_id=200)
         by_id = {c["chat_id"]: c for c in chats}
         assert set(by_id) == {"group_1", "private_9"}
-        assert by_id["group_1"]["unread"] == 1   # 自己发的不算
+        assert by_id["group_1"]["unread"] == 1  # 自己发的不算
         assert by_id["private_9"]["unread"] == 1
         assert by_id["private_9"]["last_ts"] > by_id["group_1"]["last_ts"]
         cl.mark_read("group_1")

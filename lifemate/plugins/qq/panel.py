@@ -5,6 +5,7 @@
 - routes(ctx, plugin) -> [{"method","path","handler"}]
   handler 为 async (req) -> Any（自动 JSON 化，沿用 {ok} 回执约定）
 """
+
 from __future__ import annotations
 
 from typing import Any
@@ -13,7 +14,7 @@ PANEL = {"title": "QQ", "icon": "comments"}
 
 
 def routes(ctx, plugin) -> list[dict[str, Any]]:
-    conf = plugin._conf       # 同插件包内访问（声明式配置视图）
+    conf = plugin._conf  # 同插件包内访问（声明式配置视图）
     chatlog = plugin._chatlog
 
     async def status(req) -> dict:

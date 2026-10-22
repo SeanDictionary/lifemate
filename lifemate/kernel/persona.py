@@ -6,6 +6,7 @@
                         不能依赖"模型碰巧去读"）
 - skills/*/SKILL.md     第三方/扩展知情层（目录扫描，索引常驻、全文按需）
 """
+
 from __future__ import annotations
 
 import logging
@@ -83,7 +84,7 @@ class Persona:
     def read_skill(self, name: str) -> str:
         skill = self.skills().get(name)
         if not skill:
-            return f"{{\"ok\": false, \"error\": \"skill 不存在: {name}\"}}"
+            return f'{{"ok": false, "error": "skill 不存在: {name}"}}'
         return skill.content
 
     # ── 装配 ─────────────────────────────────────────────

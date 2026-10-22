@@ -7,15 +7,17 @@
 - 职责边界：chatlog 只记 QQ 侧行为（强弱刺激全量磁带）；
   observe 只记主体侧（它注意/想/做了什么）
 """
+
 from __future__ import annotations
 
 import sqlite3
 import time
+from collections.abc import Callable
 from pathlib import Path
-from typing import Any, Callable
+from typing import Any
 
 from ...utils import clock
-from ...utils.clock import format_ts  # 兼容导出：qq 插件与测试自此引用
+from ...utils.clock import format_ts as format_ts  # 冗余别名：有意 re-export（tools.py 与测试自此引用）
 
 _SCHEMA = """
 CREATE TABLE IF NOT EXISTS chat_log (
@@ -42,9 +44,7 @@ class ChatLog:
     日库在非当天后天然不可变，读并发安全。
     """
 
-    def __init__(self, data_dir: Path | str,
-                 retention_days: int = 0,
-                 tz_name: Callable[[], str] | None = None) -> None:
+    def __init__(self, data_dir: Path | str, retention_days: int = 0, tz_name: Callable[[], str] | None = None) -> None:
         """tz_name：主体时区名的活提供器（config.timezone，热重载生效）；
         缺省 None = 本机时区。日切/保留期清理/时间标注都按它算。"""
         data_dir = Path(data_dir)
@@ -63,6 +63,7 @@ CREATE TABLE IF NOT EXISTS chat_state (
         self._state.commit()
         self._current_day = ""
         self._current: sqlite3.Connection | None = None
+
     def close(self) -> None:
         if self._current is not None:
             self._current.close()
@@ -88,9 +89,7 @@ CREATE TABLE IF NOT EXISTS chat_state (
         if self._retention <= 0:
             return
         try:
-            cutoff = time.strptime(
-                _day_of(time.time() - self._retention * 86400, self._tz_name()),
-                "%Y-%m-%d")
+            cutoff = time.strptime(_day_of(time.time() - self._retention * 86400, self._tz_name()), "%Y-%m-%d")
         except ValueError:
             return
         for path in self._dir.glob("*.db"):
@@ -115,14 +114,10 @@ CREATE TABLE IF NOT EXISTS chat_state (
         return con
 
     # ── 写入 ───────────────────────────────────────────
-    def append(self, chat_id: str, sender_id: int, sender_name: str,
-               text: str, message_id: int = 0, ts: float | None = None) -> None:
+    def append(self, chat_id: str, sender_id: int, sender_name: str, text: str, message_id: int = 0, ts: float | None = None) -> None:
         ts = ts if ts is not None else time.time()
         con = self._db_for_day(_day_of(ts, self._tz_name()))
-        con.execute(
-            "INSERT INTO chat_log (ts, chat_id, sender_id, sender_name, text,"
-            " message_id) VALUES (?, ?, ?, ?, ?, ?)",
-            (ts, chat_id, sender_id, sender_name, text, message_id))
+        con.execute("INSERT INTO chat_log (ts, chat_id, sender_id, sender_name, text, message_id) VALUES (?, ?, ?, ?, ?, ?)", (ts, chat_id, sender_id, sender_name, text, message_id))
         con.commit()
 
     # ── 查询 ───────────────────────────────────────────
@@ -135,10 +130,7 @@ CREATE TABLE IF NOT EXISTS chat_state (
             con = self._open_read(path)
             try:
                 need = n - len(out)
-                rows = con.execute(
-                    "SELECT ts, sender_id, sender_name, text, message_id"
-                    " FROM chat_log WHERE chat_id = ? ORDER BY ts DESC LIMIT ?",
-                    (chat_id, need)).fetchall()
+                rows = con.execute("SELECT ts, sender_id, sender_name, text, message_id FROM chat_log WHERE chat_id = ? ORDER BY ts DESC LIMIT ?", (chat_id, need)).fetchall()
                 out.extend(dict(r) for r in rows)
             finally:
                 con.close()
@@ -149,17 +141,13 @@ CREATE TABLE IF NOT EXISTS chat_state (
     def chats(self, self_id: int = 0) -> list[dict[str, Any]]:
         """会话清单（面板用）：24h 窗口内活跃会话 + 未读数，按最近活跃排序。"""
         cutoff = time.time() - 86400
-        read_map = {r["chat_id"]: r["last_read_ts"] for r in
-                    self._state.execute(
-                        "SELECT chat_id, last_read_ts FROM chat_state").fetchall()}
+        read_map = {r["chat_id"]: r["last_read_ts"] for r in self._state.execute("SELECT chat_id, last_read_ts FROM chat_state").fetchall()}
         last_ts: dict[str, float] = {}
         unread: dict[str, int] = {}
         for path in self._day_files()[:2]:
             con = self._open_read(path)
             try:
-                rows = con.execute(
-                    "SELECT chat_id, ts, sender_id FROM chat_log"
-                    " WHERE ts > ?", (cutoff,)).fetchall()
+                rows = con.execute("SELECT chat_id, ts, sender_id FROM chat_log WHERE ts > ?", (cutoff,)).fetchall()
             finally:
                 con.close()
             for r in rows:
@@ -170,16 +158,10 @@ CREATE TABLE IF NOT EXISTS chat_state (
                     continue
                 if r["ts"] > read_map.get(cid, 0):
                     unread[cid] = unread.get(cid, 0) + 1
-        return [{"chat_id": cid, "last_ts": last_ts[cid],
-                 "unread": unread.get(cid, 0)}
-                for cid in sorted(last_ts, key=lambda c: -last_ts[c])]
+        return [{"chat_id": cid, "last_ts": last_ts[cid], "unread": unread.get(cid, 0)} for cid in sorted(last_ts, key=lambda c: -last_ts[c])]
 
     def mark_read(self, chat_id: str) -> None:
-        self._state.execute(
-            "INSERT INTO chat_state (chat_id, last_read_ts) VALUES (?, ?)"
-            " ON CONFLICT(chat_id) DO UPDATE SET"
-            " last_read_ts = excluded.last_read_ts",
-            (chat_id, time.time()))
+        self._state.execute("INSERT INTO chat_state (chat_id, last_read_ts) VALUES (?, ?) ON CONFLICT(chat_id) DO UPDATE SET last_read_ts = excluded.last_read_ts", (chat_id, time.time()))
         self._state.commit()
 
     def unread_summary(self, self_id: int = 0, top: int = 3) -> str:
@@ -188,18 +170,14 @@ CREATE TABLE IF NOT EXISTS chat_state (
         self_id 非零时排除自己的出站消息（自己发的不算未读）。
         """
         cutoff = time.time() - 86400
-        read_map = {r["chat_id"]: r["last_read_ts"] for r in
-                    self._state.execute(
-                        "SELECT chat_id, last_read_ts FROM chat_state").fetchall()}
+        read_map = {r["chat_id"]: r["last_read_ts"] for r in self._state.execute("SELECT chat_id, last_read_ts FROM chat_state").fetchall()}
         counts: dict[str, int] = {}
         earliest = 0.0  # 最早一条未读的时刻（概览给相对时间）
         # 24h 窗口最多涉及最近两个日库
         for path in self._day_files()[:2]:
             con = self._open_read(path)
             try:
-                rows = con.execute(
-                    "SELECT chat_id, ts, sender_id FROM chat_log"
-                    " WHERE ts > ?", (cutoff,)).fetchall()
+                rows = con.execute("SELECT chat_id, ts, sender_id FROM chat_log WHERE ts > ?", (cutoff,)).fetchall()
                 for r in rows:
                     if self_id and r["sender_id"] == self_id:
                         continue
@@ -212,9 +190,6 @@ CREATE TABLE IF NOT EXISTS chat_state (
         if not counts:
             return ""
         top_items = sorted(counts.items(), key=lambda x: -x[1])[:top]
-        parts = [f"{cid.replace('group_', '群').replace('private_', '私聊')} {c} 条"
-                 for cid, c in top_items]
-        age = (f"，最早的一条约 {clock.format_rel(earliest, tz_name=self._tz_name())}"
-               if earliest else "")
-        return (f"（你有 {sum(counts.values())} 条没看的消息："
-                f"{'、'.join(parts)}{age}。）")
+        parts = [f"{cid.replace('group_', '群').replace('private_', '私聊')} {c} 条" for cid, c in top_items]
+        age = f"，最早的一条约 {clock.format_rel(earliest, tz_name=self._tz_name())}" if earliest else ""
+        return f"（你有 {sum(counts.values())} 条没看的消息：{'、'.join(parts)}{age}。）"

@@ -6,17 +6,17 @@
 - 行设计：msg 行沿用 session 消息字段 + ts/seq/sid/rid/env/执行语义扩展；
   事件行只记消息表达不了的（rotate/compact/queue_drop/…）
 """
+
 from __future__ import annotations
 
 import json
 import logging
 import time
+from collections.abc import Callable
 from pathlib import Path
-from typing import Any, Callable
+from typing import Any
 
-from ..kernel.contracts import (ASSISTANT_MSG, COMPACTED, ERROR, MindEvent,
-                                QUEUE_DROP, REST, SESSION_ROTATED, TOOL_RESULT,
-                                USER_MSG, WAKE)
+from ..kernel.contracts import ASSISTANT_MSG, COMPACTED, ERROR, QUEUE_DROP, REST, SESSION_ROTATED, TOOL_RESULT, USER_MSG, WAKE, MindEvent
 
 log = logging.getLogger("utils.recorder")
 
@@ -26,9 +26,7 @@ _TRUNCATED = "…[truncated]"
 class Recorder:
     """订阅内核事件流，写全程档案。"""
 
-    def __init__(self, directory: Path | str, *,
-                 sid_fn: Callable[[], str] | None = None,
-                 max_field_chars: int = 65_536) -> None:
+    def __init__(self, directory: Path | str, *, sid_fn: Callable[[], str] | None = None, max_field_chars: int = 65_536) -> None:
         self._dir = Path(directory)
         self._dir.mkdir(parents=True, exist_ok=True)
         self._sid_fn = sid_fn
@@ -103,45 +101,21 @@ class Recorder:
         d = ev.data
         rid = d.get("rid", "")
         if ev.type == WAKE:
-            self._write("wake", rid=rid, trigger=d.get("trigger"),
-                        kind=d.get("kind"), source=d.get("source"))
+            self._write("wake", rid=rid, trigger=d.get("trigger"), kind=d.get("kind"), source=d.get("source"))
         elif ev.type == REST:
-            self._write("rest", rid=rid, reason=d.get("reason"),
-                        timeout_s=d.get("timeout_s"))
+            self._write("rest", rid=rid, reason=d.get("reason"), timeout_s=d.get("timeout_s"))
         elif ev.type == USER_MSG:
-            self._write("msg", rid=rid, role="user",
-                        content=d.get("text", ""), env=d.get("env", {}))
+            self._write("msg", rid=rid, role="user", content=d.get("text", ""), env=d.get("env", {}))
         elif ev.type == ASSISTANT_MSG:
-            self._write("msg", rid=rid, role="assistant",
-                        content=d.get("content", ""),
-                        thinking=d.get("thinking", ""),
-                        tool_calls=d.get("tool_calls", []),
-                        model=d.get("model", ""),
-                        stop_reason=d.get("stop_reason", ""),
-                        prompt_tokens=d.get("prompt_tokens", 0),
-                        completion_tokens=d.get("completion_tokens", 0),
-                        latency_ms=d.get("latency_ms", 0))
+            self._write("msg", rid=rid, role="assistant", content=d.get("content", ""), thinking=d.get("thinking", ""), tool_calls=d.get("tool_calls", []), model=d.get("model", ""), stop_reason=d.get("stop_reason", ""), prompt_tokens=d.get("prompt_tokens", 0), completion_tokens=d.get("completion_tokens", 0), latency_ms=d.get("latency_ms", 0))
         elif ev.type == TOOL_RESULT:
-            self._write("msg", rid=rid, role="tool",
-                        tool_call_id=d.get("tool_call_id", ""),
-                        name=d.get("name", ""),
-                        ok=bool(d.get("ok")),
-                        latency_ms=d.get("latency_ms", 0),
-                        content=d.get("result", ""))
+            self._write("msg", rid=rid, role="tool", tool_call_id=d.get("tool_call_id", ""), name=d.get("name", ""), ok=bool(d.get("ok")), latency_ms=d.get("latency_ms", 0), content=d.get("result", ""))
         elif ev.type == SESSION_ROTATED:
-            self._write("rotate", old=d.get("old"), new=d.get("new"),
-                        seed_chars=d.get("seed_chars"))
+            self._write("rotate", old=d.get("old"), new=d.get("new"), seed_chars=d.get("seed_chars"))
         elif ev.type == COMPACTED:
-            self._write("compact", rid=rid,
-                        dropped=d.get("dropped"), kept=d.get("kept"),
-                        summary_chars=d.get("summary_chars"),
-                        prompt_tokens=d.get("prompt_tokens", 0),
-                        completion_tokens=d.get("completion_tokens", 0))
+            self._write("compact", rid=rid, dropped=d.get("dropped"), kept=d.get("kept"), summary_chars=d.get("summary_chars"), prompt_tokens=d.get("prompt_tokens", 0), completion_tokens=d.get("completion_tokens", 0))
         elif ev.type == QUEUE_DROP:
-            self._write("queue_drop", reason=d.get("reason"),
-                        count=len(d.get("texts", [])),
-                        texts=d.get("texts", []))
+            self._write("queue_drop", reason=d.get("reason"), count=len(d.get("texts", [])), texts=d.get("texts", []))
         elif ev.type == ERROR:
-            self._write("error", rid=rid, where=d.get("error", ""),
-                        error=str(d)[:500])
+            self._write("error", rid=rid, where=d.get("error", ""), error=str(d)[:500])
         # TOOL_CALL 事件不落行：执行语义已并入 TOOL_RESULT 行

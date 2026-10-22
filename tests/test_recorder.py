@@ -1,60 +1,49 @@
 """观测记录完整性测试（黑匣子必须常绿）。"""
-import asyncio
+
 import json
 
-from lifemate.kernel.contracts import Envelope, Tool
-from lifemate.utils.recorder import Recorder
+from conftest import FakeLLM, make_config, make_persona, make_session, text_reply
 
-from conftest import FakeLLM, make_config, make_persona, make_session, \
-    text_reply, tool_reply
 from lifemate.kernel.compaction import Compactor
-from lifemate.kernel.contracts import LLMResponse
+from lifemate.kernel.contracts import Envelope, LLMResponse, Tool
 from lifemate.kernel.mind import SelfKernel
+from lifemate.utils.recorder import Recorder
 
 
 def make_tool(name: str, result: str = '{"ok": true}') -> Tool:
     async def _fn(args: dict) -> str:
         return result
-    return Tool(schema={"name": name, "description": f"test {name}",
-                        "inputSchema": {"type": "object", "properties": {}}},
-                func=_fn)
+
+    return Tool(schema={"name": name, "description": f"test {name}", "inputSchema": {"type": "object", "properties": {}}}, func=_fn)
 
 
 def make_setup(tmp_path, llm, tools):
     cfg = make_config(tmp_path)
-    kernel = SelfKernel(llm=llm, persona=make_persona(tmp_path),
-                        session=make_session(tmp_path),
-                        compactor=Compactor(llm.chat, cfg), cfg=cfg)
+    kernel = SelfKernel(llm=llm, persona=make_persona(tmp_path), session=make_session(tmp_path), compactor=Compactor(llm.chat, cfg), cfg=cfg)
     for t in tools:
         kernel.register_tool(t)
-    recorder = Recorder(tmp_path / "observe",
-                        sid_fn=lambda: kernel.session_id)
+    recorder = Recorder(tmp_path / "observe", sid_fn=lambda: kernel.session_id)
     kernel.subscribe(recorder.on_kernel_event)
     return kernel, recorder
 
 
 def read_lines(recorder) -> list[dict]:
     day_file = list((recorder._dir).glob("*.jsonl"))[0]
-    return [json.loads(x) for x in
-            day_file.read_text(encoding="utf-8").splitlines()]
+    return [json.loads(x) for x in day_file.read_text(encoding="utf-8").splitlines()]
 
 
 async def test_full_run_recorded(tmp_path):
     """一次运行的完整链路：run → 信封 → assistant(含思考) → 工具 → run_end。"""
-    llm = FakeLLM([
-        LLMResponse(content="", tool_calls=[
-            __import__("lifemate.kernel.contracts", fromlist=["ToolCall"]).ToolCall(
-                id="c1", name="echo", arguments="{}")],
-            thinking="用户在测试我，我应该调一下工具",
-            stop_reason="toolUse", model="test-model",
-            prompt_tokens=100, completion_tokens=20, latency_ms=50),
-        text_reply("做完了"),
-    ])
+    llm = FakeLLM(
+        [
+            LLMResponse(content="", tool_calls=[__import__("lifemate.kernel.contracts", fromlist=["ToolCall"]).ToolCall(id="c1", name="echo", arguments="{}")], thinking="用户在测试我，我应该调一下工具", stop_reason="toolUse", model="test-model", prompt_tokens=100, completion_tokens=20, latency_ms=50),
+            text_reply("做完了"),
+        ]
+    )
     kernel, recorder = make_setup(tmp_path, llm, [make_tool("echo")])
     recorder.event("boot", version="test", tools=["echo"])
 
-    kernel.notify(Envelope(text="用一下 echo", kind="direct",
-                            source="group_1"))
+    kernel.notify(Envelope(text="用一下 echo", kind="direct", source="group_1"))
     await kernel.wait_idle()
     recorder.close()
 
@@ -119,9 +108,8 @@ async def test_session_cleanup_on_rotate(tmp_path):
     llm = FakeLLM([])
     cfg = make_config(tmp_path)
     cfg.session_keep_rotated = 1
-    kernel = SelfKernel(llm=llm, persona=make_persona(tmp_path), session=s1,
-                        compactor=Compactor(llm.chat, cfg), cfg=cfg)
-    kernel.swap_session("s2")   # s1 → s2
-    kernel.swap_session("s3")   # s2 → s3（s1 应被清理，保留 keep=1 个旧文件）
+    kernel = SelfKernel(llm=llm, persona=make_persona(tmp_path), session=s1, compactor=Compactor(llm.chat, cfg), cfg=cfg)
+    kernel.swap_session("s2")  # s1 → s2
+    kernel.swap_session("s3")  # s2 → s3（s1 应被清理，保留 keep=1 个旧文件）
     files = sorted(sessions_dir.glob("*.jsonl"))
     assert len(files) == 2  # 当前 + 1 个旧文件

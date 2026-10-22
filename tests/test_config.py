@@ -1,4 +1,5 @@
 """共享配置组件测试：JSON 事实源 / env 种子 / 热重载 / 掩码。"""
+
 import json
 import os
 
@@ -81,14 +82,14 @@ def test_broken_json_env_seeds_still_apply(tmp_path, monkeypatch):
     cfg_path = tmp_path / "config.json"
     cfg_path.write_text("{broken json", encoding="utf-8")
     cfg = Config(data_dir=tmp_path)
-    assert cfg.llm_model == "env-model"        # env 种子在坏文件下仍生效
+    assert cfg.llm_model == "env-model"  # env 种子在坏文件下仍生效
     assert cfg.llm_base_url == "http://env:1"
-    assert cfg.server_token                     # API 不裸奔（内存兑底）
+    assert cfg.server_token  # API 不裸奔（内存兑底）
     assert cfg_path.read_text(encoding="utf-8") == "{broken json"  # 文件未被覆盖
     # 修好文件后正常重载
     cfg_path.write_text(json.dumps({"llm_model": "fixed"}), encoding="utf-8")
     cfg.reload()
-    assert cfg.llm_model == "env-model"        # env 仍最强
+    assert cfg.llm_model == "env-model"  # env 仍最强
 
 
 def test_non_dict_root_recovers_same_way(tmp_path, monkeypatch):
@@ -113,9 +114,7 @@ def test_masked_hides_secret(tmp_path, monkeypatch):
 def test_plugin_namespace_secret_masked(tmp_path, monkeypatch):
     """plugins 命名空间深度掩码：token 类键不进日志/档案明文。"""
     cfg = Config(data_dir=tmp_path)
-    cfg.plugins = {"qq": {"enabled": True, "ws_url": "ws://x:1",
-                          "access_token": "sk-abcdef123456789",
-                          "bot_uin": 123}}
+    cfg.plugins = {"qq": {"enabled": True, "ws_url": "ws://x:1", "access_token": "sk-abcdef123456789", "bot_uin": 123}}
     m = cfg.masked()
     qq = m["plugins"]["qq"]
     assert qq["access_token"].startswith("***")
@@ -128,6 +127,7 @@ def test_plugin_defaults_written_on_fresh_config(tmp_path):
     cfg = Config(data_dir=tmp_path)
     assert "qq" not in cfg.plugins
     from lifemate.plugins.qq import QQConfig
+
     assert cfg.write_plugin_defaults("qq", QQConfig.declared()) is True
     # 文件里有了，且 enabled=False
     data = json.loads(cfg.path.read_text(encoding="utf-8"))
@@ -147,14 +147,14 @@ def test_save_and_apply_updates(tmp_path):
     cfg.save()
     data = json.loads(cfg.path.read_text(encoding="utf-8"))
     assert data["log_level"] == "debug"
-    assert cfg.reload() == []                    # _stamp 已同步，不重复解析
+    assert cfg.reload() == []  # _stamp 已同步，不重复解析
 
     result = cfg.apply_updates({"log_level": "warning", "no_such_key": 1})
     assert result["applied"] == ["log_level"]
     assert result["unknown"] == ["no_such_key"]
     assert cfg.log_level == "warning"
     data = json.loads(cfg.path.read_text(encoding="utf-8"))
-    assert data["log_level"] == "warning"        # 已落盘
+    assert data["log_level"] == "warning"  # 已落盘
 
     # 密钥掩码形态跳过（未修改）
     cfg.llm_api_key = "sk-secret-12345678"
@@ -169,10 +169,9 @@ def test_backfills_missing_fields_on_load(tmp_path):
     场景：版本升级新增白名单键（如 timezone），旧文件没有——
     用户打开 config.json 永远能看到完整可改的键表。"""
     from lifemate.utils.config import _JSON_FIELDS
+
     cfg_path = tmp_path / "config.json"
-    cfg_path.write_text(json.dumps(
-        {"llm_model": "my-model", "my_custom": 1}, ensure_ascii=False),
-        encoding="utf-8")
+    cfg_path.write_text(json.dumps({"llm_model": "my-model", "my_custom": 1}, ensure_ascii=False), encoding="utf-8")
     cfg = Config(data_dir=tmp_path)
     # 内存：文件里有的用文件值，缺的用默认
     assert cfg.llm_model == "my-model"
@@ -180,32 +179,31 @@ def test_backfills_missing_fields_on_load(tmp_path):
     # 文件：白名单键全部补齐，顺序=默认生成顺序，未知键保留在尾部
     data = json.loads(cfg_path.read_text(encoding="utf-8"))
     assert set(data) >= set(_JSON_FIELDS) | {"my_custom"}
-    assert list(data.keys())[:len(_JSON_FIELDS)] == list(_JSON_FIELDS)
-    assert data["llm_model"] == "my-model"   # 已有值不被覆盖
-    assert data["timezone"] == ""            # 缺的按默认内容补
+    assert list(data.keys())[: len(_JSON_FIELDS)] == list(_JSON_FIELDS)
+    assert data["llm_model"] == "my-model"  # 已有值不被覆盖
+    assert data["timezone"] == ""  # 缺的按默认内容补
     assert data["plugins"] == {}
-    assert cfg.reload() == []                 # 回写已同步戳，不重复解析
+    assert cfg.reload() == []  # 回写已同步戳，不重复解析
 
 
 def test_backfill_on_hot_reload_resets_memory(tmp_path):
     """热重载发现缺键：内存回落默认（不残留旧值）+ 文件补全。"""
     cfg = Config(data_dir=tmp_path)
-    cfg.log_level = "debug"                  # 模拟运行中改过
-    cfg.path.write_text(json.dumps({"llm_model": "x"}),
-                        encoding="utf-8")   # 手写缺 log_level 的文件
+    cfg.log_level = "debug"  # 模拟运行中改过
+    cfg.path.write_text(json.dumps({"llm_model": "x"}), encoding="utf-8")  # 手写缺 log_level 的文件
     changed = cfg.reload()
     assert "log_level" in changed
-    assert cfg.log_level == "info"           # 回落默认，不残留 debug
+    assert cfg.log_level == "info"  # 回落默认，不残留 debug
     data = json.loads(cfg.path.read_text(encoding="utf-8"))
-    assert data["log_level"] == "info"       # 文件也补全了
+    assert data["log_level"] == "info"  # 文件也补全了
 
 
 def test_server_token_generated_and_reset(tmp_path):
     """server_token：首启随 config 生成随机值；清空重载即重置（永不裸奔）。"""
     cfg = Config(data_dir=tmp_path)
-    assert cfg.server_token and len(cfg.server_token) >= 20   # 首启已生成
+    assert cfg.server_token and len(cfg.server_token) >= 20  # 首启已生成
     data = json.loads(cfg.path.read_text(encoding="utf-8"))
-    assert data["server_token"] == cfg.server_token           # 已落盘
+    assert data["server_token"] == cfg.server_token  # 已落盘
 
     # 用户清空（文件层面）→ 热重载发现为空 → 换新随机值并落盘
     data["server_token"] = ""
@@ -214,7 +212,7 @@ def test_server_token_generated_and_reset(tmp_path):
     cfg.reload()
     assert cfg.server_token and cfg.server_token != old
     data = json.loads(cfg.path.read_text(encoding="utf-8"))
-    assert data["server_token"] == cfg.server_token           # 新值已写回
+    assert data["server_token"] == cfg.server_token  # 新值已写回
 
     # 掩码：API/档案不泄露
     masked = cfg.masked()
@@ -226,9 +224,11 @@ def test_plugin_mask_no_false_positive_on_token_counts(tmp_path):
     """插件命名空间掩码：token 数量类键（复数）不误掩，真凭证仍掩。"""
     cfg = Config(data_dir=tmp_path)
     cfg.plugins = {
-        "x": {"access_token": "secret-token-12345678",   # 真凭证 → 掩码
-              "max_tokens": "32000",                      # 数量（短值）→ 原样
-              "llm_api_key2": "sk-abcdefgh12345678"}      # endswith 命中 key？key2 不结尾 → 原样
+        "x": {
+            "access_token": "secret-token-12345678",  # 真凭证 → 掩码
+            "max_tokens": "32000",  # 数量（短值）→ 原样
+            "llm_api_key2": "sk-abcdefgh12345678",
+        }  # endswith 命中 key？key2 不结尾 → 原样
     }
     m = cfg.masked()["plugins"]["x"]
     assert m["access_token"].startswith("***")
@@ -238,32 +238,31 @@ def test_plugin_mask_no_false_positive_on_token_counts(tmp_path):
 def test_schema_dict_projection(tmp_path):
     """声明投影：类型/默认/说明/密钥/重启/分组/env_var 齐全。"""
     from lifemate.utils.config import _JSON_FIELDS
+
     cfg = Config(data_dir=tmp_path)
     s = cfg.schema_dict()
     fields = s["fields"]
-    assert set(fields) == set(_JSON_FIELDS)          # 主白名单全量
-    assert fields["max_turns"] == {"type": "number", "default": 24,
-                                   "description": fields["max_turns"]["description"],
-                                   "group": "内核"}
+    assert set(fields) == set(_JSON_FIELDS)  # 主白名单全量
+    assert fields["max_turns"] == {"type": "number", "default": 24, "description": fields["max_turns"]["description"], "group": "内核"}
     assert fields["llm_api_key"]["secret"] is True
     assert fields["server_port"]["restart"] is True
     assert fields["llm_model"]["env_var"] == "LIFEMATE_LLM_MODEL"
-    assert fields["plugins"]["type"] == "object"      # 命名空间占位说明
-    assert s["plugins"] == {}                         # 未登记插件
+    assert fields["plugins"]["type"] == "object"  # 命名空间占位说明
+    assert s["plugins"] == {}  # 未登记插件
 
 
 def test_plugin_dotted_path_update(tmp_path):
     """插件点路径写：声明校验 + coerce + 落盘；未声明键拒绝。"""
     from lifemate.plugins.qq import QQConfig
+
     cfg = Config(data_dir=tmp_path)
     cfg.register_plugin_schema("qq", QQConfig.declared_fields())
-    r = cfg.apply_updates({"plugins.qq.bot_uin": "123456",
-                           "plugins.qq.no_such": 1,
-                           "plugins.nope.x": 1})
+    r = cfg.apply_updates({"plugins.qq.bot_uin": "123456", "plugins.qq.no_such": 1, "plugins.nope.x": 1})
     assert r["applied"] == ["plugins.qq.bot_uin"]
     assert set(r["unknown"]) == {"plugins.qq.no_such", "plugins.nope.x"}
-    assert cfg.plugins["qq"]["bot_uin"] == 123456     # coerce 成 int
+    assert cfg.plugins["qq"]["bot_uin"] == 123456  # coerce 成 int
     import json as _json
+
     data = _json.loads(cfg.path.read_text(encoding="utf-8"))
     assert data["plugins"]["qq"]["bot_uin"] == 123456  # 已落盘
     # 密钥掩码回传跳过
@@ -275,6 +274,7 @@ def test_plugin_dotted_path_update(tmp_path):
 def test_plugin_schema_masked_exact(tmp_path):
     """插件声明 secret 字段精确掩码（不再依赖键名启发）。"""
     from lifemate.plugins.qq import QQConfig
+
     cfg = Config(data_dir=tmp_path)
     cfg.register_plugin_schema("qq", QQConfig.declared_fields())
     cfg.plugins = {"qq": {"ws_url": "ws://x:1", "access_token": "sk-abcdef123456"}}

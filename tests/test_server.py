@@ -2,6 +2,7 @@
 
 全部走 ephemeral 端口（port 0）+ 裸 HTTP（asyncio 流），零第三方依赖。
 """
+
 from __future__ import annotations
 
 import asyncio
@@ -12,13 +13,11 @@ import types
 from pathlib import Path
 
 import pytest
+from conftest import make_config
 
 from lifemate.kernel.contracts import MindEvent
 from lifemate.memory.store import Store
 from lifemate.server import Server
-from lifemate.utils.config import Config
-
-from conftest import make_config
 
 
 class FakeKernel:
@@ -62,8 +61,7 @@ async def _req(port: int, method: str, path: str, body: dict | None = None):
     payload = b""
     if body is not None:
         payload = json.dumps(body).encode("utf-8")
-        head += (f"Content-Type: application/json\r\n"
-                 f"Content-Length: {len(payload)}\r\n")
+        head += f"Content-Type: application/json\r\nContent-Length: {len(payload)}\r\n"
     writer.write((head + "\r\n").encode("latin-1") + payload)
     await writer.drain()
     data = await reader.read(-1)
@@ -79,7 +77,7 @@ async def env(tmp_path):
     cfg.server_host = "127.0.0.1"
     cfg.server_port = 0
     cfg.server_token = ""
-    cfg.server_static_dir = str(tmp_path / "no-such-out")   # 隔离：测的是无构建提示页
+    cfg.server_static_dir = str(tmp_path / "no-such-out")  # 隔离：测的是无构建提示页
     kernel = FakeKernel()
     store = Store(tmp_path / "memory.db")
     stop = asyncio.Event()
@@ -100,6 +98,7 @@ async def _jget(port, path):
 
 
 # ── 状态 / 静态 / 路由 ─────────────────────────────────
+
 
 async def test_status_and_no_build_page(env):
     port, kernel, _, cfg, _ = env
@@ -123,7 +122,7 @@ async def test_not_found_and_param_route(env):
 
 async def test_token_auth(env):
     port, _, _, cfg, _ = env
-    cfg.server_token = "sec-token"          # 每请求读，即时生效
+    cfg.server_token = "sec-token"  # 每请求读，即时生效
     try:
         status, _ = await _jget(port, "/api/status")
         assert status == 401
@@ -135,6 +134,7 @@ async def test_token_auth(env):
 
 # ── 对话 ───────────────────────────────────────────────
 
+
 async def test_say_and_chat_ring(env):
     port, kernel, _, _, _ = env
     status, body = await _req(port, "POST", "/api/say", {"text": "你好"})
@@ -144,8 +144,7 @@ async def test_say_and_chat_ring(env):
     assert env_.source == "webui" and env_.origin == "server"
     # 环形缓冲补拉（刷新恢复）
     status, data = await _jget(port, "/api/chat")
-    assert data["messages"][-1] == {"dir": "in", "text": "你好",
-                                    "ts": data["messages"][-1]["ts"]}
+    assert data["messages"][-1] == {"dir": "in", "text": "你好", "ts": data["messages"][-1]["ts"]}
     # 空文本回执
     status, body = await _req(port, "POST", "/api/say", {"text": " "})
     assert json.loads(body)["ok"] is False
@@ -156,7 +155,7 @@ async def test_webui_send_tool_and_sse(env):
     reader, writer = await asyncio.open_connection("127.0.0.1", port)
     writer.write(b"GET /api/events HTTP/1.1\r\nHost: t\r\n\r\n")
     await writer.drain()
-    await asyncio.sleep(0.2)                # 服务端完成订阅
+    await asyncio.sleep(0.2)  # 服务端完成订阅
 
     kernel.emit("assistant_msg", {"content": "我醒了"})
     line = await asyncio.wait_for(_read_data_line(reader), 3.0)
@@ -190,23 +189,18 @@ async def _read_data_line(reader) -> str:
 
 # ── 档案 / 用量 ────────────────────────────────────────
 
+
 async def test_history_dates_usage(env):
     port, _, _, cfg, tmp = env
     observe = Path(cfg.data_dir) / "observe"
     observe.mkdir(parents=True, exist_ok=True)
-    (observe / "2026-01-01.jsonl").write_text(
-        '{"type":"msg","role":"user","rid":"r1","content":"hi"}\n'
-        '{"type":"msg","role":"assistant","rid":"r1","model":"m1",'
-        '"prompt_tokens":100,"completion_tokens":50,"latency_ms":200}\n'
-        '{"type":"msg","role":"assistant","rid":"r2","model":"m1",'
-        '"prompt_tokens":10,"completion_tokens":5,"latency_ms":100}\n'
-        '{oops 坏行\n', encoding="utf-8")
+    (observe / "2026-01-01.jsonl").write_text('{"type":"msg","role":"user","rid":"r1","content":"hi"}\n{"type":"msg","role":"assistant","rid":"r1","model":"m1","prompt_tokens":100,"completion_tokens":50,"latency_ms":200}\n{"type":"msg","role":"assistant","rid":"r2","model":"m1","prompt_tokens":10,"completion_tokens":5,"latency_ms":100}\n{oops 坏行\n', encoding="utf-8")
 
     _, data = await _jget(port, "/api/dates")
     assert data["dates"] == ["2026-01-01"]
 
     _, data = await _jget(port, "/api/history?date=2026-01-01")
-    assert data["ok"] and data["count"] == 3          # 坏行跳过
+    assert data["ok"] and data["count"] == 3  # 坏行跳过
     _, data = await _jget(port, "/api/history?date=2026-01-01&rid=r1")
     assert data["count"] == 2
     _, data = await _jget(port, "/api/history?date=2020-01-01")
@@ -220,9 +214,11 @@ async def test_history_dates_usage(env):
 
 # ── 配置（读/改存/重载） ───────────────────────────────
 
+
 async def test_config_schema_endpoint(env):
     """schema 端点：声明投影 + env_set（前端数据驱动渲染的契约）。"""
     import os
+
     os.environ.setdefault("LIFEMATE_LLM_MODEL", "")  # 不强设，仅确保可读
     port, _, _, cfg, _ = env
     _, data = await _jget(port, "/api/config/schema")
@@ -238,28 +234,32 @@ async def test_config_schema_endpoint(env):
 
 async def test_config_get_apply_reload(env):
     port, _, _, cfg, _ = env
-    cfg.server_token = "test-token"            # 本测试全程带鉴权（配置保存会触发空值换新）
+    cfg.server_token = "test-token"  # 本测试全程带鉴权（配置保存会触发空值换新）
     cfg.llm_api_key = "sk-secret-12345678"
     _, data = await _jget(port, "/api/config?token=test-token")
     key = data["config"]["llm_api_key"]
-    assert key.startswith("***") and key.endswith("678")   # 掩码
+    assert key.startswith("***") and key.endswith("678")  # 掩码
 
-    status, body = await _req(port, "POST", "/api/config?token=test-token", {
-        "log_level": "debug",              # 正常应用
-        "llm_api_key": "***678",           # 掩码回传 = 未修改
-        "bogus_key": 1,                    # 白名单外
-    })
+    status, body = await _req(
+        port,
+        "POST",
+        "/api/config?token=test-token",
+        {
+            "log_level": "debug",  # 正常应用
+            "llm_api_key": "***678",  # 掩码回传 = 未修改
+            "bogus_key": 1,  # 白名单外
+        },
+    )
     data = json.loads(body)
     assert data["applied"] == ["log_level"]
     assert data["skipped_masked"] == ["llm_api_key"]
     assert data["unknown"] == ["bogus_key"]
-    assert data["ok"] is False                             # 有未知键
+    assert data["ok"] is False  # 有未知键
     assert cfg.log_level == "debug"
     assert '"log_level": "debug"' in cfg.path.read_text(encoding="utf-8")
 
     # 密钥明文新值 → 覆盖
-    status, body = await _req(port, "POST", "/api/config?token=test-token",
-                              {"llm_api_key": "sk-new-9999"})
+    status, body = await _req(port, "POST", "/api/config?token=test-token", {"llm_api_key": "sk-new-9999"})
     data = json.loads(body)
     assert data["applied"] == ["llm_api_key"]
     assert cfg.llm_api_key == "sk-new-9999"
@@ -267,10 +267,11 @@ async def test_config_get_apply_reload(env):
     _, body = await _req(port, "POST", "/api/config/reload?token=test-token")
     data = json.loads(body)
     assert data["ok"] and isinstance(data["changed"], list)
-    cfg.server_token = ""                    # 还原，不影响其他测试
+    cfg.server_token = ""  # 还原，不影响其他测试
 
 
 # ── 记忆浏览 ───────────────────────────────────────────
+
 
 async def test_memory_endpoints(env):
     port, _, store, _, _ = env
@@ -284,14 +285,14 @@ async def test_memory_endpoints(env):
 
 # ── 插件面板挂载 ───────────────────────────────────────
 
+
 async def test_plugin_panel_mount(tmp_path, monkeypatch):
     async def _status(req):
         return {"ok": True, "hello": "panel"}
 
     mod = types.ModuleType("lifemate.plugins.dummy.panel")
     mod.PANEL = {"title": "Dummy", "icon": "🧪"}
-    mod.routes = lambda ctx, plugin: [
-        {"method": "GET", "path": "status", "handler": _status}]
+    mod.routes = lambda ctx, plugin: [{"method": "GET", "path": "status", "handler": _status}]
     parent = types.ModuleType("lifemate.plugins.dummy")
     monkeypatch.setitem(sys.modules, "lifemate.plugins.dummy", parent)
     monkeypatch.setitem(sys.modules, "lifemate.plugins.dummy.panel", mod)
@@ -301,13 +302,11 @@ async def test_plugin_panel_mount(tmp_path, monkeypatch):
     kernel = FakeKernel()
     store = Store(tmp_path / "memory.db")
     stop = asyncio.Event()
-    srv = Server(kernel, store, None, cfg, stop,
-                 plugins=[FakePlugin("dummy")])
+    srv = Server(kernel, store, None, cfg, stop, plugins=[FakePlugin("dummy")])
     port = await srv.start()
     try:
         _, data = await _jget(port, "/api/plugins")
-        assert data["plugins"] == [{"name": "dummy",
-                                    "panel": {"title": "Dummy", "icon": "🧪"}}]
+        assert data["plugins"] == [{"name": "dummy", "panel": {"title": "Dummy", "icon": "🧪"}}]
         _, data = await _jget(port, "/api/plugins/dummy/status")
         assert data == {"ok": True, "hello": "panel"}
     finally:
@@ -325,7 +324,8 @@ async def test_plugin_without_panel_listed(env):
 
 async def test_static_next_rsc_translation(tmp_path):
     """Next 16 RSC 预取：URL 点号 → 文件斜杠（__next.x.__PAGE__.txt）。"""
-    from lifemate.server.http import static_resp, json_resp
+    from lifemate.server.http import static_resp
+
     out = tmp_path / "out"
     (out / "events" / "__next.events").mkdir(parents=True)
     (out / "events" / "__next.events" / "__PAGE__.txt").write_text("rsc", encoding="utf-8")
@@ -355,13 +355,13 @@ async def test_close_with_open_sse(tmp_path):
         reader, writer = await asyncio.open_connection("127.0.0.1", port)
         writer.write(b"GET /api/events HTTP/1.1\r\nHost: t\r\n\r\n")
         await writer.drain()
-        await asyncio.sleep(0.2)            # 服务端完成订阅
+        await asyncio.sleep(0.2)  # 服务端完成订阅
         # 停机：SSE 感知 stop 立即退流，close 限时完成不挂死
         stop.set()
         await asyncio.wait_for(srv.close(), 5.0)
         # 连接被服务端关闭：客户端读到 EOF
         tail = await asyncio.wait_for(reader.read(-1), 5.0)
-        assert isinstance(tail, bytes)      # EOF（可能带残余帧）
+        assert isinstance(tail, bytes)  # EOF（可能带残余帧）
         writer.close()
     finally:
         stop.set()
@@ -374,14 +374,8 @@ async def test_history_tail_and_default_date(env):
     port, _, _, cfg, tmp = env
     observe = Path(cfg.data_dir) / "observe"
     observe.mkdir(parents=True, exist_ok=True)
-    (observe / "2026-01-01.jsonl").write_text(
-        "\n".join(json.dumps({"type": "msg", "role": "user",
-                              "ts": 1000 + i, "content": f"早{i}"})
-                  for i in range(5)) + "\n", encoding="utf-8")
-    (observe / "2026-01-02.jsonl").write_text(
-        "\n".join(json.dumps({"type": "msg", "role": "user",
-                              "ts": 2000 + i, "content": f"晚{i}"})
-                  for i in range(3)) + "\n", encoding="utf-8")
+    (observe / "2026-01-01.jsonl").write_text("\n".join(json.dumps({"type": "msg", "role": "user", "ts": 1000 + i, "content": f"早{i}"}) for i in range(5)) + "\n", encoding="utf-8")
+    (observe / "2026-01-02.jsonl").write_text("\n".join(json.dumps({"type": "msg", "role": "user", "ts": 2000 + i, "content": f"晚{i}"}) for i in range(3)) + "\n", encoding="utf-8")
 
     # 无 date → 最新有档案日（01-02）；tail=2 → 最后两条
     _, data = await _jget(port, "/api/history?tail=2")

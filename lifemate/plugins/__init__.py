@@ -12,16 +12,16 @@
 注意：插件 __init__.py 里不要做重活（建连接等全放 start()）；
 一个插件失败只跳过它自己，不拖垮启动。
 """
+
 from __future__ import annotations
 
-import asyncio
 import importlib
 import logging
-from dataclasses import dataclass, field, replace
+from dataclasses import dataclass, replace
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
-from ..kernel.contracts import PluginPack, Tool
+from ..kernel.contracts import PluginPack
 from ..utils.config import Setting, coerce
 
 if TYPE_CHECKING:
@@ -39,10 +39,10 @@ PLUGIN_ROOT = Path(__file__).parent
 class PluginContext:
     """插件装配上下文（宿主在启动时构造，每个插件拿到隔离副本）。"""
 
-    kernel: "SelfKernel"
-    store: "Store"
-    cfg: "Config"
-    recorder: "Recorder"
+    kernel: SelfKernel
+    store: Store
+    cfg: Config
+    recorder: Recorder
     data_dir: Path  # data/plugins/<name>/（插件私有数据）
 
 
@@ -73,10 +73,8 @@ class Field(Setting):
     def __get__(self, obj, objtype=None):
         if obj is None:
             return self
-        raw = obj._live.plugins.get(obj._namespace, {}).get(
-            self.name, self.default)
-        return coerce(raw, self.default,
-                      f"plugins.{obj._namespace}.{self.name}")
+        raw = obj._live.plugins.get(obj._namespace, {}).get(self.name, self.default)
+        return coerce(raw, self.default, f"plugins.{obj._namespace}.{self.name}")
 
 
 class PluginConfig:
@@ -102,17 +100,15 @@ class PluginConfig:
     @classmethod
     def declared(cls) -> dict[str, Any]:
         """全部声明字段：{键: 默认值}（首启预设写盘用）。"""
-        return {name: f.default for name, f in vars(cls).items()
-                if isinstance(f, Field)}
+        return {name: f.default for name, f in vars(cls).items() if isinstance(f, Field)}
 
     @classmethod
-    def declared_fields(cls) -> dict[str, "Field"]:
+    def declared_fields(cls) -> dict[str, Field]:
         """全部声明字段（含元数据）：schema 投影/写路径校验用。"""
-        return {name: f for name, f in vars(cls).items()
-                if isinstance(f, Field)}
+        return {name: f for name, f in vars(cls).items() if isinstance(f, Field)}
 
 
-def preset_plugin_defaults(cfg: "Config") -> list[str]:
+def preset_plugin_defaults(cfg: Config) -> list[str]:
     """扫描插件目录，把声明式默认配置段（enabled=false）写进 config.json。
 
     只读 CONFIG 声明、不启动任何插件；已有段不碰（幂等）。
@@ -131,9 +127,7 @@ def preset_plugin_defaults(cfg: "Config") -> list[str]:
             log.exception("插件导入失败：%s", sub.name)
             continue
         conf_cls = getattr(module, "CONFIG", None)
-        if (isinstance(conf_cls, type)
-                and issubclass(conf_cls, PluginConfig)
-                and conf_cls.declared()):
+        if isinstance(conf_cls, type) and issubclass(conf_cls, PluginConfig) and conf_cls.declared():
             # 声明登记（schema 端点聚合 + plugins.<name>.<key> 写路径校验）
             cfg.register_plugin_schema(sub.name, conf_cls.declared_fields())
             if cfg.write_plugin_defaults(sub.name, conf_cls.declared()):

@@ -5,6 +5,7 @@
 健壮性（借签 pi 自动重试）：瞬态错误指数退避重试，永久错误直抛，
 连续失败达阈值触发告警回调（宿主/器官订阅）。
 """
+
 from __future__ import annotations
 
 import asyncio
@@ -12,7 +13,8 @@ import json
 import logging
 import re
 import time
-from typing import Any, Awaitable, Callable, Protocol
+from collections.abc import Awaitable, Callable
+from typing import Any, Protocol
 
 from .contracts import LLMResponse, ToolCall, ToolSchema
 
@@ -20,9 +22,14 @@ log = logging.getLogger("kernel.llm")
 
 # 瞬态（可重试）异常类名（openai 未装时按名匹配；装了则 isinstance 优先）
 _RETRYABLE_NAMES = {
-    "APIConnectionError", "APITimeoutError", "TimeoutError",
-    "RateLimitError", "InternalServerError", "ServiceUnavailableError",
-    "ReadTimeout", "RemoteProtocolError",
+    "APIConnectionError",
+    "APITimeoutError",
+    "TimeoutError",
+    "RateLimitError",
+    "InternalServerError",
+    "ServiceUnavailableError",
+    "ReadTimeout",
+    "RemoteProtocolError",
 }
 
 
@@ -30,13 +37,12 @@ def is_retryable(exc: BaseException) -> bool:
     """瞬态错误判定：连接/超时/限流/5xx 可重试；鉴权/参数/上下文溢出直抛。"""
     try:
         import openai
-        if isinstance(exc, (openai.APIConnectionError, openai.APITimeoutError,
-                            openai.RateLimitError, openai.InternalServerError)):
+
+        if isinstance(exc, (openai.APIConnectionError, openai.APITimeoutError, openai.RateLimitError, openai.InternalServerError)):
             return True
         if isinstance(exc, openai.APIStatusError):
             return exc.status_code >= 500
-        if isinstance(exc, (openai.AuthenticationError, openai.BadRequestError,
-                            openai.NotFoundError, openai.PermissionDeniedError)):
+        if isinstance(exc, (openai.AuthenticationError, openai.BadRequestError, openai.NotFoundError, openai.PermissionDeniedError)):
             return False
     except ImportError:
         pass
@@ -48,7 +54,7 @@ async def chat_with_retry(
     *,
     max_retries: int,
     backoff_s: float,
-    fail_streak: "_FailStreak | None" = None,
+    fail_streak: _FailStreak | None = None,
 ) -> LLMResponse:
     """带重试的一次调用：瞬态错误指数退避重试，永久错误直抛。
 
@@ -67,9 +73,8 @@ async def chat_with_retry(
                 if fail_streak is not None:
                     fail_streak.record(str(e))
                 raise
-            delay = backoff_s * (2 ** attempt)
-            log.warning("LLM 调用失败（第 %d 次：%s），%.1fs 后重试",
-                        attempt + 1, e, delay)
+            delay = backoff_s * (2**attempt)
+            log.warning("LLM 调用失败（第 %d 次：%s），%.1fs 后重试", attempt + 1, e, delay)
             await asyncio.sleep(delay)
     raise last  # pragma: no cover（循环内必 raise/return）
 
@@ -77,8 +82,7 @@ async def chat_with_retry(
 class _FailStreak:
     """连续失败计数与告警（借签 v1：第 N 次连续失败触发一次回调）。"""
 
-    def __init__(self, threshold: int,
-                 on_alert: Callable[[int], None] | None = None) -> None:
+    def __init__(self, threshold: int, on_alert: Callable[[int], None] | None = None) -> None:
         self._threshold = threshold
         self._on_alert = on_alert
         self.count = 0
@@ -91,8 +95,7 @@ class _FailStreak:
     def record(self, reason: str) -> None:
         self.count += 1
         if self.count >= self._threshold:
-            log.critical("LLM 连续失败 %d 次（最近：%s）——自主性已受影响",
-                         self.count, reason[:200])
+            log.critical("LLM 连续失败 %d 次（最近：%s）——自主性已受影响", self.count, reason[:200])
             if not self._alerted:
                 self._alerted = True
                 if self._on_alert is not None:
@@ -106,7 +109,9 @@ class LLMClient(Protocol):
     """思维循环依赖的最小接口（测试可注入 FakeLLM）。"""
 
     async def chat(
-        self, messages: list[dict[str, Any]], tools: list[ToolSchema] | None = None,
+        self,
+        messages: list[dict[str, Any]],
+        tools: list[ToolSchema] | None = None,
     ) -> LLMResponse: ...
 
 
@@ -117,58 +122,57 @@ class OpenAILLM:
         self._cfg = cfg
         self._client = None
         self._sig: tuple[str, str] | None = None
-        self._fail_streak = _FailStreak(cfg.llm_fail_alert_streak,
-                                        on_persistent_failure)
+        self._fail_streak = _FailStreak(cfg.llm_fail_alert_streak, on_persistent_failure)
 
     def _get_client(self):
         sig = (self._cfg.llm_base_url, self._cfg.llm_api_key)
         if self._client is None or sig != self._sig:
             from openai import AsyncOpenAI  # 惰性导入，测试环境零依赖
-            self._client = AsyncOpenAI(
-                base_url=self._cfg.llm_base_url or "https://api.openai.com/v1",
-                api_key=self._cfg.llm_api_key or "sk-unconfigured",
-                timeout=300.0)
+
+            self._client = AsyncOpenAI(base_url=self._cfg.llm_base_url or "https://api.openai.com/v1", api_key=self._cfg.llm_api_key or "sk-unconfigured", timeout=300.0)
             self._sig = sig
         return self._client
 
     async def chat(
-        self, messages: list[dict[str, Any]], tools: list[ToolSchema] | None = None,
+        self,
+        messages: list[dict[str, Any]],
+        tools: list[ToolSchema] | None = None,
     ) -> LLMResponse:
-        return await chat_with_retry(
-            lambda: self._raw_chat(messages, tools),
-            max_retries=self._cfg.llm_max_retries,
-            backoff_s=self._cfg.llm_retry_backoff_s,
-            fail_streak=self._fail_streak)
+        return await chat_with_retry(lambda: self._raw_chat(messages, tools), max_retries=self._cfg.llm_max_retries, backoff_s=self._cfg.llm_retry_backoff_s, fail_streak=self._fail_streak)
 
     async def _raw_chat(
-        self, messages: list[dict[str, Any]], tools: list[ToolSchema] | None = None,
+        self,
+        messages: list[dict[str, Any]],
+        tools: list[ToolSchema] | None = None,
     ) -> LLMResponse:
         kwargs: dict[str, Any] = {}
         if tools:
             # MCP 形状 → OpenAI function 形状（唯一方言翻译点：
             # name/description/inputSchema → name/description/parameters）
             kwargs["tools"] = [
-                {"type": "function", "function": {
-                    "name": t["name"],
-                    "description": t.get("description", ""),
-                    "parameters": t.get("inputSchema", {"type": "object"}),
-                }}
+                {
+                    "type": "function",
+                    "function": {
+                        "name": t["name"],
+                        "description": t.get("description", ""),
+                        "parameters": t.get("inputSchema", {"type": "object"}),
+                    },
+                }
                 for t in tools
             ]
         t0 = time.monotonic()
-        resp = await self._get_client().chat.completions.create(
-            model=self._cfg.llm_model, messages=messages, **kwargs)
+        resp = await self._get_client().chat.completions.create(model=self._cfg.llm_model, messages=messages, **kwargs)
         choice = resp.choices[0]
         msg = choice.message
         thinking, content = _extract_thinking(msg)
         calls: list[ToolCall] = []
-        for tc in (msg.tool_calls or []):
-            calls.append(ToolCall(id=tc.id, name=tc.function.name,
-                                  arguments=_normalize_args(
-                                      tc.function.arguments)))
+        for tc in msg.tool_calls or []:
+            calls.append(ToolCall(id=tc.id, name=tc.function.name, arguments=_normalize_args(tc.function.arguments)))
         u = resp.usage
         return LLMResponse(
-            content=content, thinking=thinking, tool_calls=calls,
+            content=content,
+            thinking=thinking,
+            tool_calls=calls,
             stop_reason=_map_stop(choice.finish_reason),
             model=getattr(resp, "model", "") or "",
             latency_ms=int((time.monotonic() - t0) * 1000),
@@ -178,8 +182,7 @@ class OpenAILLM:
 
 
 _THINK_RE = re.compile(r"<think>(.*?)</think>", re.S)
-_STOP_MAP = {"tool_calls": "toolUse", "function_call": "toolUse",
-             "stop": "stop", "length": "length"}
+_STOP_MAP = {"tool_calls": "toolUse", "function_call": "toolUse", "stop": "stop", "length": "length"}
 
 
 def _normalize_args(raw: object) -> str:

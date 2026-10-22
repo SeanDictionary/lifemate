@@ -5,6 +5,7 @@
 - 压缩时整体重写（保留 header/summary/最近消息；压缩是低频事件）
 - 轮换 = 关闭当前文件、开新文件；旧文件保留（观测/回放用）
 """
+
 from __future__ import annotations
 
 import json
@@ -31,9 +32,8 @@ def _cleanup_rotated(directory: Path, keep: int) -> None:
 
     档案职责已移交 observe；旧会话文件只为崩溃回退留少量余量。
     """
-    files = sorted(directory.glob("*.jsonl"), key=lambda f: f.stat().st_mtime,
-                   reverse=True)
-    for old in files[1 + max(keep, 0):]:  # [0] 是当前会话
+    files = sorted(directory.glob("*.jsonl"), key=lambda f: f.stat().st_mtime, reverse=True)
+    for old in files[1 + max(keep, 0) :]:  # [0] 是当前会话
         try:
             old.unlink()
         except OSError:
@@ -52,36 +52,44 @@ class Session:
         self.messages: list[dict[str, Any]] = []
         file.parent.mkdir(parents=True, exist_ok=True)
         with file.open("a", encoding="utf-8") as f:
-            f.write(json.dumps({
-                "type": HEADER_TYPE, "version": 1,
-                "session_id": self.session_id, "created": self.created,
-            }, ensure_ascii=False) + "\n")
+            f.write(
+                json.dumps(
+                    {
+                        "type": HEADER_TYPE,
+                        "version": 1,
+                        "session_id": self.session_id,
+                        "created": self.created,
+                    },
+                    ensure_ascii=False,
+                )
+                + "\n"
+            )
 
     # ── 写入 ─────────────────────────────────────────────
     def append(self, msg: dict[str, Any]) -> None:
         """追加一条消息（内存 + 落盘）。"""
         self.messages.append(msg)
         with self.file.open("a", encoding="utf-8") as f:
-            f.write(json.dumps({"type": MSG_TYPE, "msg": msg},
-                               ensure_ascii=False) + "\n")
+            f.write(json.dumps({"type": MSG_TYPE, "msg": msg}, ensure_ascii=False) + "\n")
 
-    def apply_compaction(self, summary: str,
-                         kept: list[dict[str, Any]],
-                         span: str = "") -> None:
+    def apply_compaction(self, summary: str, kept: list[dict[str, Any]], span: str = "") -> None:
         """压缩提交：更新摘要、截断消息，整体重写文件。"""
         self.summary = summary
         self.span = span
         self.messages = kept
-        lines = [{
-            "type": HEADER_TYPE, "version": 1,
-            "session_id": self.session_id, "created": self.created,
-        }, {"type": SUMMARY_TYPE, "content": summary, "span": span}]
+        lines = [
+            {
+                "type": HEADER_TYPE,
+                "version": 1,
+                "session_id": self.session_id,
+                "created": self.created,
+            },
+            {"type": SUMMARY_TYPE, "content": summary, "span": span},
+        ]
         for m in kept:
             lines.append({"type": MSG_TYPE, "msg": m})
         tmp = self.file.with_suffix(".jsonl.tmp")
-        tmp.write_text(
-            "".join(json.dumps(x, ensure_ascii=False) + "\n" for x in lines),
-            encoding="utf-8")
+        tmp.write_text("".join(json.dumps(x, ensure_ascii=False) + "\n" for x in lines), encoding="utf-8")
         tmp.replace(self.file)
 
     # ── 读取 ─────────────────────────────────────────────
@@ -93,10 +101,8 @@ class Session:
         out: list[dict[str, Any]] = []
         if self.summary:
             span = f"（{self.span}）" if self.span else ""
-            out.append({"role": "system",
-                        "content": f"[此前会话的摘要{span}]\n{self.summary}"})
-        out.extend({k: v for k, v in m.items() if k != "ts"}
-                   for m in self.messages)
+            out.append({"role": "system", "content": f"[此前会话的摘要{span}]\n{self.summary}"})
+        out.extend({k: v for k, v in m.items() if k != "ts"} for m in self.messages)
         return out
 
     def total_tokens(self) -> int:
@@ -110,7 +116,7 @@ class Session:
         return n
 
     # ── 轮换 ─────────────────────────────────────────────
-    def rotate(self, keep: int = 2) -> "Session":
+    def rotate(self, keep: int = 2) -> Session:
         """开新会话（旧文件按 keep 清理——档案职责在 observe），返回新实例。"""
         new = Session.create(self.file.parent)
         _cleanup_rotated(self.file.parent, keep=keep)
@@ -118,19 +124,17 @@ class Session:
 
     # ── 工厂 ─────────────────────────────────────────────
     @classmethod
-    def create(cls, directory: Path) -> "Session":
+    def create(cls, directory: Path) -> Session:
         directory.mkdir(parents=True, exist_ok=True)
         ts = time.strftime("%Y%m%d-%H%M%S")
         return cls(directory / f"{ts}_{uuid.uuid4().hex[:8]}.jsonl")
 
     @classmethod
-    def load_latest(cls, directory: Path) -> "Session":
+    def load_latest(cls, directory: Path) -> Session:
         """恢复最近一个会话（7×24 重启连续性）；无则新建。"""
         if not directory.exists():
             return cls.create(directory)
-        files = sorted(
-            (f for f in directory.glob("*.jsonl") if f.stat().st_size > 0),
-            key=lambda f: f.stat().st_mtime)
+        files = sorted((f for f in directory.glob("*.jsonl") if f.stat().st_size > 0), key=lambda f: f.stat().st_mtime)
         if not files:
             return cls.create(directory)
         sess = cls.__new__(cls)
