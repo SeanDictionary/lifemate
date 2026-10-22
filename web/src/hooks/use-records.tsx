@@ -43,6 +43,13 @@ export function RecordsProvider({ children }: { children: ReactNode }) {
       es = new EventSource(
         t ? `/api/records?token=${encodeURIComponent(t)}` : "/api/records",
       );
+      es.onerror = () => {
+        // 401（token 失效/未输入）→ CLOSED 不再自连：交给 token 门；
+        // 其他错误（网络抖动/服务重启）EventSource 自动重连，无需处理
+        if (es && es.readyState === EventSource.CLOSED) {
+          window.dispatchEvent(new CustomEvent("lm:unauthorized"));
+        }
+      };
       es.onmessage = (e: MessageEvent<string>) => {
         try {
           const rec = JSON.parse(e.data) as ObserveRecord;
