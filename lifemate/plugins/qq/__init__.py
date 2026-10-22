@@ -411,8 +411,8 @@ def _build_tools(p: QQPlugin) -> list[Tool]:
     async def set_qq_status(args: dict) -> str:
         status = args.get("status", "在线")
         ext = args.get("ext_status", "无")
-        code = p._STATUS.get(status, status)
-        ext_code = p._EXT_STATUS.get(ext, ext)
+        code = _STATUS.get(status, status)      # 闭包局部表，非实例属性
+        ext_code = _EXT_STATUS.get(ext, ext)
         try:
             params = {"status": int(code), "ext_status": int(ext_code),
                       "battery_status": 0}
