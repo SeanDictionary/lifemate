@@ -1,10 +1,10 @@
 "use client";
-/** 历史回放：observe 档案（日期/rid 过滤 + 分页） */
+/** 历史回放：observe 档案（日期/rid 过滤 + 分页）· 事件卡片视图 */
 import { useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { apiGet } from "@/lib/api";
 import type { DatesResp, HistoryResp } from "@/lib/types";
-import { renderRecord } from "@/lib/render";
+import { EventCard, recordToCards } from "@/components/history/event-card";
 import { Card, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -18,7 +18,7 @@ import {
 } from "@/components/ui/select";
 import { Skeleton } from "@/components/ui/skeleton";
 
-const PAGE = 500;
+const PAGE = 200; // 卡片比纯文本行重，分页收紧
 
 export default function HistoryPage() {
   const [date, setDate] = useState("");
@@ -29,14 +29,17 @@ export default function HistoryPage() {
     queryKey: ["dates"],
     queryFn: () => apiGet<DatesResp>("/api/dates"),
   });
-  // 默认选最新日期
   const effectiveDate = date || dates.data?.dates.at(-1) || "";
   const effectiveRid = rid.trim();
 
   const history = useQuery({
     queryKey: ["history", effectiveDate, effectiveRid, offset],
     queryFn: () => {
-      const p = new URLSearchParams({ date: effectiveDate, offset: String(offset), limit: String(PAGE) });
+      const p = new URLSearchParams({
+        date: effectiveDate,
+        offset: String(offset),
+        limit: String(PAGE),
+      });
       if (effectiveRid) p.set("rid", effectiveRid);
       return apiGet<HistoryResp>(`/api/history?${p}`);
     },
@@ -51,13 +54,23 @@ export default function HistoryPage() {
 
       <div className="flex flex-wrap items-center gap-2">
         <div className="w-44">
-          <Select value={effectiveDate} onValueChange={(v) => { setDate(v); setOffset(0); }}>
+          <Select
+            value={effectiveDate}
+            onValueChange={(v) => {
+              setDate(v);
+              setOffset(0);
+            }}
+          >
             <SelectTrigger size="sm">
-              <SelectValue placeholder={dates.isLoading ? "加载中…" : "选择日期"} />
+              <SelectValue
+                placeholder={dates.isLoading ? "加载中…" : "选择日期"}
+              />
             </SelectTrigger>
             <SelectContent>
               {(dates.data?.dates ?? []).map((d) => (
-                <SelectItem key={d} value={d}>{d}</SelectItem>
+                <SelectItem key={d} value={d}>
+                  {d}
+                </SelectItem>
               ))}
             </SelectContent>
           </Select>
@@ -66,20 +79,31 @@ export default function HistoryPage() {
           className="h-8 w-40 font-mono text-xs"
           placeholder="rid 过滤（链路回放）"
           value={rid}
-          onChange={(e) => { setRid(e.target.value); setOffset(0); }}
+          onChange={(e) => {
+            setRid(e.target.value);
+            setOffset(0);
+          }}
         />
+        {effectiveRid && (
+          <Button variant="ghost" size="sm" onClick={() => setRid("")}>
+            清除 rid ✕
+          </Button>
+        )}
         <span className="text-xs text-muted-foreground">
           {history.data ? `共 ${total} 条` : ""}
         </span>
         <div className="ml-auto flex gap-2">
           <Button
-            size="sm" variant="outline" disabled={offset === 0 || !history.data}
+            size="sm"
+            variant="outline"
+            disabled={offset === 0 || !history.data}
             onClick={() => setOffset(Math.max(0, offset - PAGE))}
           >
             上一页
           </Button>
           <Button
-            size="sm" variant="outline"
+            size="sm"
+            variant="outline"
             disabled={!history.data || offset + PAGE >= total}
             onClick={() => setOffset(offset + PAGE)}
           >
@@ -91,28 +115,29 @@ export default function HistoryPage() {
       <Card>
         <CardContent className="p-0">
           <ScrollArea className="h-[calc(100vh-15rem)]">
-            <div className="space-y-1 p-4 font-mono text-xs">
+            <div className="space-y-2 p-4">
               {history.isLoading && (
-                <div className="space-y-2 p-2">
-                  <Skeleton className="h-4 w-3/4" />
-                  <Skeleton className="h-4 w-1/2" />
-                  <Skeleton className="h-4 w-2/3" />
+                <div className="space-y-2">
+                  <Skeleton className="h-16 w-full" />
+                  <Skeleton className="h-12 w-3/4" />
+                  <Skeleton className="h-16 w-5/6" />
                 </div>
               )}
               {history.data && history.data.rows.length === 0 && (
-                <div className="py-16 text-center text-muted-foreground">
+                <div className="py-16 text-center text-sm text-muted-foreground">
                   该条件下无记录
                 </div>
               )}
               {history.data?.rows.flatMap((r, i) =>
-                renderRecord(r).map((row, j) => (
-                  <div key={`${i}-${j}`} className="flex gap-2 leading-relaxed">
-                    <span className="shrink-0">{row.icon}</span>
-                    <span className="min-w-0 break-all">{row.main}</span>
-                    {row.dim && (
-                      <span className="shrink-0 text-muted-foreground">{row.dim}</span>
-                    )}
-                  </div>
+                recordToCards(r).map((m, j) => (
+                  <EventCard
+                    key={`${i}-${j}`}
+                    model={m}
+                    onRid={(v) => {
+                      setRid(v);
+                      setOffset(0);
+                    }}
+                  />
                 )),
               )}
             </div>

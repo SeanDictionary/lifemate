@@ -2,7 +2,7 @@
  * 记录/事件 → 展示行：replay.py 的 render 语义移植。
  * 图标语言与后端三处（console/replay/host）保持同一套通用 emoji。
  */
-import type { ObserveRecord, SseEvent } from "./types";
+import type { SseEvent } from "./types";
 import { brief } from "./format";
 
 export const GLYPHS: Record<string, string> = {
@@ -40,62 +40,6 @@ function ts(t: number): string {
 
 function ridTag(rid: string | undefined): string {
   return rid ? `[${rid}] ` : "";
-}
-
-/** observe 档案记录 → 展示行（replay.py render 的 TS 版） */
-export function renderRecord(r: ObserveRecord): DisplayRow[] {
-  const t = ts(r.ts ?? 0);
-  const tag = ridTag(r.rid);
-  const out: DisplayRow[] = [];
-
-  if (r.type === "msg") {
-    if (r.role === "user") {
-      out.push({ icon: "📨", main: `${t} ${tag}${brief(r.content, 400)}` });
-    } else if (r.role === "assistant") {
-      if (r.thinking) out.push({ icon: "💭", main: `${t} ${tag}${brief(r.thinking, 300)}`, dim: "思考" });
-      if (r.content) out.push({ icon: "💬", main: `${t} ${tag}${brief(r.content, 400)}` });
-      for (const tc of r.tool_calls ?? [])
-        out.push({ icon: "🔧", main: `${t} ${tag}${tc.name}(${brief(tc.arguments, 120)})` });
-      if (r.prompt_tokens)
-        out.push({
-          icon: "📊",
-          main: `${t} ${r.model ?? ""}`,
-          dim: `in=${r.prompt_tokens} out=${r.completion_tokens ?? 0} ${r.latency_ms ?? 0}ms stop=${r.stop_reason ?? ""}`,
-        });
-    } else if (r.role === "tool") {
-      out.push({
-        icon: "📥",
-        main: `${t} ${r.name ?? ""} → ${r.ok ? "ok" : "FAIL"} ${r.latency_ms ?? 0}ms`,
-        dim: brief(String(r.content ?? ""), 200),
-      });
-    }
-    return out.length ? out : [{ icon: "⚪", main: `${t} ${tag}（空记录）` }];
-  }
-
-  switch (r.type) {
-    case "wake":
-      return [{ icon: "☀️", main: `${t} 唤醒 ${r.rid ?? ""} trigger=${r.trigger ?? ""}` }];
-    case "rest":
-      return [{ icon: "🌙", main: `${t} 休息 reason=${r.reason ?? ""}` }];
-    case "session_rotated":
-      return [{ icon: "🔄", main: `${t} 会话轮换（播种 ${r.seed_chars ?? 0} 字）` }];
-    case "compact":
-      return [{ icon: "📦", main: `${t} 压缩：丢弃 ${r.dropped} 条、保留 ${r.kept} 条` }];
-    case "queue_drop":
-      return [{ icon: "🚫", main: `${t} 丢弃排队信封 ${r.count} 封（${r.reason}）` }];
-    case "boot":
-      return [{ icon: "🚀", main: `${t} 启动 v${r.version} tools=${(r.tools as string[] | undefined)?.length ?? 0}` }];
-    case "session_load":
-      return [{ icon: "📂", main: `${t} 恢复会话（${r.msgs} 条消息）` }];
-    case "config_reload":
-      return [{ icon: "🔁", main: `${t} 配置热重载：${(r.changed as string[] | undefined)?.join(", ")}` }];
-    case "host_stop":
-      return [{ icon: "🏁", main: `${t} 退出（${r.reason}）` }];
-    case "error":
-      return [{ icon: "❌", main: `${t} 异常 ${r.where ?? ""}: ${brief(String(r.error ?? ""), 200)}` }];
-    default:
-      return [{ icon: "⚪", main: `${t} ${r.type}` }];
-  }
 }
 
 /** 实时 SSE 事件 → 展示行 */
