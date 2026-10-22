@@ -154,7 +154,6 @@ export function EventCard({
       <div className="flex items-center gap-2 text-[11px] text-muted-foreground">
         <span className="text-sm leading-none">{model.emoji}</span>
         <span>{model.label}</span>
-        <span className="ml-auto font-mono">{fmtTime(model.ts)}</span>
         {model.rid && (
           <button
             className="rounded border px-1.5 py-px font-mono hover:bg-foreground/10"
@@ -164,6 +163,7 @@ export function EventCard({
             {model.rid}
           </button>
         )}
+        <span className="ml-auto font-mono">{fmtTime(model.ts)}</span>
       </div>
       {model.body && (
         <div

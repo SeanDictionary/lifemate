@@ -102,7 +102,7 @@ export default function ChatPage() {
                         m.dir === "in" ? "text-primary-foreground/60" : "text-muted-foreground"
                       }`}
                     >
-                      {fmtTime(m.ts)} {m.dir === "out" ? "它" : "你"}
+                      {fmtTime(m.ts)}
                     </div>
                   </div>
                 </div>

@@ -1,5 +1,5 @@
 "use client";
-/** 记忆浏览器：事件记忆 / 好奇 / 需求 / 提醒（只读） */
+/** 记忆浏览器：记忆 / 好奇 / 需求 / 提醒（只读） */
 import { useQuery } from "@tanstack/react-query";
 import { apiGet } from "@/lib/api";
 import type { MemoryResp } from "@/lib/types";
@@ -11,7 +11,7 @@ import { Badge } from "@/components/ui/badge";
 import { Skeleton } from "@/components/ui/skeleton";
 
 const TABS = [
-  { key: "episodes", label: "事件记忆" },
+  { key: "episodes", label: "记忆" },
   { key: "curiosity", label: "好奇" },
   { key: "needs", label: "需求" },
   { key: "reminders", label: "提醒" },
