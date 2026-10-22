@@ -326,51 +326,62 @@ def _reply_msg(reply_id, at=None, text="在", sender=12345, gid=777):
     if at is not None:
         segs.append({"type": "at", "data": {"qq": str(at)}})
     segs.append({"type": "text", "data": {"text": text}})
-    return {"post_type": "message", "message_type": "group", "group_id": gid,
-            "user_id": sender, "message": segs, "message_id": 556,
-            "sender": {"nickname": "张三", "card": ""}}
+    return {"post_type": "message", "message_type": "group", "group_id": gid, "user_id": sender, "message": segs, "message_id": 556, "sender": {"nickname": "张三", "card": ""}}
+
+
+def _origin(sender_id, name="某人", text="被引用的内容"):
+    return {"sender_id": sender_id, "sender_name": name, "text": text}
 
 
 def test_reply_to_own_message_is_direct_no_at():
     """回自己发的消息、且没带 @（客户端 @ 可被删除）——仍直达。"""
-    lookup = {100: SELF}          # 被回复消息 100 是自己发的
-    ev = parse_event(_reply_msg(100), SELF, OWNER, sender_lookup=lookup.get)
+    ev = parse_event(_reply_msg(100), SELF, OWNER, reply_lookup=lambda mid: _origin(SELF, "我", "我之前说的话"))
     assert ev.type == "direct"
     assert "对你说" in compose_envelope_text(ev)
+    # 引用内容内联（心智醒来即有上下文）
+    assert "[回复 我：我之前说的话]" in ev.text
 
 
 def test_reply_to_own_message_with_at_other_is_direct():
     """回自己的消息同时 @ 第三者（拉人入话题）——话题锚在自己，直达。"""
-    lookup = {100: SELF}
-    ev = parse_event(_reply_msg(100, at=224029720), SELF, OWNER,
-                     sender_lookup=lookup.get)
+    ev = parse_event(_reply_msg(100, at=224029720), SELF, OWNER, reply_lookup=lambda mid: _origin(SELF))
     assert ev.type == "direct" and "@224029720" in ev.text
 
 
-def test_reply_to_other_is_ambient():
-    """回别人的消息 + @ 别人（原误判场景）——降级背景听觉。"""
-    lookup = {2086235890: 2878099949}   # 被回复消息是别人发的
-    ev = parse_event(_reply_msg(2086235890, at=224029720), SELF, OWNER,
-                     sender_lookup=lookup.get)
+def test_reply_to_other_is_ambient_with_inline_quote():
+    """回别人的消息 + @ 别人（原误判场景）——背景听觉，且内联引用。"""
+    ev = parse_event(_reply_msg(2086235890, at=224029720), SELF, OWNER, reply_lookup=lambda mid: _origin(2878099949, "净化派残废猫猫", "别人说的话"))
     assert ev.type == "ambient"
     assert "对你说" not in compose_envelope_text(ev)
+    assert "[回复 净化派残废猫猫：别人说的话]" in ev.text
 
 
 def test_reply_to_other_no_at_is_ambient():
     """回别人的消息、无 @——背景听觉。"""
-    lookup = {100: 999}
-    ev = parse_event(_reply_msg(100), SELF, OWNER, sender_lookup=lookup.get)
+    ev = parse_event(_reply_msg(100), SELF, OWNER, reply_lookup=lambda mid: _origin(999))
     assert ev.type == "ambient"
 
 
-def test_reply_unknown_target_conservative_direct():
-    """被回复消息超出反查窗（查不到）——保守直达（原语义兜底）。"""
-    ev = parse_event(_reply_msg(987654321), SELF, OWNER,
-                     sender_lookup=lambda mid: None)
-    assert ev.type == "direct"
+def test_reply_unknown_target_is_ambient():
+    """被回复消息超出反查窗（查不到）——降级背景听觉。
+
+    自己发的消息全在档，窗口内查不到几乎必非回自己；
+    漏接的兜底：消息照进 chat_log + 未读概览。
+    """
+    ev = parse_event(_reply_msg(987654321), SELF, OWNER, reply_lookup=lambda mid: None)
+    assert ev.type == "ambient"
+    assert "[回复987654321]" in ev.text  # 查不到留裸 id（可 get_message_detail 反查）
 
 
 def test_reply_no_lookup_conservative_direct():
-    """无反查通道（如测试/降级）——保守直达，兼容旧语义。"""
+    """无反查通道（降级场景）——保守直达，兼容旧语义。"""
     ev = parse_event(_reply_msg(100), SELF, OWNER)
     assert ev.type == "direct"
+
+
+def test_reply_quote_snippet_truncated():
+    """引用内容截断到 30 字，换行折成空格。"""
+    long_text = "很长" * 40 + "\n带换行"
+    ev = parse_event(_reply_msg(100), SELF, OWNER, reply_lookup=lambda mid: _origin(999, "甲", long_text))
+    quote = ev.text[ev.text.index("[回复"):]
+    assert len(quote) < 60 and "\n" not in quote

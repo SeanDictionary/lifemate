@@ -162,21 +162,22 @@ CREATE TABLE IF NOT EXISTS chat_state (
                     unread[cid] = unread.get(cid, 0) + 1
         return [{"chat_id": cid, "last_ts": last_ts[cid], "unread": unread.get(cid, 0)} for cid in sorted(last_ts, key=lambda c: -last_ts[c])]
 
-    def sender_of(self, message_id: int) -> int | None:
-        """按 message_id 反查发送者（回复链判定用）。
+    def message_of(self, message_id: int) -> dict | None:
+        """按 message_id 反查消息（回复链解引用）。
 
-        新→旧回溯有限天数；查不到返回 None（调用方自行决定保守策略）。
+        返回 {sender_id, sender_name, text}；新→旧回溯有限天数；
+        查不到返回 None（调用方自行决定策略）。
         """
         for path in self._day_files()[:_REPLY_LOOKUP_MAX_DAYS]:
             con = self._open_read(path)
             try:
                 row = con.execute(
-                    "SELECT sender_id FROM chat_log WHERE message_id = ?"
-                    " LIMIT 1", (message_id,)).fetchone()
+                    "SELECT sender_id, sender_name, text FROM chat_log"
+                    " WHERE message_id = ? LIMIT 1", (message_id,)).fetchone()
             finally:
                 con.close()
             if row is not None:
-                return row["sender_id"]
+                return dict(row)
         return None
 
     def mark_read(self, chat_id: str) -> None:
