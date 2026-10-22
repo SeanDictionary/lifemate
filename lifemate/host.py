@@ -25,6 +25,7 @@ from .kernel.llm import OpenAILLM
 from .kernel.mind import SelfKernel
 from .kernel.persona import Persona
 from .kernel.session import Session
+from .kernel.tools import make_deep_sleep_tool, make_read_skill_tool
 from .memory.store import Store
 from .memory.tools import build_memory_tools
 from .utils.config import Config
@@ -102,11 +103,12 @@ def build(cfg: Config) -> tuple[SelfKernel, Store, Recorder]:
     kernel.subscribe(recorder.on_kernel_event)
 
     # 内核自带：记忆工具 + read_skill + deep_sleep（wait 由内核内置；
-    # 插件能力由 plugins/ 自动发现装载，见 run()）
+    # 插件能力由 plugins/ 自动发现装载，见 run()）——工具定义在各自
+    # 模块的 tools.py，此处只装配
     for t in build_memory_tools(store, cfg):
         kernel.register_tool(t)
-    kernel.register_tool(_read_skill_tool(persona))
-    kernel.register_tool(_deep_sleep_tool(kernel, store))
+    kernel.register_tool(make_read_skill_tool(persona))
+    kernel.register_tool(make_deep_sleep_tool(kernel, store))
 
     # 唤醒附加事实（身体感受：待办提醒概览——内核不解其义，只附上）
     def _extras() -> str:
@@ -121,50 +123,6 @@ def build(cfg: Config) -> tuple[SelfKernel, Store, Recorder]:
     return kernel, store, recorder
 
 
-def _read_skill_tool(persona: Persona) -> Tool:
-    async def _read(args: dict) -> str:
-        return persona.read_skill(str(args.get("name") or ""))
-    return Tool(schema={
-        "name": "read_skill",
-        "description": "读取一份技能的完整说明（先用系统提示里的索引选择）。",
-        "inputSchema": {"type": "object", "properties": {
-            "name": {"type": "string", "description": "技能名"},
-        }, "required": ["name"]},
-    }, func=_read)
-
-
-def _deep_sleep_tool(kernel: SelfKernel, store: Store) -> Tool:
-    """整觉：写信（重建包）→ 转身（换会话播种）→ 长眠。睡眠制度。"""
-
-    async def _fn(args: dict) -> str:
-        import json as _json
-        letter = str(args.get("letter") or "").strip()
-        if not letter:
-            return _json.dumps(
-                {"ok": False,
-                 "error": "letter 不能为空（deep_sleep 保存重建包后轮换会话）"},
-                ensure_ascii=False)
-        hours = max(0.1, min(float(args.get("hours") or 8), 72.0))
-        store.save_packet(letter)
-        pend = store.pending_reminders(5)
-        todo = "；".join(r["intent"][:40] for r in pend) or "无"
-        seed = ("（深睡结束，会话已轮换。上一会话留下的信：\n" + letter
-                + f"\n\n待办提醒：{todo}）")
-        kernel.swap_session(seed)
-        return await kernel.rest(hours * 3600)
-
-    return Tool(schema={
-        "name": "deep_sleep",
-        "description": "整觉：给下一个自己写信（必填）→ 轮换新会话 → 睡指定小时。"
-                       "一天的结束用它；轻度小睡用 wait 即可。",
-        "inputSchema": {"type": "object", "properties": {
-            "letter": {"type": "string",
-                       "description": "写给下一个自己的信（我是谁/最近经历/未办/心情）"},
-            "hours": {"type": "number", "description": "睡多久（小时，默认 8）"},
-        }, "required": ["letter"]}},
-        func=_fn, interruptible=False)
-
-
 def _console_printer() -> None:
     """控制台呈现（开发调试用；正式观测走 observe 档案 + replay）。"""
     from .kernel.contracts import (ASSISTANT_MSG, REST, SESSION_ROTATED,
@@ -175,21 +133,22 @@ def _console_printer() -> None:
 
     def _print(ev) -> None:
         g = glyph.get(ev.type, "⚪")
+        t = time.strftime("%H:%M:%S")
         if ev.type == ASSISTANT_MSG:
             text = (ev.data.get("content") or "").strip()
             calls = ev.data.get("tool_calls") or []
             if text:
-                print(f"{g} {text}")
+                print(f"{t} {g} {text}")
             for c in calls:
-                print(f"   {g}→ {c['name']}")
+                print(f"         {g}→ {c['name']}")
         elif ev.type == TOOL_CALL:
-            print(f"{g} {ev.data['name']}({ev.data['arguments'][:120]})")
+            print(f"{t} {g} {ev.data['name']}({ev.data['arguments'][:120]})")
         elif ev.type == WAKE:
-            print(f"{g} [唤醒] {ev.data.get('trigger', '')}")
+            print(f"{t} {g} [唤醒] {ev.data.get('trigger', '')}")
         elif ev.type == REST:
-            print(f"{g} [休息] {ev.data.get('reason', '')}")
+            print(f"{t} {g} [休息] {ev.data.get('reason', '')}")
         elif ev.type == SESSION_ROTATED:
-            print(f"{g} 会话轮换 {ev.data.get('old')} → {ev.data.get('new')}")
+            print(f"{t} {g} 会话轮换 {ev.data.get('old')} → {ev.data.get('new')}")
 
     return _print
 

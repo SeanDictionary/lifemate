@@ -21,6 +21,7 @@ from .http import (Route, json_resp, no_build_page, read_request,
                    static_resp)
 from .outbound import ChatBus
 from .routes import build_core_routes
+from .tools import make_webui_tool
 
 if TYPE_CHECKING:
     from ..kernel.contracts import MindEvent
@@ -70,7 +71,7 @@ class Server:
             return None
         port = self._server.sockets[0].getsockname()[1]
         self._unsub = self.kernel.subscribe(self._on_event)
-        self.kernel.register_tool(self.chatbus.make_tool())
+        self.kernel.register_tool(make_webui_tool(self.chatbus))
         self._routes = build_core_routes(self) + self._plugin_routes()
         self._running = True
         log.info("server 启动：http://%s:%d（核心 %d + 插件面板 %d 路由）",

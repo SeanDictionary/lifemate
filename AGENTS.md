@@ -46,6 +46,7 @@ lifemate/
 │   ├── session.py     #   工作记忆：消息列表 + JSONL 持久化 + 轮换
 │   ├── compaction.py  #   上下文压缩（会话内兜底，阈值活配置）
 │   ├── persona.py     #   人格装配：identity + 内置指引 + skills 索引，每轮重建
+│   ├── tools.py       #   内核工具：wait（思维生理）/read_skill/deep_sleep
 │   └── builtin/       #   内置机制说明（代码管理，常驻装配，客观陈述）
 ├── memory/            # 记忆系统（内核②：长期记忆）
 │   ├── store.py       #   SQLite：episodes/curiosity/needs/reminders/重建包
@@ -63,7 +64,8 @@ lifemate/
 │   ├── history.py     #   observe 档案读取 + LLM 用量聚合
 │   ├── routes.py      #   核心路由表（/api/status/events/history/say/chat/
 │   │                  #   config读写/memory/usage/plugins）
-│   └── outbound.py    #   webui_send 工具 + 对话环形缓冲
+│   ├── outbound.py    #   对话总线：环形缓冲 + SSE 广播
+│   └── tools.py       #   webui_send 工具（网页对话出口）
 ├── console.py         # 开发控制台：stdin→/命令+调试信封（宿主对话面，非器官）
 ├── host.py            # 运行时服务：思维循环驱动+基建任务+插件装载（Host 类）
 └── __main__.py        # 入口=组合根：共享准备（锁/日志/装配/stop）+服务编排
@@ -76,6 +78,7 @@ data/                  # 运行数据（gitignore）：config.json / memory.db /
 │   ├── example/       #   样板插件（默认关）
 │   └── qq/            #   QQ 插件：正向 WS 连 NapCat + 事件→信封 + 工具集
 │                      #   + panel.py 面板路由（挂 /api/plugins/qq/*，随插件可拆卸）
+│                      #   工具在 tools.py（20 个，表达面）；感知面在 __init__.py
 │                      #   新增插件=加目录+config plugins 命名空间，零主代码改动
 ├── soul/              # 人格（identity.md——数据非代码）
 ├── skills/            # skill 目录：**内置以外**的第三方/扩展功能知情层
@@ -98,6 +101,9 @@ data/                  # 运行数据（gitignore：memory.db / sessions/）
 依赖方向（唯一允许）：`__main__（组合根）→ host/server → plugins(经装载器) →
 kernel.contracts ← kernel`；
 `kernel/memory/organs/host → utils`（utils 不依赖任何上层）；器官之间零 import。
+工具约定：模块的工具一律住该模块的 `tools.py`，无例外（kernel/memory/
+server/plugins 均如此）——找工具只看 tools.py；工厂依赖作参数传入，
+tools.py 只 import contracts 层，不引入新依赖方向。
 配置体系：业务配置一律进 `utils/config.py` 白名单（即 config.json 键，
 env 仅部署种子）；热重载靠字段原地更新——新组件必须持活引用、用时读取，
 禁止启动时冻结拷贝。
@@ -237,6 +243,12 @@ env 仅部署种子）；热重载靠字段原地更新——新组件必须持�
   入口收尾进 finally（档案/库先落地不被网络服务阻塞）；分步停机日志
   （host：思维/基建/插件；入口①-⑥）任何退出路径留痕；停机中再收信号
   = 强制退出逃生口（os._exit + 进度日志）；回归测试覆盖开连接停机场景
+- **工具归位 tools.py（2026-10-22）**：全模块统一约定——工具一律住
+  <module>/tools.py。kernel/tools.py（wait/read_skill/deep_sleep 工厂，
+  从 mind/host 提出）、server/tools.py（webui_send，从 outbound 提出，
+  ChatBus 补 running/connection_count 公开访问器）、plugins/qq/tools.py
+  （20 个工具 + _ok/_err 回执助手，从 __init__ 提出，感知面/表达面分文件）；
+  纯搬迁零行为变化
 - **待开发**：attention（门控升格）→ sandbox → webui → video
 
 ## 验证方式

@@ -293,7 +293,7 @@ async def test_swap_session_seeds_new_session(tmp_path):
 
 
 async def test_deep_sleep_tool_full_cycle(tmp_path):
-    from lifemate.host import _deep_sleep_tool
+    from lifemate.kernel.tools import make_deep_sleep_tool
     from lifemate.memory.store import Store
     llm = FakeLLM([
         tool_reply("deep_sleep",
@@ -302,7 +302,7 @@ async def test_deep_sleep_tool_full_cycle(tmp_path):
     ])
     store = Store(tmp_path / "m.db")
     k = make_kernel(tmp_path, llm)
-    k.register_tool(_deep_sleep_tool(k, store))
+    k.register_tool(make_deep_sleep_tool(k, store))
     old_id = k.session_id
     k.notify(Envelope(text="一天结束了"))
     await k.wait_idle()  # deep_sleep 内部 rest(3.6s)…wait_idle 只到显式休息

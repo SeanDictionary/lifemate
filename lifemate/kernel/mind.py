@@ -30,6 +30,7 @@ from .llm import LLMClient, LLMResponse
 from .persona import Persona
 from ..utils import clock
 from .session import Session
+from .tools import make_wait_tool
 
 log = logging.getLogger("kernel.mind")
 
@@ -90,7 +91,7 @@ class SelfKernel:
         self._last_activity = time.time()             # 墙钟：唤醒差值
         self._last_activity_mono = time.monotonic()   # 单调钟：卡死检测
 
-        self._wait_tool = self._make_wait_tool()
+        self._wait_tool = make_wait_tool(self)
         self.register_tool(self._wait_tool)            # 等待是思维的一部分
         self._repair_dangling()
 
@@ -427,34 +428,6 @@ class SelfKernel:
         finally:
             self._current_tool = None
             self._current_tool_interruptible = False
-
-    # ── wait 工具（内置：等待是思维的一部分） ───────────
-    def _make_wait_tool(self) -> Tool:
-        async def _fn(args: dict) -> str:
-            timeout = args.get("timeout_s")
-            reason = str(args.get("reason") or "")
-            t: float | None = None
-            if timeout is not None:
-                t = max(float(timeout), 1.0)  # 最短 1 秒
-            self._emit(REST, rid=self._rid,
-                       reason=f"explicit{':' + reason if reason else ''}",
-                       timeout_s=t)
-            wake = await self._do_wait(t, "explicit", intent=reason)
-            # 唤醒作为工具结果返回：同回合无缝延续（自己定闹钟自己醒）
-            self._new_rid()
-            self._emit(WAKE, rid=self._rid, trigger="explicit_wait")
-            return wake
-        return Tool(schema={
-            "name": "wait",
-            "description": "等待：挂起思考直到有新输入/到期提醒/超时。"
-                           "给自己定闹钟用 timeout_s（秒）并可在 reason 里写上"
-                           "要做什么；不传 timeout_s 则一直等到有事件。等待零成本。",
-            "inputSchema": {"type": "object", "properties": {
-                "timeout_s": {"type": "number",
-                              "description": "多少秒后醒来（闹钟）"},
-                "reason": {"type": "string", "description": "在等什么/到点做什么"},
-            }},
-        }, func=_fn, interruptible=False)
 
     # ── 会话原语 ────────────────────────────────────────
     def swap_session(self, seed: str) -> None:
