@@ -385,3 +385,77 @@ def test_reply_quote_snippet_truncated():
     ev = parse_event(_reply_msg(100), SELF, OWNER, reply_lookup=lambda mid: _origin(999, "甲", long_text))
     quote = ev.text[ev.text.index("[回复"):]
     assert len(quote) < 60 and "\n" not in quote
+
+
+# ── 跨会话切换：信封附来源会话上下文 ─────────────────────
+
+async def test_envelope_context_on_chat_switch(tmp_path):
+    """跨会话切换时信封附该会话最近几条；同会话连续直达不重复附加。"""
+    from lifemate.plugins.qq import QQConfig, QQPlugin
+    from lifemate.plugins.qq.chatlog import ChatLog
+    from lifemate.utils.config import Config
+
+    cfg = Config(data_dir=tmp_path / "cfg")
+    cfg.plugins = {"qq": {"enabled": True, "bot_uin": SELF, "owner_uin": OWNER}}
+    plugin = QQPlugin(QQConfig(cfg), cfg, tmp_path / "pd")
+    plugin._chatlog = ChatLog(tmp_path / "pd" / "cl")
+
+    class _K:
+        def __init__(self):
+            self.envs = []
+
+        def notify(self, env):
+            self.envs.append(env)
+
+    k = _K()
+    plugin._kernel = k
+    try:
+        # 群A：背景消息 ×2 + 直达（首条直达，附 A 的上下文）
+        await plugin._on_event(_group_msg(gid=111, sender=1, name="甲", text="A群旧话1"))
+        await plugin._on_event(_group_msg(gid=111, sender=1, name="甲", text="A群旧话2"))
+        await plugin._on_event(_group_msg(gid=111, at_me=True, text="A群叫我"))
+        e1 = k.envs[-1]
+        assert "A群叫我" in e1.text and "该会话最近" in e1.text
+        assert "A群旧话1" in e1.text and "A群旧话2" in e1.text
+        # 群B：背景 ×2 + 直达（跨会话切换 → 附 B 的上下文，不带 A 的）
+        await plugin._on_event(_group_msg(gid=222, sender=2, name="乙", text="B群背景1"))
+        await plugin._on_event(_group_msg(gid=222, sender=2, name="乙", text="B群背景2"))
+        await plugin._on_event(_group_msg(gid=222, at_me=True, text="B群叫我"))
+        e2 = k.envs[-1]
+        assert "B群叫我" in e2.text and "该会话最近" in e2.text
+        assert "B群背景1" in e2.text and "A群" not in e2.text
+        # 同群连续直达：不重复附加
+        await plugin._on_event(_group_msg(gid=222, at_me=True, text="B群再叫我"))
+        e3 = k.envs[-1]
+        assert "B群再叫我" in e3.text and "该会话最近" not in e3.text
+    finally:
+        plugin._chatlog.close()
+
+
+async def test_envelope_context_disabled(tmp_path):
+    """envelope_context_n=0 关闭附加。"""
+    from lifemate.plugins.qq import QQConfig, QQPlugin
+    from lifemate.plugins.qq.chatlog import ChatLog
+    from lifemate.utils.config import Config
+
+    cfg = Config(data_dir=tmp_path / "cfg")
+    cfg.plugins = {"qq": {"enabled": True, "bot_uin": SELF,
+                          "owner_uin": OWNER, "envelope_context_n": 0}}
+    plugin = QQPlugin(QQConfig(cfg), cfg, tmp_path / "pd")
+    plugin._chatlog = ChatLog(tmp_path / "pd" / "cl")
+
+    class _K:
+        def __init__(self):
+            self.envs = []
+
+        def notify(self, env):
+            self.envs.append(env)
+
+    k = _K()
+    plugin._kernel = k
+    try:
+        await plugin._on_event(_group_msg(gid=111, sender=1, name="甲", text="旧话"))
+        await plugin._on_event(_group_msg(gid=111, at_me=True, text="叫我"))
+        assert "该会话最近" not in k.envs[-1].text
+    finally:
+        plugin._chatlog.close()
