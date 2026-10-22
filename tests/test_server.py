@@ -351,3 +351,27 @@ async def test_close_with_open_sse(tmp_path):
         stop.set()
         await srv.close()
         store.close()
+
+
+async def test_history_tail_and_default_date(env):
+    """尾部模式 + date 缺省回落最新有档案日（概览轮询链路）。"""
+    port, _, _, cfg, tmp = env
+    observe = Path(cfg.data_dir) / "observe"
+    observe.mkdir(parents=True, exist_ok=True)
+    (observe / "2026-01-01.jsonl").write_text(
+        "\n".join(json.dumps({"type": "msg", "role": "user",
+                              "ts": 1000 + i, "content": f"早{i}"})
+                  for i in range(5)) + "\n", encoding="utf-8")
+    (observe / "2026-01-02.jsonl").write_text(
+        "\n".join(json.dumps({"type": "msg", "role": "user",
+                              "ts": 2000 + i, "content": f"晚{i}"})
+                  for i in range(3)) + "\n", encoding="utf-8")
+
+    # 无 date → 最新有档案日（01-02）；tail=2 → 最后两条
+    _, data = await _jget(port, "/api/history?tail=2")
+    assert data["ok"] and data["count"] == 2
+    assert data["rows"][0]["content"] == "晚1" and data["rows"][1]["content"] == "晚2"
+
+    # tail 与普通分页互不影响
+    _, data = await _jget(port, "/api/history?date=2026-01-01")
+    assert data["count"] == 5

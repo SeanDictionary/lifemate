@@ -1,11 +1,11 @@
 "use client";
-/** 概览：生命标识 + 状态卡 + 最近动态 */
+/** 概览：生命标识 + 状态卡 + 最近动态（observe 档案尾部轮询，近实时） */
+import { useMemo } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { apiGet } from "@/lib/api";
-import type { StatusResp } from "@/lib/types";
+import type { HistoryResp, StatusResp } from "@/lib/types";
 import { fmtUptime } from "@/lib/format";
-import { renderEvent } from "@/lib/render";
-import { useSse } from "@/hooks/use-sse";
+import { EventCard, recordToCards } from "@/components/history/event-card";
 import { Orb } from "@/components/layout/orb";
 import { Card, CardContent } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
@@ -30,8 +30,16 @@ export default function OverviewPage() {
     queryFn: () => apiGet<StatusResp>("/api/status"),
     refetchInterval: 10_000,
   });
-  const { events } = useSse();
-  const recent = events.slice(-14).reverse();
+  // 最近动态：档案尾部（date 缺省=最新有档案日），8s 轮询近实时
+  const { data: feed } = useQuery({
+    queryKey: ["recent-feed"],
+    queryFn: () => apiGet<HistoryResp>("/api/history?tail=30"),
+    refetchInterval: 8_000,
+  });
+  const cards = useMemo(
+    () => (feed?.rows ?? []).flatMap((r) => recordToCards(r)).reverse(),
+    [feed],
+  );
 
   return (
     <div className="space-y-6">
@@ -66,28 +74,25 @@ export default function OverviewPage() {
         <Stat label="会话" value={st ? st.session_id : "—"} />
       </div>
 
-      {/* 最近动态 */}
+      {/* 最近动态（档案尾部 + 8s 轮询，最新在上） */}
       <Card>
         <CardContent className="p-0">
-          <div className="px-4 pt-4 pb-2 text-sm font-medium">最近动态（实时）</div>
-          <ScrollArea className="h-72">
-            <div className="space-y-1 px-4 pb-4 font-mono text-xs">
-              {recent.length === 0 && (
-                <div className="py-8 text-center text-muted-foreground">
-                  等待事件…（它可能正在休息）
+          <div className="flex items-center gap-2 px-4 pt-4 pb-2 text-sm font-medium">
+            最近动态
+            <span className="text-[11px] font-normal text-muted-foreground">
+              {feed ? `档案尾部 ${feed.count} 条 · 8s 轮询` : "加载中…"}
+            </span>
+          </div>
+          <ScrollArea className="h-96">
+            <div className="space-y-2 px-4 pb-4">
+              {cards.length === 0 && (
+                <div className="py-12 text-center text-sm text-muted-foreground">
+                  暂无记录（它可能还没醒过）
                 </div>
               )}
-              {recent.map((ev, i) =>
-                renderEvent(ev).map((row, j) => (
-                  <div key={`${i}-${j}`} className="flex gap-2 leading-relaxed">
-                    <span className="shrink-0">{row.icon}</span>
-                    <span className="min-w-0 break-all">{row.main}</span>
-                    {row.dim && (
-                      <span className="shrink-0 text-muted-foreground">{row.dim}</span>
-                    )}
-                  </div>
-                )),
-              )}
+              {cards.map((m, i) => (
+                <EventCard key={i} model={m} />
+              ))}
             </div>
           </ScrollArea>
         </CardContent>

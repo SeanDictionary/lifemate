@@ -38,13 +38,18 @@ def build_core_routes(srv) -> list[Route]:
         return {"ok": True, "dates": available_dates(observe_dir)}
 
     async def history(req, p):
+        # date 缺省 = 最新有档案的一天（概览尾部轮询用，跨日零点也拿得到最近记录）
         date = req.query.get("date", "")
         if not date:
-            return {"ok": False, "error": "需要 date=YYYY-MM-DD"}
+            avail = available_dates(observe_dir)
+            if not avail:
+                return {"ok": False, "error": "无档案", "available": []}
+            date = avail[-1]
         result = read_day(observe_dir, date,
                           rid=req.query.get("rid", ""),
                           limit=_int_q(req.query.get("limit"), 500, 1, 2000),
-                          offset=_int_q(req.query.get("offset"), 0, 0, 10**9))
+                          offset=_int_q(req.query.get("offset"), 0, 0, 10**9),
+                          tail=_int_q(req.query.get("tail"), 0, 0, 2000))
         if result is None:
             return {"ok": False, "error": f"无档案 {date}",
                     "available": available_dates(observe_dir)}
