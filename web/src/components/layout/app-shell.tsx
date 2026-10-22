@@ -1,27 +1,61 @@
 "use client";
-/** 侧栏 + 主体布局；插件区动态显隐（/api/plugins 声明） */
+/** 侧栏 + 主体布局；插件区动态显隐（/api/plugins 声明）。
+ * 菜单图标：Font Awesome 本地打包（tree-shaking，只含用到的图标，零 CDN）。
+ */
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { useQuery } from "@tanstack/react-query";
+import { FontAwesomeIcon } from "@fortawesome/react-fontawesome";
+import {
+  faGaugeHigh,
+  faWaveSquare,
+  faClockRotateLeft,
+  faComments,
+  faBrain,
+  faChartColumn,
+  faGear,
+  faCircleDot,
+  faPuzzlePiece,
+  type IconDefinition,
+} from "@fortawesome/free-solid-svg-icons";
 import { apiGet } from "@/lib/api";
 import type { PluginsResp, StatusResp } from "@/lib/types";
 import { fmtUptime } from "@/lib/format";
-import { ConnDot, ThemeToggle } from "./theme-toggle";
+import { ConnDot, FloatingThemeToggle } from "./theme-toggle";
 import { Orb } from "./orb";
 import { Separator } from "@/components/ui/separator";
 import { cn } from "@/lib/utils";
 
-const NAV = [
-  { href: "/", label: "概览", icon: "🏠" },
-  { href: "/events", label: "事件流", icon: "🌅" },
-  { href: "/history", label: "历史回放", icon: "📂" },
-  { href: "/chat", label: "对话", icon: "💬" },
-  { href: "/memory", label: "记忆", icon: "🧠" },
-  { href: "/usage", label: "用量", icon: "📊" },
-  { href: "/settings", label: "设置", icon: "⚙️" },
+/** 图标注册表（Font Awesome 名 → 组件；插件面板 icon 字段同用此表） */
+export const FA_ICONS: Record<string, IconDefinition> = {
+  gauge: faGaugeHigh,
+  wave: faWaveSquare,
+  history: faClockRotateLeft,
+  comments: faComments,
+  brain: faBrain,
+  chart: faChartColumn,
+  gear: faGear,
+  circle: faCircleDot,
+  puzzle: faPuzzlePiece,
+};
+
+interface NavItem {
+  href: string;
+  label: string;
+  icon: IconDefinition;
+}
+
+const NAV: NavItem[] = [
+  { href: "/", label: "概览", icon: faGaugeHigh },
+  { href: "/events", label: "事件流", icon: faWaveSquare },
+  { href: "/history", label: "历史回放", icon: faClockRotateLeft },
+  { href: "/chat", label: "对话", icon: faComments },
+  { href: "/memory", label: "记忆", icon: faBrain },
+  { href: "/usage", label: "用量", icon: faChartColumn },
+  { href: "/settings", label: "设置", icon: faGear },
 ];
 
-function NavLink({ href, label, icon }: { href: string; label: string; icon: string }) {
+function NavLink({ href, label, icon }: NavItem) {
   const pathname = usePathname();
   const active = pathname === href;
   return (
@@ -34,9 +68,31 @@ function NavLink({ href, label, icon }: { href: string; label: string; icon: str
           : "text-sidebar-foreground/70 hover:bg-sidebar-accent/50 hover:text-sidebar-foreground",
       )}
     >
-      <span className="text-base leading-none">{icon}</span>
+      <span className="grid w-4 shrink-0 place-items-center text-muted-foreground">
+        <FontAwesomeIcon icon={icon} />
+      </span>
       {label}
     </Link>
+  );
+}
+
+function Brand() {
+  const { data: st } = useQuery({
+    queryKey: ["status"],
+    queryFn: () => apiGet<StatusResp>("/api/status"),
+    refetchInterval: 10_000,
+    select: (d) => d.version,
+  });
+  return (
+    <div className="flex items-center gap-3 px-4 py-4">
+      <Orb size={38} />
+      <div className="min-w-0">
+        <div className="text-sm font-semibold leading-tight">lifemate</div>
+        <div className="text-[11px] text-muted-foreground">
+          控制面板{st ? ` v${st}` : ""}
+        </div>
+      </div>
+    </div>
   );
 }
 
@@ -45,12 +101,12 @@ function Vitals() {
     queryKey: ["status"],
     queryFn: () => apiGet<StatusResp>("/api/status"),
     refetchInterval: 10_000,
+    select: (d) => d.uptime_s,
   });
   return (
     <div className="flex items-center gap-2 px-3 pb-3 text-xs text-muted-foreground">
       <ConnDot />
-      <span>{st ? `存活 ${fmtUptime(st.uptime_s)}` : "连接中…"}</span>
-      {st && <span className="ml-auto font-mono">v{st.version}</span>}
+      <span>{st !== undefined ? `存活 ${fmtUptime(st)}` : "连接中…"}</span>
     </div>
   );
 }
@@ -73,7 +129,7 @@ function PluginNav() {
           key={p.name}
           href={`/plugin?name=${p.name}`}
           label={p.panel!.title}
-          icon={p.panel!.icon}
+          icon={FA_ICONS[p.panel!.icon] ?? faPuzzlePiece}
         />
       ))}
     </>
@@ -82,33 +138,27 @@ function PluginNav() {
 
 export function AppShell({ children }: { children: React.ReactNode }) {
   return (
-    <div className="flex min-h-screen">
-      <aside className="sticky top-0 flex h-screen w-52 shrink-0 flex-col border-r bg-sidebar">
-        <div className="flex items-center gap-3 px-4 py-4">
-          <Orb size={38} />
-          <div>
-            <div className="text-sm font-semibold leading-tight">lifemate</div>
-            <div className="text-[11px] text-muted-foreground">数字生命观测台</div>
+    <div className="min-h-screen">
+      <FloatingThemeToggle />
+      <div className="flex min-h-screen">
+        <aside className="sticky top-0 flex h-screen w-52 shrink-0 flex-col border-r bg-sidebar">
+          <Brand />
+          <Separator />
+          <nav className="flex-1 space-y-0.5 overflow-y-auto py-2">
+            {NAV.map((n) => (
+              <NavLink key={n.href} {...n} />
+            ))}
+            <PluginNav />
+          </nav>
+          <Separator />
+          <div className="pt-3">
+            <Vitals />
           </div>
-        </div>
-        <Separator />
-        <nav className="flex-1 space-y-0.5 overflow-y-auto py-2">
-          {NAV.map((n) => (
-            <NavLink key={n.href} {...n} />
-          ))}
-          <PluginNav />
-        </nav>
-        <Separator />
-        <div className="flex items-center justify-between pr-2 pl-3 pt-2">
-          <Vitals />
-        </div>
-        <div className="flex justify-end pb-2 pr-2">
-          <ThemeToggle />
-        </div>
-      </aside>
-      <main className="min-w-0 flex-1">
-        <div className="mx-auto max-w-5xl px-6 py-6">{children}</div>
-      </main>
+        </aside>
+        <main className="min-w-0 flex-1">
+          <div className="mx-auto max-w-5xl px-6 py-6">{children}</div>
+        </main>
+      </div>
     </div>
   );
 }

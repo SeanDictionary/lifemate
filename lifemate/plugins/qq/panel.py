@@ -9,7 +9,7 @@ from __future__ import annotations
 
 from typing import Any
 
-PANEL = {"title": "QQ", "icon": "💬"}
+PANEL = {"title": "QQ", "icon": "comments"}
 
 
 def routes(ctx, plugin) -> list[dict[str, Any]]:
