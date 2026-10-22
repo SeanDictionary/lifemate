@@ -18,3 +18,8 @@ __pycache__/
 # 系统
 Thumbs.db
 .DS_Store
+
+# 前端（web/：源码入库；依赖与构建产物不入库）
+web/node_modules/
+web/.next/
+web/out/
