@@ -110,11 +110,18 @@ def build(cfg: Config) -> tuple[SelfKernel, Store, Recorder]:
 
 
 def _console_printer() -> None:
-    """控制台呈现（开发调试用；正式观测走 observe 档案 + replay）。"""
-    from .kernel.contracts import ASSISTANT_MSG, REST, SESSION_ROTATED, TOOL_CALL, TOOL_RESULT, USER_MSG, WAKE
+    """控制台呈现（开发调试用；正式观测走 observe 档案 + replay）。
+
+    覆盖全部内核事件：输入/输出/工具往返/生命周期/异常——终端对话流
+    与 web/replay 呈现同源（图标一致），只是压缩为单行摘要。
+    """
+    from .kernel.contracts import ASSISTANT_MSG, COMPACTED, ERROR, QUEUE_DROP, REST, SESSION_ROTATED, TOOL_CALL, TOOL_RESULT, USER_MSG, WAKE
 
     # 图标语言：与 replay.py / web(src/lib) 同一套通用 emoji
-    glyph = {WAKE: "☀️", USER_MSG: "📨", ASSISTANT_MSG: "💬", TOOL_CALL: "🔧", TOOL_RESULT: "📥", REST: "🌙", SESSION_ROTATED: "🔄"}
+    glyph = {WAKE: "☀️", USER_MSG: "📨", ASSISTANT_MSG: "💬", TOOL_CALL: "🔧", TOOL_RESULT: "📥", REST: "🌙", SESSION_ROTATED: "🔄", QUEUE_DROP: "⚠️", COMPACTED: "🗜️", ERROR: "✗"}
+
+    def _oneline(text: str, cap: int = 160) -> str:
+        return (" ".join((text or "").split()))[:cap] + ("…" if len(text or "") > cap else "")
 
     def _print(ev) -> None:
         g = glyph.get(ev.type, "⚪")
@@ -139,12 +146,27 @@ def _console_printer() -> None:
                 print(indent + f"…（还有 {len(lines) - 6} 行）")
         elif ev.type == TOOL_CALL:
             print(f"{t} {g} {ev.data['name']}({ev.data['arguments'][:120]})")
+        elif ev.type == TOOL_RESULT:
+            ok = ev.data.get("ok")
+            mark = "✓" if ok else "✗"
+            ms = ev.data.get("latency_ms") or 0
+            result = _oneline(ev.data.get("result") or "")
+            print(f"{t} {g} {mark} {ev.data.get('name', '')} {ms}ms {result}")
         elif ev.type == WAKE:
             print(f"{t} {g} [唤醒] {ev.data.get('trigger', '')}")
         elif ev.type == REST:
             print(f"{t} {g} [休息] {ev.data.get('reason', '')}")
         elif ev.type == SESSION_ROTATED:
             print(f"{t} {g} 会话轮换 {ev.data.get('old')} → {ev.data.get('new')}")
+        elif ev.type == QUEUE_DROP:
+            n = len(ev.data.get("texts") or [])
+            print(f"{t} {g} 插话丢弃 {n} 封（{ev.data.get('reason', '')}）")
+        elif ev.type == COMPACTED:
+            print(f"{t} {g} [压缩] 丢 {ev.data.get('dropped', 0)} 保 {ev.data.get('kept', 0)} 条")
+        elif ev.type == ERROR:
+            extra = {k: v for k, v in ev.data.items() if k != "error"}
+            tail = " " + _oneline(str(extra)) if extra else ""
+            print(f"{t} {g} {ev.data.get('error', '')}{tail}")
 
     return _print
 
