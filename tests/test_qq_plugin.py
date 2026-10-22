@@ -40,10 +40,24 @@ def test_group_plain_is_ambient():
     assert "对你说" not in compose_envelope_text(ev)
 
 
-def test_owner_message_always_direct():
+def test_owner_group_message_is_ambient_but_labeled():
+    """主人的群消息不再无条件直达（跟别人说话不打扰你）；（主人）标注保留。"""
     ev = parse_event(_group_msg(sender=OWNER, name="主人", text="都让让"), SELF, OWNER)
-    assert ev.type == "direct" and ev.is_owner
+    assert ev.type == "ambient" and ev.is_owner
     assert "（主人）" in compose_envelope_text(ev)
+
+
+def test_owner_private_message_is_direct():
+    """主人私聊永远直达。"""
+    ev = parse_event({"post_type": "message", "message_type": "private", "user_id": OWNER, "message": [{"type": "text", "data": {"text": "在吗"}}], "message_id": 1, "sender": {"nickname": "主人"}}, SELF, OWNER)
+    assert ev.type == "direct" and ev.is_owner
+    assert "[私聊·主人]" in compose_envelope_text(ev)
+
+
+def test_owner_at_me_still_direct():
+    """主人@它照样直达（真实呼叫场景由 @/别名/回复/私聊覆盖）。"""
+    ev = parse_event(_group_msg(sender=OWNER, name="主人", at_me=True, text="过来"), SELF, OWNER)
+    assert ev.type == "direct"
 
 
 def test_image_and_media_segments():

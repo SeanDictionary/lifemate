@@ -16,7 +16,7 @@ class QQConfig(PluginConfig):
     ws_url = Field("ws://127.0.0.1:3001", description="NapCat 正向 WS 地址（改后需重启）", restart=True)
     access_token = Field("", description="NapCat 访问令牌（改后需重启）", secret=True, restart=True)
     bot_uin = Field(0, description="机器人 QQ 号（热生效）")
-    owner_uin = Field(0, description="主人 QQ 号（消息优先处理，热生效）")
+    owner_uin = Field(0, description="主人 QQ 号：信封标注（主人）（私聊直达；群里同普通人——@/别名/回复才直达），热生效")
     listen_groups = Field([], description="监听群号白名单（空=全部群，热生效）")
     wake_aliases = Field([], description="唤醒别名：消息文本含任一别名即视为强刺激（叫名字不@也能唤醒；回应与否心智自判）")
     conversation_window_s = Field(600.0, description="对话延续窗口秒：你发言后 N 秒内该会话的下一条消息升格为强刺激（0=关）")

@@ -89,7 +89,9 @@ def _parse_message(event: dict, self_id: int, owner_uin: int, reply_lookup=None,
     text = "".join(texts).strip()
     # 唤醒别名：叫名字不@也算呼叫（误报只是多看一眼，漏报伤社交）
     alias_hit = any(a and a in text for a in (aliases or []))
-    direct = (not is_group) or at_me or reply_to_me or is_owner or alias_hit
+    direct = (not is_group) or at_me or reply_to_me or alias_hit
+    # 注：主人（is_owner）不再无条件直达——@/别名/回复/私聊/对话延续窗口
+    # 已覆盖真实呼叫场景；主人跟别人说话不该唤醒。标志仅用于（主人）标注
     return ParsedEvent(type="direct" if direct else "ambient", chat_id=chat_id, sender_id=sender_id, sender_name=sender_name, text=text, message_id=event.get("message_id", 0), image_urls=image_urls, is_owner=is_owner, raw=event)
 
 
