@@ -33,8 +33,10 @@ def test_json_override_and_reload(tmp_path):
 
 def test_env_seed_wins(tmp_path, monkeypatch):
     monkeypatch.setenv("LIFEMATE_LLM_MODEL", "env-model")
+    monkeypatch.setenv("LIFEMATE_TIMEZONE", "Asia/Shanghai")
     cfg = Config(data_dir=tmp_path)
     assert cfg.llm_model == "env-model"  # env 覆盖默认
+    assert cfg.timezone == "Asia/Shanghai"  # 时区 env 种子（容器部署用）
     _write(cfg, llm_model="json-model")
     cfg.reload()
     assert cfg.llm_model == "env-model"  # env 仍最强

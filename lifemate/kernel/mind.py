@@ -28,6 +28,7 @@ from .contracts import (ASSISTANT_MSG, COMPACTED, DIRECT, Envelope, ERROR,
                         USER_MSG, WAKE)
 from .llm import LLMClient, LLMResponse
 from .persona import Persona
+from ..utils import clock
 from .session import Session
 
 log = logging.getLogger("kernel.mind")
@@ -255,7 +256,7 @@ class SelfKernel:
     def _compose_wake(self) -> str:
         """组装唤醒信封：时间差值 + 期间事件组批 + 附加事实。"""
         events, self._pending = self._pending, []
-        now = time.strftime("%H:%M")
+        now = clock.hm(time.time(), self._cfg.timezone)
         mins = max(0.0, (time.time() - self._last_activity) / 60)
         head = f"（你从等待中醒来。现在 {now}，距你上次活动约 {mins:.0f} 分钟。"
         if events:

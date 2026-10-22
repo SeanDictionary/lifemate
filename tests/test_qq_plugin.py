@@ -162,7 +162,7 @@ async def test_qq_plugin_end_to_end(tmp_path):
                           "bot_uin": SELF, "owner_uin": OWNER,
                           "send_min_interval_s": 0.0}}
 
-    plugin = QQPlugin(QQConfig(cfg), tmp_path / "plugindata" / "qq")
+    plugin = QQPlugin(QQConfig(cfg), cfg, tmp_path / "plugindata" / "qq")
     plugin.tools = _build_tools(plugin)
 
     llm = FakeLLM([
@@ -243,7 +243,7 @@ async def test_ambient_does_not_wake_mind(tmp_path):
     url = await napcat.start()
     cfg = Config(data_dir=tmp_path / "cfg")
     cfg.plugins = {"qq": {"enabled": True, "ws_url": url, "bot_uin": SELF}}
-    plugin = QQPlugin(QQConfig(cfg), tmp_path / "plugindata" / "qq")
+    plugin = QQPlugin(QQConfig(cfg), cfg, tmp_path / "plugindata" / "qq")
     plugin.tools = _build_tools(plugin)
 
     llm = FakeLLM([LLMResponse(content="我在")])

@@ -2,6 +2,7 @@
 import time
 from pathlib import Path
 
+import pytest
 
 from lifemate.plugins.qq.chatlog import ChatLog, format_ts
 
@@ -80,6 +81,30 @@ def test_retention_prunes_old_days(tmp_path):
     log3.append("group_1", 1, "甲", "次日", ts=now + 2 * DAY)
     assert len(list((tmp_path / "chatlog").glob("*.db"))) >= 2  # 没被清
     log3.close()
+
+
+def test_format_ts_timezone():
+    """时区指定：now 与 ts 同时区解释，分档不依赖本机时区。"""
+    pytest.importorskip("tzdata")
+    from datetime import datetime
+    from zoneinfo import ZoneInfo
+
+    def at(*args):
+        return datetime(*args, tzinfo=ZoneInfo("Asia/Shanghai")).timestamp()
+
+    now = at(2026, 10, 21, 15, 0)
+    assert format_ts(at(2026, 10, 21, 3, 0), now,
+                     tz_name="Asia/Shanghai") == "03:00"
+    assert format_ts(at(2026, 10, 20, 14, 32), now,
+                     tz_name="Asia/Shanghai") == "昨天 14:32"
+    assert format_ts(at(2026, 10, 19, 9, 5), now,
+                     tz_name="Asia/Shanghai") == "前天 09:05"
+    assert format_ts(at(2026, 6, 1, 9, 30), now,
+                     tz_name="Asia/Shanghai") == "06-01 09:30"
+    assert format_ts(at(2025, 6, 1, 9, 30), now,
+                     tz_name="Asia/Shanghai") == "2025-06-01 09:30"
+
+
 def test_unread_precision_after_read(tmp_path):
     """读过之后又来的新消息也要数进未读（精确到已读线）。"""
     log = ChatLog(tmp_path)

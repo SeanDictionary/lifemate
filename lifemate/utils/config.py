@@ -25,6 +25,8 @@ _JSON_FIELDS: dict[str, Any] = {
     "llm_api_key": "",
     "llm_model": "",
     # 内核
+    "timezone": "",                     # 主体时区（IANA 名如 Asia/Shanghai；空=本机时区）
+                                         # 昼夜/作息/社交时间感的事实源，换机器不换人生
     "max_turns": 24,                    # 单个唤醒周期内最大模型轮数（超过强制休息）
     "turns_rest_nudge": 16,             # 连续轮数提醒阈值（先提示后强制）
     "tool_timeout_s": 120.0,            # 单工具执行超时（wait 除外）
@@ -71,6 +73,7 @@ _ENV_SEED = {
     "llm_base_url": "LIFEMATE_LLM_BASE_URL",
     "llm_api_key": "LIFEMATE_LLM_API_KEY",
     "llm_model": "LIFEMATE_LLM_MODEL",
+    "timezone": "LIFEMATE_TIMEZONE",   # 容器默认 UTC，部署时必设
 }
 
 _SECRET_KEYS = {"llm_api_key", "server_token"}

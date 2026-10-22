@@ -11,9 +11,10 @@ from __future__ import annotations
 
 import sqlite3
 import time
-from datetime import datetime
 from pathlib import Path
-from typing import Any
+from typing import Any, Callable
+
+from ...utils import clock
 
 _SCHEMA = """
 CREATE TABLE IF NOT EXISTS chat_log (
@@ -29,18 +30,19 @@ CREATE INDEX IF NOT EXISTS idx_chat_ts ON chat_log (chat_id, ts);
 """
 
 
-def _day_of(ts: float) -> str:
-    return time.strftime("%Y-%m-%d", time.localtime(ts))
+def _day_of(ts: float, tz_name: str = "") -> str:
+    return clock.datetime_at(ts, tz_name).strftime("%Y-%m-%d")
 
 
-def format_ts(ts: float, now: float | None = None) -> str:
+def format_ts(ts: float, now: float | None = None, tz_name: str = "") -> str:
     """人类可读时间标注（给心智建立时间感）：
 
     今天→HH:MM；昨天/前天→昨天 HH:MM；今年更早→MM-DD HH:MM；跨年带年份。
+    tz_name：主体时区（IANA 名，空=本机）；now 也按同时区解释。
     """
     now = now if now is not None else time.time()
-    dt = datetime.fromtimestamp(ts)
-    today = datetime.fromtimestamp(now).date()
+    dt = clock.datetime_at(ts, tz_name)
+    today = clock.datetime_at(now, tz_name).date()
     hm = dt.strftime("%H:%M")
     if dt.date() == today:
         return hm
@@ -62,11 +64,15 @@ class ChatLog:
     """
 
     def __init__(self, data_dir: Path | str,
-                 retention_days: int = 0) -> None:
+                 retention_days: int = 0,
+                 tz_name: Callable[[], str] | None = None) -> None:
+        """tz_name：主体时区名的活提供器（config.timezone，热重载生效）；
+        缺省 None = 本机时区。日切/保留期清理/时间标注都按它算。"""
         data_dir = Path(data_dir)
         self._dir = data_dir / "chatlog"
         self._dir.mkdir(parents=True, exist_ok=True)
         self._retention = max(int(retention_days), 0)  # 0=永久
+        self._tz_name = tz_name or (lambda: "")
         self._state = sqlite3.connect(data_dir / "chat_state.db")
         self._state.row_factory = sqlite3.Row
         self._state.executescript("""
@@ -104,9 +110,7 @@ CREATE TABLE IF NOT EXISTS chat_state (
             return
         try:
             cutoff = time.strptime(
-                time.strftime("%Y-%m-%d",
-                              time.localtime(time.time()
-                                              - self._retention * 86400)),
+                _day_of(time.time() - self._retention * 86400, self._tz_name()),
                 "%Y-%m-%d")
         except ValueError:
             return
@@ -135,7 +139,7 @@ CREATE TABLE IF NOT EXISTS chat_state (
     def append(self, chat_id: str, sender_id: int, sender_name: str,
                text: str, message_id: int = 0, ts: float | None = None) -> None:
         ts = ts if ts is not None else time.time()
-        con = self._db_for_day(_day_of(ts))
+        con = self._db_for_day(_day_of(ts, self._tz_name()))
         con.execute(
             "INSERT INTO chat_log (ts, chat_id, sender_id, sender_name, text,"
             " message_id) VALUES (?, ?, ?, ?, ?, ?)",

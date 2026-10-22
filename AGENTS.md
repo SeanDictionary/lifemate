@@ -177,6 +177,12 @@ env 仅部署种子）；热重载靠字段原地更新——新组件必须持�
   发觉不对→撤销/补救/铭记，不可逆动作出手前慢一拍）；出站回执复述动作
   事实（contracts 约定，qq 发送回执带 text）；qq 自发消息落 chat_log
   （带 message_id 句柄，read_chat_log 可见，未读统计排除自己）
+- **主体时钟上线（2026-10-21）**：utils/clock 统一收口时间感知——
+  全局配置 timezone（IANA 名，空=本机时区；env 种子 LIFEMATE_TIMEZONE，
+  容器默认 UTC 故部署必设），非法值告警回落本机；接继心智的两处
+  时间表达：唤醒信封的"现在几点"（mind._compose_wake）与 chatlog
+  时间标注/日切/保留期（存储仍是 epoch，时区中立）；replay 面板
+  保持本机时区（开发工具）
 - **chatlog 时间感修复（2026-10-21）**：read_chat_log 每条带时间标注
   （chatlog.format_ts：今天 HH:MM/昨天/前天/今年 MM-DD/跨年带年份），
   get_message_detail 回执补可读 time 字段——修复心智把旧消息当成刚发的；

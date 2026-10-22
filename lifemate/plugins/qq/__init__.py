@@ -56,9 +56,10 @@ def _err(msg: str, **kw) -> str:
 
 
 class QQPlugin(Plugin):
-    def __init__(self, conf: QQConfig, data_dir: Path) -> None:
+    def __init__(self, conf: QQConfig, cfg, data_dir: Path) -> None:
         super().__init__(name="qq", skills=["qq"])
         self._conf = conf                # 声明式配置视图（活绑定，用时读）
+        self._cfg = cfg                  # 全局活配置（timezone 等主体级事实）
         self._data_dir = data_dir
         self._client: OneBotClient | None = None
         self._chatlog: ChatLog | None = None
@@ -73,7 +74,8 @@ class QQPlugin(Plugin):
         # 按日分库、不限量；保留期可配（0=永久，默认 0）
         self._chatlog = ChatLog(
             self._data_dir,
-            retention_days=self._conf.chatlog_retention_days)
+            retention_days=self._conf.chatlog_retention_days,
+            tz_name=lambda: self._cfg.timezone)
         self._client = OneBotClient(
             ws_url=self._conf.ws_url,
             access_token=self._conf.access_token,
@@ -179,7 +181,7 @@ def create(ctx: PluginContext) -> Plugin | None:
     conf = QQConfig(ctx.cfg)
     if not conf.enabled:
         return None
-    plugin = QQPlugin(conf, ctx.data_dir)
+    plugin = QQPlugin(conf, ctx.cfg, ctx.data_dir)
     plugin.tools = _build_tools(plugin)
     return plugin
 
@@ -249,7 +251,7 @@ def _build_tools(p: QQPlugin) -> list[Tool]:
             ts = float(data.get("time") or 0)
             return {"sender": (data.get("sender") or {}).get("nickname"),
                     "text": data.get("raw_message"), "ts": ts,
-                    "time": format_ts(ts) if ts else ""}
+                    "time": format_ts(ts, tz_name=p._cfg.timezone) if ts else ""}
         return await p._receipt(_do)
 
     # ── 背景听觉 ──────────────────────────────────────
@@ -265,9 +267,10 @@ def _build_tools(p: QQPlugin) -> list[Tool]:
         if not rows:
             return _err("该会话暂无记录")
         bot = p._conf.bot_uin
+        tz = p._cfg.timezone
         lines = []
         for r in rows:
-            stamp = format_ts(r["ts"])
+            stamp = format_ts(r["ts"], tz_name=tz)
             # 自己的出站带撤回句柄；别人的不带（减少噪声）
             if bot and r["sender_id"] == bot:
                 lines.append(f"[{stamp}] 我: {r['text']}（message_id={r['message_id']}）")
