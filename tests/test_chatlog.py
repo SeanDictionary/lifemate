@@ -2,9 +2,27 @@
 import time
 from pathlib import Path
 
-from lifemate.plugins.qq.chatlog import ChatLog
+
+from lifemate.plugins.qq.chatlog import ChatLog, format_ts
 
 DAY = 86400
+
+
+def test_format_ts_time_sense():
+    """时间标注分档：今天/昨天/前天/今年更早/跨年。"""
+    import re
+    now = time.mktime(time.strptime("2026-10-21 15:00", "%Y-%m-%d %H:%M"))
+    assert format_ts(now, now) == "15:00"
+    assert format_ts(now - 0.5 * DAY, now) == "03:00"  # 今天凌晨也不算昨天
+    y = now - DAY
+    assert format_ts(y, now) == f"昨天 {time.strftime('%H:%M', time.localtime(y))}"
+    q = now - 2 * DAY
+    assert format_ts(q, now).startswith("前天 ")
+    old = time.mktime(time.strptime("2026-06-01 09:30", "%Y-%m-%d %H:%M"))
+    assert format_ts(old, now) == "06-01 09:30"          # 今年更早：不带年份
+    older = time.mktime(time.strptime("2025-06-01 09:30", "%Y-%m-%d %H:%M"))
+    assert format_ts(older, now) == "2025-06-01 09:30"   # 跨年带年份
+    assert re.fullmatch(r"\d{2}:\d{2}", format_ts(now, now))
 
 
 def test_daily_partition_and_cross_day_query(tmp_path):
@@ -62,8 +80,6 @@ def test_retention_prunes_old_days(tmp_path):
     log3.append("group_1", 1, "甲", "次日", ts=now + 2 * DAY)
     assert len(list((tmp_path / "chatlog").glob("*.db"))) >= 2  # 没被清
     log3.close()
-
-
 def test_unread_precision_after_read(tmp_path):
     """读过之后又来的新消息也要数进未读（精确到已读线）。"""
     log = ChatLog(tmp_path)

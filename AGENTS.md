@@ -177,6 +177,10 @@ env 仅部署种子）；热重载靠字段原地更新——新组件必须持�
   发觉不对→撤销/补救/铭记，不可逆动作出手前慢一拍）；出站回执复述动作
   事实（contracts 约定，qq 发送回执带 text）；qq 自发消息落 chat_log
   （带 message_id 句柄，read_chat_log 可见，未读统计排除自己）
+- **chatlog 时间感修复（2026-10-21）**：read_chat_log 每条带时间标注
+  （chatlog.format_ts：今天 HH:MM/昨天/前天/今年 MM-DD/跨年带年份），
+  get_message_detail 回执补可读 time 字段——修复心智把旧消息当成刚发的；
+  存储侧 ts 本就全量落库，问题仅在展示层丢弃
 - **待开发**：attention（门控升格）→ sandbox → webui → video
 
 ## 验证方式

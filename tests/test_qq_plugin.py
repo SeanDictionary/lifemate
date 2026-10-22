@@ -223,7 +223,9 @@ async def test_qq_plugin_end_to_end(tmp_path):
                          if t.schema["name"] == "read_chat_log")
         out = await read_tool.func({"target_type": "group",
                                     "target_id": 777, "n": 10})
-        assert "我: 收到，我看过了（message_id=4242）" in out
+        import re
+        assert re.search(r"\[\d{2}:\d{2}\] 我: 收到，我看过了（message_id=4242）", out)
+        assert re.search(r"\[\d{2}:\d{2}\] \S+: 今天天气不错", out)
     finally:
         await plugin.stop()
         await napcat.stop()

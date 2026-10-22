@@ -75,7 +75,7 @@ QQ 平台的消息形态由平台决定，所有人都这么聊：
 
 普通群消息不直达（不产生唤醒），记录在 chat_log：
 
-- 按日归档、不限量，`read_chat_log(target_type, target_id, n)` 读取最近 n 条，跨天自动穿透
+- 按日归档、不限量，`read_chat_log(target_type, target_id, n)` 读取最近 n 条，跨天自动穿透；每条带时间标注（`[HH:MM]`/`[昨天 HH:MM]`）——冷群的记录可能跨好几天，别把旧消息当成刚发的
 - 每次唤醒的附加信息中有未读概览（按已读线精确统计）
 - 强刺激（@/私聊/主人/回复/戳）同样落 chat_log——read_chat_log 可看到被@前后的完整上下文
 - 你自己发的消息也落 chat_log（显示为"我"，带 message_id 可作撤回句柄）

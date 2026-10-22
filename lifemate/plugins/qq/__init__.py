@@ -18,7 +18,7 @@ from typing import Any
 
 from ...kernel.contracts import DIRECT, PLATFORM_EVENT, Envelope, Tool
 from .. import Field, Plugin, PluginConfig, PluginContext
-from .chatlog import ChatLog
+from .chatlog import ChatLog, format_ts
 from .connection import OneBotClient
 from .protocol import compose_envelope_text, parse_event
 
@@ -246,8 +246,10 @@ def _build_tools(p: QQPlugin) -> list[Tool]:
 
         async def _do():
             data = await p._call("get_msg", {"message_id": mid})
+            ts = float(data.get("time") or 0)
             return {"sender": (data.get("sender") or {}).get("nickname"),
-                    "text": data.get("raw_message"), "ts": data.get("time")}
+                    "text": data.get("raw_message"), "ts": ts,
+                    "time": format_ts(ts) if ts else ""}
         return await p._receipt(_do)
 
     # ── 背景听觉 ──────────────────────────────────────
@@ -265,11 +267,12 @@ def _build_tools(p: QQPlugin) -> list[Tool]:
         bot = p._conf.bot_uin
         lines = []
         for r in rows:
+            stamp = format_ts(r["ts"])
             # 自己的出站带撤回句柄；别人的不带（减少噪声）
             if bot and r["sender_id"] == bot:
-                lines.append(f"我: {r['text']}（message_id={r['message_id']}）")
+                lines.append(f"[{stamp}] 我: {r['text']}（message_id={r['message_id']}）")
             else:
-                lines.append(f"{r['sender_name']}: {r['text']}")
+                lines.append(f"[{stamp}] {r['sender_name']}: {r['text']}")
         return json.dumps({"ok": True, "count": len(rows),
                            "log": "\n".join(lines)}, ensure_ascii=False)
 
@@ -461,7 +464,8 @@ def _build_tools(p: QQPlugin) -> list[Tool]:
                          "required": ["message_id"]}}, func=get_message_detail),
         Tool(schema={"name": "read_chat_log",
                      "description": "看某个会话最近的聊天记录（背景听觉：你没注意时"
-                                    "群里的对话都记着）。看完自动算已读。",
+                                    "群里的对话都记着）。每条带时间标注，"
+                                    "注意区分刚发的和早前的消息。看完自动算已读。",
                      "inputSchema": {"type": "object", "properties": {
                          "target_type": {"type": "string"},
                          "target_id": {"type": "number"},

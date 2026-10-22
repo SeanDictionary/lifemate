@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import sqlite3
 import time
+from datetime import datetime
 from pathlib import Path
 from typing import Any
 
@@ -30,6 +31,27 @@ CREATE INDEX IF NOT EXISTS idx_chat_ts ON chat_log (chat_id, ts);
 
 def _day_of(ts: float) -> str:
     return time.strftime("%Y-%m-%d", time.localtime(ts))
+
+
+def format_ts(ts: float, now: float | None = None) -> str:
+    """人类可读时间标注（给心智建立时间感）：
+
+    今天→HH:MM；昨天/前天→昨天 HH:MM；今年更早→MM-DD HH:MM；跨年带年份。
+    """
+    now = now if now is not None else time.time()
+    dt = datetime.fromtimestamp(ts)
+    today = datetime.fromtimestamp(now).date()
+    hm = dt.strftime("%H:%M")
+    if dt.date() == today:
+        return hm
+    gap = (today - dt.date()).days
+    if gap == 1:
+        return f"昨天 {hm}"
+    if gap == 2:
+        return f"前天 {hm}"
+    if dt.year == today.year:
+        return dt.strftime("%m-%d %H:%M")
+    return dt.strftime("%Y-%m-%d %H:%M")
 
 
 class ChatLog:
@@ -56,7 +78,6 @@ CREATE TABLE IF NOT EXISTS chat_state (
         self._state.commit()
         self._current_day = ""
         self._current: sqlite3.Connection | None = None
-
     def close(self) -> None:
         if self._current is not None:
             self._current.close()
