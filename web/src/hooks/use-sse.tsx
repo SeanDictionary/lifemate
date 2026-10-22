@@ -23,11 +23,18 @@ interface SseCtx {
   subscribe: (cb: (ev: SseEvent) => void) => () => void;
 }
 
-const Ctx = createContext<SseCtx>({
+const DEFAULT_CTX: SseCtx = {
   status: "connecting",
   events: [],
   subscribe: () => () => {},
-});
+};
+
+// Context 挂 globalThis：对 bundler 把本模块复制进多个 chunk 免疫
+// （否则页面读到的是另一份默认 Context，永远收不到事件）
+const g = globalThis as typeof globalThis & {
+  __LM_SSE_CTX?: React.Context<SseCtx>;
+};
+const Ctx = (g.__LM_SSE_CTX ??= createContext<SseCtx>(DEFAULT_CTX));
 
 export function SseProvider({ children }: { children: ReactNode }) {
   const [status, setStatus] = useState<SseStatus>("connecting");
@@ -85,7 +92,10 @@ export function SseProvider({ children }: { children: ReactNode }) {
   }, []);
 
   return (
-    <Ctx.Provider value={{ status, events, subscribe }}>{children}</Ctx.Provider>
+    <Ctx.Provider
+      value={{ status, events, subscribe }}
+      children={children}
+    />
   );
 }
 
