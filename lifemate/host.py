@@ -111,10 +111,10 @@ def build(cfg: Config) -> tuple[SelfKernel, Store, Recorder]:
 
 def _console_printer() -> None:
     """控制台呈现（开发调试用；正式观测走 observe 档案 + replay）。"""
-    from .kernel.contracts import ASSISTANT_MSG, REST, SESSION_ROTATED, TOOL_CALL, TOOL_RESULT, WAKE
+    from .kernel.contracts import ASSISTANT_MSG, REST, SESSION_ROTATED, TOOL_CALL, TOOL_RESULT, USER_MSG, WAKE
 
-    # 图标语言：与 replay.py / web(src/lib/render.ts) 同一套通用 emoji
-    glyph = {WAKE: "☀️", ASSISTANT_MSG: "💬", TOOL_CALL: "🔧", TOOL_RESULT: "📥", REST: "🌙", SESSION_ROTATED: "🔄"}
+    # 图标语言：与 replay.py / web(src/lib) 同一套通用 emoji
+    glyph = {WAKE: "☀️", USER_MSG: "📨", ASSISTANT_MSG: "💬", TOOL_CALL: "🔧", TOOL_RESULT: "📥", REST: "🌙", SESSION_ROTATED: "🔄"}
 
     def _print(ev) -> None:
         g = glyph.get(ev.type, "⚪")
@@ -126,6 +126,17 @@ def _console_printer() -> None:
                 print(f"{t} {g} {text}")
             for c in calls:
                 print(f"         {g}→ {c['name']}")
+        elif ev.type == USER_MSG:
+            meta = ev.data.get("env") or {}
+            tag = "·".join(x for x in (meta.get("origin"), meta.get("kind"), meta.get("source")) if x)
+            text = (ev.data.get("text") or "").strip()
+            lines = text.splitlines() or [""]
+            indent = " " * (len(t) + 4)
+            for i, ln in enumerate(lines[:6]):
+                ln = ln if len(ln) <= 160 else ln[:160] + "…"
+                print(f"{t} {g} [{tag}] " + ln if i == 0 else indent + ln)
+            if len(lines) > 6:
+                print(indent + f"…（还有 {len(lines) - 6} 行）")
         elif ev.type == TOOL_CALL:
             print(f"{t} {g} {ev.data['name']}({ev.data['arguments'][:120]})")
         elif ev.type == WAKE:
