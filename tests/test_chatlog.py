@@ -165,3 +165,16 @@ def test_unread_summary_earliest_age(tmp_path):
     s = log.unread_summary()
     assert "2 条" in s and "1 小时前" in s
     log.close()
+
+
+def test_sender_of_lookup(tmp_path):
+    """message_id 反查发送者：命中返回、未命中返回 None。"""
+    log = ChatLog(tmp_path)
+    now = time.time()
+    log.append("group_1", 100, "甲", "甲的话", message_id=111, ts=now - 10)
+    log.append("group_2", SELF_ID := 200, "我", "自己的话", message_id=222,
+               ts=now - 5)
+    assert log.sender_of(111) == 100
+    assert log.sender_of(222) == 200
+    assert log.sender_of(999) is None
+    log.close()

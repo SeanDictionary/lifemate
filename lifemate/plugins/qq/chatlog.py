@@ -37,6 +37,8 @@ def _day_of(ts: float, tz_name: str = "") -> str:
     return clock.datetime_at(ts, tz_name).strftime("%Y-%m-%d")
 
 
+# 回复链反查回溯天数：被回复消息几乎都在近期；超出接保守直达
+_REPLY_LOOKUP_MAX_DAYS = 7
 class ChatLog:
     """按日分库的聊天记录（asyncio 单线程事件循环内使用）。
 
@@ -159,6 +161,23 @@ CREATE TABLE IF NOT EXISTS chat_state (
                 if r["ts"] > read_map.get(cid, 0):
                     unread[cid] = unread.get(cid, 0) + 1
         return [{"chat_id": cid, "last_ts": last_ts[cid], "unread": unread.get(cid, 0)} for cid in sorted(last_ts, key=lambda c: -last_ts[c])]
+
+    def sender_of(self, message_id: int) -> int | None:
+        """按 message_id 反查发送者（回复链判定用）。
+
+        新→旧回溯有限天数；查不到返回 None（调用方自行决定保守策略）。
+        """
+        for path in self._day_files()[:_REPLY_LOOKUP_MAX_DAYS]:
+            con = self._open_read(path)
+            try:
+                row = con.execute(
+                    "SELECT sender_id FROM chat_log WHERE message_id = ?"
+                    " LIMIT 1", (message_id,)).fetchone()
+            finally:
+                con.close()
+            if row is not None:
+                return row["sender_id"]
+        return None
 
     def mark_read(self, chat_id: str) -> None:
         self._state.execute("INSERT INTO chat_state (chat_id, last_read_ts) VALUES (?, ?) ON CONFLICT(chat_id) DO UPDATE SET last_read_ts = excluded.last_read_ts", (chat_id, time.time()))

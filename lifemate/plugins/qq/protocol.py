@@ -24,7 +24,8 @@ class ParsedEvent:
     raw: dict = field(default_factory=dict)
 
 
-def _parse_message(event: dict, self_id: int, owner_uin: int) -> ParsedEvent:
+def _parse_message(event: dict, self_id: int, owner_uin: int,
+                    sender_lookup=None) -> ParsedEvent:
     is_group = event.get("message_type") == "group"
     sender = event.get("sender") or {}
     sender_id = event.get("user_id", 0)
@@ -55,8 +56,20 @@ def _parse_message(event: dict, self_id: int, owner_uin: int) -> ParsedEvent:
                 else:
                     texts.append(f"@{data.get('qq')}")
             elif stype == "reply":
-                reply_to_me = True  # 回复链进一步确认成本高，保守视为回应自己
-                texts.append(f"[回复{data.get('id')}]")
+                # 回复链判定：解引用 reply 指针（chat_log 本地反查）——
+                # 被回复消息是自己发的才算回自己，与 @ 无关（回复时
+                # 客户端自动带的 @ 可被用户删除）；查不到/无反查通道
+                # 时保守直达（宁可达标不可漏接）
+                target = data.get("id")
+                texts.append(f"[回复{target}]")
+                if sender_lookup is None:
+                    reply_to_me = True
+                else:
+                    try:
+                        origin = sender_lookup(int(target))
+                    except (TypeError, ValueError):
+                        origin = None
+                    reply_to_me = origin is None or origin == self_id
             elif stype == "face":
                 texts.append(f"[表情{data.get('id')}]")
             elif stype == "record":
@@ -75,12 +88,17 @@ def _parse_message(event: dict, self_id: int, owner_uin: int) -> ParsedEvent:
     return ParsedEvent(type="direct" if direct else "ambient", chat_id=chat_id, sender_id=sender_id, sender_name=sender_name, text="".join(texts).strip(), message_id=event.get("message_id", 0), image_urls=image_urls, is_owner=is_owner, raw=event)
 
 
-def parse_event(event: dict, self_id: int = 0, owner_uin: int = 0) -> ParsedEvent | None:
-    """OneBot 事件 → ParsedEvent；无法翻译的返回 None（调用方忽略）。"""
+def parse_event(event: dict, self_id: int = 0, owner_uin: int = 0,
+                sender_lookup=None) -> ParsedEvent | None:
+    """OneBot 事件 → ParsedEvent；无法翻译的返回 None（调用方忽略）。
+
+    sender_lookup(message_id) -> sender_id | None：回复链解引用通道
+    （chat_log 本地反查）；None 时 reply 保守直达。
+    """
     post_type = event.get("post_type", "")
 
     if post_type == "message":
-        return _parse_message(event, self_id, owner_uin)
+        return _parse_message(event, self_id, owner_uin, sender_lookup)
 
     if post_type == "meta_event":
         return None  # 心跳/生命周期：连接层自理

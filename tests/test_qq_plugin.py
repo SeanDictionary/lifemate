@@ -317,3 +317,60 @@ async def test_plugin_config_view(tmp_path):
     declared = QQConfig.declared()
     assert "ws_url" in declared and declared["send_max_per_min"] == 20
     assert declared["enabled"] is False
+
+
+# ── 回复链判定（reply 指针解引用） ──────────────────────
+
+def _reply_msg(reply_id, at=None, text="在", sender=12345, gid=777):
+    segs = [{"type": "reply", "data": {"id": str(reply_id)}}]
+    if at is not None:
+        segs.append({"type": "at", "data": {"qq": str(at)}})
+    segs.append({"type": "text", "data": {"text": text}})
+    return {"post_type": "message", "message_type": "group", "group_id": gid,
+            "user_id": sender, "message": segs, "message_id": 556,
+            "sender": {"nickname": "张三", "card": ""}}
+
+
+def test_reply_to_own_message_is_direct_no_at():
+    """回自己发的消息、且没带 @（客户端 @ 可被删除）——仍直达。"""
+    lookup = {100: SELF}          # 被回复消息 100 是自己发的
+    ev = parse_event(_reply_msg(100), SELF, OWNER, sender_lookup=lookup.get)
+    assert ev.type == "direct"
+    assert "对你说" in compose_envelope_text(ev)
+
+
+def test_reply_to_own_message_with_at_other_is_direct():
+    """回自己的消息同时 @ 第三者（拉人入话题）——话题锚在自己，直达。"""
+    lookup = {100: SELF}
+    ev = parse_event(_reply_msg(100, at=224029720), SELF, OWNER,
+                     sender_lookup=lookup.get)
+    assert ev.type == "direct" and "@224029720" in ev.text
+
+
+def test_reply_to_other_is_ambient():
+    """回别人的消息 + @ 别人（原误判场景）——降级背景听觉。"""
+    lookup = {2086235890: 2878099949}   # 被回复消息是别人发的
+    ev = parse_event(_reply_msg(2086235890, at=224029720), SELF, OWNER,
+                     sender_lookup=lookup.get)
+    assert ev.type == "ambient"
+    assert "对你说" not in compose_envelope_text(ev)
+
+
+def test_reply_to_other_no_at_is_ambient():
+    """回别人的消息、无 @——背景听觉。"""
+    lookup = {100: 999}
+    ev = parse_event(_reply_msg(100), SELF, OWNER, sender_lookup=lookup.get)
+    assert ev.type == "ambient"
+
+
+def test_reply_unknown_target_conservative_direct():
+    """被回复消息超出反查窗（查不到）——保守直达（原语义兜底）。"""
+    ev = parse_event(_reply_msg(987654321), SELF, OWNER,
+                     sender_lookup=lambda mid: None)
+    assert ev.type == "direct"
+
+
+def test_reply_no_lookup_conservative_direct():
+    """无反查通道（如测试/降级）——保守直达，兼容旧语义。"""
+    ev = parse_event(_reply_msg(100), SELF, OWNER)
+    assert ev.type == "direct"

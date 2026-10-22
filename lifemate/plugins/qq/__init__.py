@@ -67,7 +67,9 @@ class QQPlugin(Plugin):
         """OneBot 事件 → 分诊 → 信封 → notify / 背景听觉。"""
         self_id = self._conf.bot_uin
         owner = self._conf.owner_uin
-        ev = parse_event(data, self_id=self_id, owner_uin=owner)
+        ev = parse_event(data, self_id=self_id, owner_uin=owner,
+                         sender_lookup=(self._chatlog.sender_of
+                                        if self._chatlog else None))
         if ev is None or ev.type == "ignore":
             return
         # 群白名单（空=全部）
