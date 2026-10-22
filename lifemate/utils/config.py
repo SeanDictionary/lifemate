@@ -26,7 +26,6 @@ _JSON_FIELDS: dict[str, Any] = {
     "llm_model": "",
     # 内核
     "timezone": "",                     # 主体时区（IANA 名如 Asia/Shanghai；空=本机时区）
-                                         # 昼夜/作息/社交时间感的事实源，换机器不换人生
     "max_turns": 24,                    # 单个唤醒周期内最大模型轮数（超过强制休息）
     "turns_rest_nudge": 16,             # 连续轮数提醒阈值（先提示后强制）
     "tool_timeout_s": 120.0,            # 单工具执行超时（wait 除外）
@@ -119,6 +118,7 @@ class Config:
         """重读配置文件。返回发生变化的键名列表（空=无变化/无文件）。
 
         原地更新：已持有的 Config 引用立即看到新值。
+        缺字段（升级/手改）：内存回落默认 + 按默认顺序回写补全。
         """
         try:
             st = self.path.stat()
@@ -126,6 +126,7 @@ class Config:
             if not create_if_missing:
                 return []
             self._write_default()
+            self._stamp = (-1, -1)  # 新建文件需完整解析（_atomic_write 已同步戳，防止短路）
             try:
                 st = self.path.stat()
             except OSError:
@@ -151,6 +152,24 @@ class Config:
         if plug != self.plugins:
             self.plugins = plug
             changed.append("plugins")
+        # 字段补全：升级/手改导致缺键——内存回落默认（env 种子随后仍会
+        # 覆盖），并按默认生成的顺序与内容回写文件（config.json 自始至终
+        # 是完整自文档；未知键保留在后，不丢用户数据）
+        missing = [k for k in _JSON_FIELDS if k != "plugins" and k not in data]
+        if missing:
+            for k in missing:
+                if getattr(self, k) != _JSON_FIELDS[k]:
+                    setattr(self, k, _JSON_FIELDS[k])
+                    changed.append(k)
+            rebuilt: dict[str, Any] = {}
+            for k, v in _JSON_FIELDS.items():
+                rebuilt[k] = plug if k == "plugins" else data.get(k, v)
+            for k, v in data.items():  # 未知键附在尾部
+                if k not in rebuilt:
+                    rebuilt[k] = v
+            self._atomic_write(rebuilt)
+            log.info("配置补全缺失字段（已按默认顺序回写）：%s",
+                     ", ".join(missing))
         for key, raw in data.items():
             if key not in _JSON_FIELDS:
                 log.warning("未知配置键 %r（白名单外，忽略）", key)
@@ -187,19 +206,11 @@ class Config:
                  "可在文件中查看）")
 
     def _write_default(self) -> None:
-        self.path.parent.mkdir(parents=True, exist_ok=True)
-        self.path.write_text(
-            json.dumps(dict(_JSON_FIELDS), ensure_ascii=False, indent=2) + "\n",
-            encoding="utf-8")
+        self._atomic_write(dict(_JSON_FIELDS))
         log.info("生成默认配置：%s", self.path)
 
-    def save(self) -> Path:
-        """把当前白名单键 + plugins 命名空间原子写回 config.json。
-
-        临时文件 + replace（防半写）；写后同步 _stamp（防下次 reload 重复
-        解析）。热生效由字段原地更新保证，save 只负责持久化。"""
-        data: dict[str, Any] = {k: getattr(self, k) for k in _JSON_FIELDS if k != "plugins"}
-        data["plugins"] = self.plugins
+    def _atomic_write(self, data: dict[str, Any]) -> None:
+        """原子写回（临时文件 + replace，防半写）+ 同步戳（防重复解析）。"""
         self.path.parent.mkdir(parents=True, exist_ok=True)
         tmp = self.path.with_suffix(".json.tmp")
         tmp.write_text(
@@ -211,6 +222,26 @@ class Config:
             self._stamp = (st.st_mtime_ns, st.st_size)
         except OSError:
             pass
+
+    def save(self) -> Path:
+        """把当前白名单键 + plugins 命名空间原子写回 config.json。
+
+        按白名单原序写（与默认生成/补全回写一致）；磁盘上白名单外的
+        用户键保留（不因保存而丢失）。临时文件 + replace（防半写）；
+        写后同步 _stamp（防下次 reload 重复解析）。热生效由字段原地更新
+        保证，save 只负责持久化。"""
+        data: dict[str, Any] = {}
+        for k in _JSON_FIELDS:
+            data[k] = self.plugins if k == "plugins" else getattr(self, k)
+        try:
+            on_disk = json.loads(self.path.read_text(encoding="utf-8"))
+            if isinstance(on_disk, dict):
+                for k, v in on_disk.items():
+                    if k not in data:  # 白名单外用户键附在尾部
+                        data[k] = v
+        except (OSError, ValueError):
+            pass
+        self._atomic_write(data)
         log.info("配置已保存：%s", self.path)
         return self.path
 

@@ -132,6 +132,43 @@ def test_save_and_apply_updates(tmp_path):
     assert cfg.llm_api_key == "sk-secret-12345678"
 
 
+def test_backfills_missing_fields_on_load(tmp_path):
+    """已有 config.json 缺字段：加载即按默认顺序/内容补全回写。
+
+    场景：版本升级新增白名单键（如 timezone），旧文件没有——
+    用户打开 config.json 永远能看到完整可改的键表。"""
+    from lifemate.utils.config import _JSON_FIELDS
+    cfg_path = tmp_path / "config.json"
+    cfg_path.write_text(json.dumps(
+        {"llm_model": "my-model", "my_custom": 1}, ensure_ascii=False),
+        encoding="utf-8")
+    cfg = Config(data_dir=tmp_path)
+    # 内存：文件里有的用文件值，缺的用默认
+    assert cfg.llm_model == "my-model"
+    assert cfg.timezone == ""
+    # 文件：白名单键全部补齐，顺序=默认生成顺序，未知键保留在尾部
+    data = json.loads(cfg_path.read_text(encoding="utf-8"))
+    assert set(data) >= set(_JSON_FIELDS) | {"my_custom"}
+    assert list(data.keys())[:len(_JSON_FIELDS)] == list(_JSON_FIELDS)
+    assert data["llm_model"] == "my-model"   # 已有值不被覆盖
+    assert data["timezone"] == ""            # 缺的按默认内容补
+    assert data["plugins"] == {}
+    assert cfg.reload() == []                 # 回写已同步戳，不重复解析
+
+
+def test_backfill_on_hot_reload_resets_memory(tmp_path):
+    """热重载发现缺键：内存回落默认（不残留旧值）+ 文件补全。"""
+    cfg = Config(data_dir=tmp_path)
+    cfg.log_level = "debug"                  # 模拟运行中改过
+    cfg.path.write_text(json.dumps({"llm_model": "x"}),
+                        encoding="utf-8")   # 手写缺 log_level 的文件
+    changed = cfg.reload()
+    assert "log_level" in changed
+    assert cfg.log_level == "info"           # 回落默认，不残留 debug
+    data = json.loads(cfg.path.read_text(encoding="utf-8"))
+    assert data["log_level"] == "info"       # 文件也补全了
+
+
 def test_server_token_generated_and_reset(tmp_path):
     """server_token：首启随 config 生成随机值；清空重载即重置（永不裸奔）。"""
     cfg = Config(data_dir=tmp_path)

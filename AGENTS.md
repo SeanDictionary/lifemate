@@ -177,6 +177,12 @@ env 仅部署种子）；热重载靠字段原地更新——新组件必须持�
   发觉不对→撤销/补救/铭记，不可逆动作出手前慢一拍）；出站回执复述动作
   事实（contracts 约定，qq 发送回执带 text）；qq 自发消息落 chat_log
   （带 message_id 句柄，read_chat_log 可见，未读统计排除自己）
+- **config 缺字段自动补全（2026-10-21）**：reload 发现白名单键缺失
+  （升级新增键/手改丢失）时——内存回落默认值，并按默认生成的顺序与
+  内容回写 config.json（文件始终保持完整自文档）；未知键在补全/
+  save 时保留不丢；三处原子写收口 _atomic_write；首建文件解析短路
+  bug 一并修复（_write_default 同步戳导致 env 种子/server_token
+  未生效）
 - **主体时钟上线（2026-10-21）**：utils/clock 统一收口时间感知——
   全局配置 timezone（IANA 名，空=本机时区；env 种子 LIFEMATE_TIMEZONE，
   容器默认 UTC 故部署必设），非法值告警回落本机；接继心智的两处
