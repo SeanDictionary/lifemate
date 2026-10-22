@@ -157,11 +157,12 @@ def _console_printer() -> None:
     """控制台呈现（开发调试用；正式观测走 observe 档案 + replay）。"""
     from .kernel.contracts import (ASSISTANT_MSG, REST, SESSION_ROTATED,
                                    TOOL_CALL, TOOL_RESULT, WAKE)
-    glyph = {WAKE: "☀", ASSISTANT_MSG: "💬", TOOL_CALL: "🔧",
-             TOOL_RESULT: "↩", REST: "🌙", SESSION_ROTATED: "↻"}
+    # 图标语言：与 replay.py / web(src/lib/render.ts) 同一套通用 emoji
+    glyph = {WAKE: "🌅", ASSISTANT_MSG: "💬", TOOL_CALL: "🔧",
+             TOOL_RESULT: "📥", REST: "🌙", SESSION_ROTATED: "🔄"}
 
     def _print(ev) -> None:
-        g = glyph.get(ev.type, "·")
+        g = glyph.get(ev.type, "⚪")
         if ev.type == ASSISTANT_MSG:
             text = (ev.data.get("content") or "").strip()
             calls = ev.data.get("tool_calls") or []

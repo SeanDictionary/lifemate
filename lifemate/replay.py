@@ -39,7 +39,7 @@ def render(line: dict) -> str:
                 env.get("origin", ""), env.get("kind", ""),
                 env.get("source", ""), env.get("delivery", "")) if x)
             head = f"（{meta}）" if meta else ""
-            return f"{ts} ✉ {tag}{head}{_brief(line.get('content', ''), 400)}"
+            return f"{ts} 📨 {tag}{head}{_brief(line.get('content', ''), 400)}"
         if role == "assistant":
             out = []
             thinking = (line.get("thinking") or "").strip()
@@ -52,42 +52,42 @@ def render(line: dict) -> str:
                 out.append(f"{ts}   🔧→ {tc.get('name')}({_brief(tc.get('arguments', ''), 120)})")
             usage = line.get("prompt_tokens") or 0
             if usage:
-                out.append(f"{ts}   ⚙ {line.get('model', '')} "
+                out.append(f"{ts}   📊 {line.get('model', '')} "
                            f"in={usage} out={line.get('completion_tokens', 0)} "
                            f"{line.get('latency_ms', 0)}ms "
                            f"stop={line.get('stop_reason', '')}")
             return "\n".join(out) or f"{ts} 💬 {tag}（空回复）"
         if role == "tool":
             ok = "ok" if line.get("ok") else "FAIL"
-            return (f"{ts}   ↳ {line.get('name')} → {ok} "
+            return (f"{ts}   📥 {line.get('name')} → {ok} "
                     f"{line.get('latency_ms', 0)}ms: {_brief(line.get('content', ''))}")
         return f"{ts} ？ {line}"
 
     if t == "wake":
-        return (f"{ts} ☀ 唤醒 {rid} trigger={line.get('trigger', '')} "
+        return (f"{ts} 🌅 唤醒 {rid} trigger={line.get('trigger', '')} "
                 f"kind={line.get('kind', '')} source={line.get('source', '')}")
     if t == "rest":
         to = f" timeout={line.get('timeout_s')}s" if line.get("timeout_s") else ""
         return f"{ts} 🌙 休息 {rid} reason={line.get('reason', '')}{to}"
     if t == "rotate":
-        return f"{ts} ↻ 会话轮换 {line.get('old')} → {line.get('new')}（播种 {line.get('seed_chars', 0)} 字）"
+        return f"{ts} 🔄 会话轮换 {line.get('old')} → {line.get('new')}（播种 {line.get('seed_chars', 0)} 字）"
     if t == "compact":
-        return (f"{ts} ⇲ 压缩：丢弃 {line.get('dropped')} 条、保留 {line.get('kept')} 条、"
+        return (f"{ts} 📦 压缩：丢弃 {line.get('dropped')} 条、保留 {line.get('kept')} 条、"
                 f"摘要 {line.get('summary_chars')} 字（in={line.get('prompt_tokens', 0)}）")
     if t == "queue_drop":
-        return f"{ts} ✂ 丢弃排队信封 {line.get('count')} 封（{line.get('reason')}）"
+        return f"{ts} 🚫 丢弃排队信封 {line.get('count')} 封（{line.get('reason')}）"
     if t == "boot":
-        return (f"{ts} ⏻ 启动 v{line.get('version')} persona={line.get('persona_hash')} "
+        return (f"{ts} 🚀 启动 v{line.get('version')} persona={line.get('persona_hash')} "
                 f"tools={len(line.get('tools', []))}")
     if t == "session_load":
-        return f"{ts} ⏦ 恢复会话 {line.get('file')}（{line.get('msgs')} 条消息）"
+        return f"{ts} 📂 恢复会话 {line.get('file')}（{line.get('msgs')} 条消息）"
     if t == "config_reload":
-        return f"{ts} ↻ 配置热重载：{', '.join(line.get('changed', []))}"
+        return f"{ts} 🔄 配置热重载：{', '.join(line.get('changed', []))}"
     if t == "host_stop":
-        return f"{ts} ⏼ 退出（{line.get('reason')}）"
+        return f"{ts} 🏁 退出（{line.get('reason')}）"
     if t == "error":
-        return f"{ts} ✖ 异常 {line.get('where')}: {_brief(line.get('error', ''), 200)}"
-    return f"{ts} · {t} {json.dumps({k: v for k, v in line.items() if k not in ('ts', 'type')}, ensure_ascii=False)[:200]}"
+        return f"{ts} ❌ 异常 {line.get('where')}: {_brief(line.get('error', ''), 200)}"
+    return f"{ts} ⚪ {t} {json.dumps({k: v for k, v in line.items() if k not in ('ts', 'type')}, ensure_ascii=False)[:200]}"
 
 
 def main() -> None:

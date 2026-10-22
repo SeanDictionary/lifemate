@@ -72,7 +72,7 @@ class Console:
                 changed = self._cfg.reload()
                 if changed:
                     self._recorder.event("config_reload", changed=changed)
-                print(f"↻ 配置重载：{', '.join(changed) or '无变化'}")
+                print(f"🔄 配置重载：{', '.join(changed) or '无变化'}")
                 continue
             self._kernel.notify(Envelope(text=text, origin="console"))
         return "signal"
