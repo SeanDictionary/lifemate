@@ -71,6 +71,37 @@ def test_broken_json_keeps_old_values(tmp_path):
     assert cfg.max_turns == 9  # 解析失败保持旧值
 
 
+def test_broken_json_env_seeds_still_apply(tmp_path, monkeypatch):
+    """坏 JSON 容错：env 种子仍生效，坏文件保持原样，token 内存兑底。
+
+    场景：容器里 env 配齐了 LLM，挂载的 config.json 损坏——
+    仍能起来（带病运行，日志有 error），不覆盖待修复的文件。"""
+    monkeypatch.setenv("LIFEMATE_LLM_MODEL", "env-model")
+    monkeypatch.setenv("LIFEMATE_LLM_BASE_URL", "http://env:1")
+    cfg_path = tmp_path / "config.json"
+    cfg_path.write_text("{broken json", encoding="utf-8")
+    cfg = Config(data_dir=tmp_path)
+    assert cfg.llm_model == "env-model"        # env 种子在坏文件下仍生效
+    assert cfg.llm_base_url == "http://env:1"
+    assert cfg.server_token                     # API 不裸奔（内存兑底）
+    assert cfg_path.read_text(encoding="utf-8") == "{broken json"  # 文件未被覆盖
+    # 修好文件后正常重载
+    cfg_path.write_text(json.dumps({"llm_model": "fixed"}), encoding="utf-8")
+    cfg.reload()
+    assert cfg.llm_model == "env-model"        # env 仍最强
+
+
+def test_non_dict_root_recovers_same_way(tmp_path, monkeypatch):
+    """根节点非对象：同样走 env 恢复路径。"""
+    monkeypatch.setenv("LIFEMATE_LLM_MODEL", "env-model")
+    cfg_path = tmp_path / "config.json"
+    cfg_path.write_text("[1, 2]", encoding="utf-8")
+    cfg = Config(data_dir=tmp_path)
+    assert cfg.llm_model == "env-model"
+    assert cfg.server_token
+    assert cfg_path.read_text(encoding="utf-8") == "[1, 2]"
+
+
 def test_masked_hides_secret(tmp_path, monkeypatch):
     monkeypatch.setenv("LIFEMATE_LLM_API_KEY", "sk-1234567890abcdef")
     cfg = Config(data_dir=tmp_path)

@@ -183,6 +183,10 @@ env 仅部署种子）；热重载靠字段原地更新——新组件必须持�
   save 时保留不丢；三处原子写收口 _atomic_write；首建文件解析短路
   bug 一并修复（_write_default 同步戳导致 env 种子/server_token
   未生效）
+- **坏 JSON 容错（2026-10-21）**：解析失败/根非对象时 env 种子仍生效
+  （容器 env 配齐即可带病运行，日志有 error），坏文件保持原样等修复
+  （不破坏性覆盖），server_token 内存兑底不落盘（API 不裸奔）；
+  env 应用收口 _apply_env_seeds
 - **主体时钟上线（2026-10-21）**：utils/clock 统一收口时间感知——
   全局配置 timezone（IANA 名，空=本机时区；env 种子 LIFEMATE_TIMEZONE，
   容器默认 UTC 故部署必设），非法值告警回落本机；接继心智的两处

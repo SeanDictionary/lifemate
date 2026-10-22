@@ -138,11 +138,11 @@ class Config:
         try:
             data = json.loads(self.path.read_text(encoding="utf-8"))
         except (OSError, ValueError) as e:
-            log.error("配置文件解析失败（保持旧值）：%s", e)
-            return []
+            log.error("配置文件解析失败（保持旧值，env 种子仍生效）：%s", e)
+            return self._recover_from_bad_file()
         if not isinstance(data, dict):
-            log.error("配置文件根节点必须是对象（保持旧值）")
-            return []
+            log.error("配置文件根节点必须是对象（保持旧值，env 种子仍生效）")
+            return self._recover_from_bad_file()
 
         changed: list[str] = []
         # 插件命名空间：自由子对象，整体替换（热重载即时可见）
@@ -182,12 +182,9 @@ class Config:
                 setattr(self, key, value)
                 changed.append(key)
         # env 种子对未出现在 JSON 中的键也生效
-        for key, env_var in _ENV_SEED.items():
-            env_val = os.environ.get(env_var)
-            if env_val and key not in data and getattr(self, key) != env_val:
-                setattr(self, key, _coerce(key, env_val))
-                if key not in changed:
-                    changed.append(key)
+        for k in self._apply_env_seeds(skip=frozenset(data)):
+            if k not in changed:
+                changed.append(k)
         if changed:
             log.info("配置重载生效：%s", ", ".join(
                 f"{k}=***" if k in _SECRET_KEYS else
@@ -195,15 +192,46 @@ class Config:
         self._ensure_token()
         return changed
 
-    def _ensure_token(self) -> None:
+    def _apply_env_seeds(self, skip: frozenset[str] = frozenset()) -> list[str]:
+        """env 种子生效（最强覆盖；容器容错：坏文件时也靠它跑起来）。
+
+        skip：本轮已从 JSON 处理过的键（主路径循环里已按 env 覆盖过）。
+        返回实际发生变化的键名。"""
+        changed: list[str] = []
+        for key, env_var in _ENV_SEED.items():
+            if key in skip:
+                continue
+            env_val = os.environ.get(env_var)
+            if env_val and getattr(self, key) != env_val:
+                setattr(self, key, _coerce(key, env_val))
+                changed.append(key)
+        return changed
+
+    def _recover_from_bad_file(self) -> list[str]:
+        """坏文件恢复：env 种子仍生效 + server_token 内存兑底。
+
+        不回写文件——坏文件保持原样等主人修复（内容可能有救，
+        不做破坏性覆盖）；server_token 只进内存（API 不裸奔，
+        但不污染待修复的文件）。"""
+        changed = self._apply_env_seeds()
+        self._ensure_token(persist=False)
+        return changed
+
+    def _ensure_token(self, persist: bool = True) -> None:
         """server_token 空值重置：首启随 config 生成、热重载/保存后发现
-        为空即换随机值并落盘——API 永不裸奔（安全默认）。"""
+        为空即换随机值并落盘——API 永不裸奔（安全默认）。
+
+        persist=False：只进内存不落盘（坏文件恢复路径专用）。"""
         if self.server_token:
             return
         self.server_token = secrets.token_urlsafe(24)
-        self.save()
-        log.info("server_token 为空，已重置随机值（config.json 已更新，"
-                 "可在文件中查看）")
+        if persist:
+            self.save()
+            log.info("server_token 为空，已重置随机值（config.json 已更新，"
+                     "可在文件中查看）")
+        else:
+            log.warning("server_token 为空，已重置随机值（仅内存——"
+                        "配置文件异常，暂不落盘）")
 
     def _write_default(self) -> None:
         self._atomic_write(dict(_JSON_FIELDS))
