@@ -220,6 +220,22 @@ async def test_history_dates_usage(env):
 
 # ── 配置（读/改存/重载） ───────────────────────────────
 
+async def test_config_schema_endpoint(env):
+    """schema 端点：声明投影 + env_set（前端数据驱动渲染的契约）。"""
+    import os
+    os.environ.setdefault("LIFEMATE_LLM_MODEL", "")  # 不强设，仅确保可读
+    port, _, _, cfg, _ = env
+    _, data = await _jget(port, "/api/config/schema")
+    assert data["ok"] is True
+    fields = data["fields"]
+    assert "max_turns" in fields and fields["max_turns"]["type"] == "number"
+    assert fields["llm_api_key"]["secret"] is True
+    assert "description" in fields["timezone"]
+    assert isinstance(data["env_set"], list)
+    # 未装载插件时 plugins 段为空（不炸）
+    assert data["plugins"] == {}
+
+
 async def test_config_get_apply_reload(env):
     port, _, _, cfg, _ = env
     cfg.server_token = "test-token"            # 本测试全程带鉴权（配置保存会触发空值换新）

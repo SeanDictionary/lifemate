@@ -233,3 +233,52 @@ def test_plugin_mask_no_false_positive_on_token_counts(tmp_path):
     m = cfg.masked()["plugins"]["x"]
     assert m["access_token"].startswith("***")
     assert m["max_tokens"] == "32000"
+
+
+def test_schema_dict_projection(tmp_path):
+    """声明投影：类型/默认/说明/密钥/重启/分组/env_var 齐全。"""
+    from lifemate.utils.config import _JSON_FIELDS
+    cfg = Config(data_dir=tmp_path)
+    s = cfg.schema_dict()
+    fields = s["fields"]
+    assert set(fields) == set(_JSON_FIELDS)          # 主白名单全量
+    assert fields["max_turns"] == {"type": "number", "default": 24,
+                                   "description": fields["max_turns"]["description"],
+                                   "group": "内核"}
+    assert fields["llm_api_key"]["secret"] is True
+    assert fields["server_port"]["restart"] is True
+    assert fields["llm_model"]["env_var"] == "LIFEMATE_LLM_MODEL"
+    assert fields["plugins"]["type"] == "object"      # 命名空间占位说明
+    assert s["plugins"] == {}                         # 未登记插件
+
+
+def test_plugin_dotted_path_update(tmp_path):
+    """插件点路径写：声明校验 + coerce + 落盘；未声明键拒绝。"""
+    from lifemate.plugins.qq import QQConfig
+    cfg = Config(data_dir=tmp_path)
+    cfg.register_plugin_schema("qq", QQConfig.declared_fields())
+    r = cfg.apply_updates({"plugins.qq.bot_uin": "123456",
+                           "plugins.qq.no_such": 1,
+                           "plugins.nope.x": 1})
+    assert r["applied"] == ["plugins.qq.bot_uin"]
+    assert set(r["unknown"]) == {"plugins.qq.no_such", "plugins.nope.x"}
+    assert cfg.plugins["qq"]["bot_uin"] == 123456     # coerce 成 int
+    import json as _json
+    data = _json.loads(cfg.path.read_text(encoding="utf-8"))
+    assert data["plugins"]["qq"]["bot_uin"] == 123456  # 已落盘
+    # 密钥掩码回传跳过
+    cfg.plugins["qq"]["access_token"] = "sk-abcdef123456"
+    r = cfg.apply_updates({"plugins.qq.access_token": "***5645"})
+    assert r["skipped_masked"] == ["plugins.qq.access_token"]
+
+
+def test_plugin_schema_masked_exact(tmp_path):
+    """插件声明 secret 字段精确掩码（不再依赖键名启发）。"""
+    from lifemate.plugins.qq import QQConfig
+    cfg = Config(data_dir=tmp_path)
+    cfg.register_plugin_schema("qq", QQConfig.declared_fields())
+    cfg.plugins = {"qq": {"ws_url": "ws://x:1", "access_token": "sk-abcdef123456"}}
+    m = cfg.masked()
+    qq = m["plugins"]["qq"]
+    assert qq["access_token"].startswith("***") and "123456" not in qq["access_token"]
+    assert qq["ws_url"] == "ws://x:1"

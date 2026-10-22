@@ -22,7 +22,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 from ..kernel.contracts import PluginPack, Tool
-from ..utils.config import coerce
+from ..utils.config import Setting, coerce
 
 if TYPE_CHECKING:
     from ..kernel.mind import SelfKernel
@@ -56,24 +56,23 @@ class Plugin(PluginPack):
         """停止感知面（宿主停机时调用）。"""
 
 
-class Field:
-    """插件配置字段声明：默认值即类型与缺省（即文档）。
+class Field(Setting):
+    """插件配置字段声明：默认值即类型与缺省，元数据即文档（继承
+    utils.config.Setting——schema 投影/写路径校验共用）；类属性形态 +
+    从活配置 plugins 命名空间读取（热重载即时生效）。
 
-    访问时从活配置读取（热重载即时生效）并按默认值类型矫正；
-    坏值告警并回落默认，不让配置错误炸排事件处理。
+    访问时读+按默认值类型矫正；坏值告警并回落默认，
+    不让配置错误炸排事件处理。
     """
 
-    __slots__ = ("default", "name")
-
-    def __init__(self, default: Any) -> None:
-        self.default = default
+    __slots__ = ("name",)
 
     def __set_name__(self, owner: type, name: str) -> None:
         self.name = name
 
     def __get__(self, obj, objtype=None):
         if obj is None:
-            return self.default
+            return self
         raw = obj._live.plugins.get(obj._namespace, {}).get(
             self.name, self.default)
         return coerce(raw, self.default,
@@ -102,8 +101,14 @@ class PluginConfig:
 
     @classmethod
     def declared(cls) -> dict[str, Any]:
-        """全部声明字段：{键: 默认值}。"""
+        """全部声明字段：{键: 默认值}（首启预设写盘用）。"""
         return {name: f.default for name, f in vars(cls).items()
+                if isinstance(f, Field)}
+
+    @classmethod
+    def declared_fields(cls) -> dict[str, "Field"]:
+        """全部声明字段（含元数据）：schema 投影/写路径校验用。"""
+        return {name: f for name, f in vars(cls).items()
                 if isinstance(f, Field)}
 
 
@@ -129,6 +134,8 @@ def preset_plugin_defaults(cfg: "Config") -> list[str]:
         if (isinstance(conf_cls, type)
                 and issubclass(conf_cls, PluginConfig)
                 and conf_cls.declared()):
+            # 声明登记（schema 端点聚合 + plugins.<name>.<key> 写路径校验）
+            cfg.register_plugin_schema(sub.name, conf_cls.declared_fields())
             if cfg.write_plugin_defaults(sub.name, conf_cls.declared()):
                 written.append(sub.name)
     return written

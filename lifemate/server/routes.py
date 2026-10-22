@@ -79,9 +79,17 @@ def build_core_routes(srv) -> list[Route]:
     async def plugins(req, p):
         return {"ok": True, "plugins": srv.plugin_panels()}
 
-    # ── 配置（读 / 改存 / 重载） ───────────────────────
+    # ── 配置（读 / 改存 / 重载 / 说明书） ───────────
     async def config_get(req, p):
         return {"ok": True, "config": cfg.masked()}
+
+    async def config_schema(req, p):
+        """配置说明书（声明投影）：前端设置页数据驱动渲染的依据。
+
+        env_set：当前真被环境变量占用的主配置键（前端标"env 锁定"）。"""
+        return {"ok": True, **cfg.schema_dict(),
+                "env_set": [k for k, e in _ENV_SEED.items()
+                            if os.environ.get(e)]}
 
     async def config_post(req, p):
         result = cfg.apply_updates(req.json())
@@ -117,6 +125,7 @@ def build_core_routes(srv) -> list[Route]:
         Route("GET", "/api/chat", chat),
         Route("GET", "/api/plugins", plugins),
         Route("GET", "/api/config", config_get),
+        Route("GET", "/api/config/schema", config_schema),
         Route("POST", "/api/config", config_post),
         Route("POST", "/api/config/reload", config_reload),
         Route("GET", "/api/memory/{table}", memory),

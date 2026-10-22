@@ -17,8 +17,9 @@ from pathlib import Path
 from typing import Any
 
 from ...kernel.contracts import DIRECT, PLATFORM_EVENT, Envelope, Tool
-from .. import Field, Plugin, PluginConfig, PluginContext
+from .. import Plugin, PluginContext
 from .chatlog import ChatLog, format_ts
+from .config import QQConfig
 from .connection import OneBotClient
 from .protocol import compose_envelope_text, parse_event
 
@@ -30,21 +31,6 @@ read_chat_log / approve_friend_request / handle_group_request /
 get_friends / get_groups / get_group_members / get_group_info /
 poke / send_like / set_group_card / leave_group /
 mute_member / kick_member / set_qq_status / set_profile / qq_api"""
-
-
-class QQConfig(PluginConfig):
-    """QQ 插件配置（声明即文档；访问时读，热生效项见各读取点）。"""
-
-    _namespace = "qq"
-    enabled = Field(False)                 # 工厂判断（改后需重启）
-    ws_url = Field("ws://127.0.0.1:3001")  # 建连时读（改后需重启；NapCat 默认口）
-    access_token = Field("")               # 建连时读（改后需重启）
-    bot_uin = Field(0)                     # 每条消息读（热生效）
-    owner_uin = Field(0)                   # 每条消息读（热生效）
-    listen_groups = Field([])              # 每条消息读（热生效；空=全部）
-    chatlog_retention_days = Field(0)      # 日切时读（0=永久）
-    send_min_interval_s = Field(1.0)       # 每次发送读（热生效）
-    send_max_per_min = Field(20)           # 每次发送读（热生效）
 
 
 def _ok(**kw) -> str:
