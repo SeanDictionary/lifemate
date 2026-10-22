@@ -282,3 +282,49 @@ def test_plugin_schema_masked_exact(tmp_path):
     qq = m["plugins"]["qq"]
     assert qq["access_token"].startswith("***") and "123456" not in qq["access_token"]
     assert qq["ws_url"] == "ws://x:1"
+
+
+def test_plugin_schema_fill_missing_keys(tmp_path):
+    """插件段缺键补全：注册声明时把缺失字段按默认值回写，已有值不碰。"""
+    import json
+
+    from lifemate.utils.config import Config, Setting
+
+    cfg = Config(data_dir=tmp_path)
+    # 首启预设：段以旧字段落盘
+    cfg.write_plugin_defaults("qq", {"enabled": False, "ws_url": "ws://x"})
+    # 模拟用户改过 enabled（改在文件里，热重载拾取——真实链路）
+    p = tmp_path / "config.json"
+    data = json.loads(p.read_text(encoding="utf-8"))
+    data["plugins"]["qq"]["enabled"] = True
+    p.write_text(json.dumps(data, ensure_ascii=False), encoding="utf-8")
+    cfg.reload()
+    assert cfg.plugins["qq"]["enabled"] is True
+    # 新版本声明新增字段 → 注册时补全
+    cfg.register_plugin_schema("qq", {
+        "enabled": Setting(False),
+        "ws_url": Setting("ws://x"),
+        "wake_aliases": Setting([], description="唤醒别名"),
+        "envelope_context_n": Setting(4),
+    })
+    assert "wake_aliases" in cfg.plugins["qq"]
+    assert cfg.plugins["qq"]["envelope_context_n"] == 4
+    assert cfg.plugins["qq"]["enabled"] is True  # 用户已改值未被碰
+    # 文件同步补全（自文档）
+    data = json.loads((tmp_path / "config.json").read_text(encoding="utf-8"))
+    assert "wake_aliases" in data["plugins"]["qq"]
+    assert data["plugins"]["qq"]["enabled"] is True
+    # 幂等：重复注册不再写
+    cfg.register_plugin_schema("qq", {
+        "enabled": Setting(False), "wake_aliases": Setting([]),
+        "envelope_context_n": Setting(4), "ws_url": Setting("ws://x")})
+    assert cfg.plugins["qq"]["enabled"] is True
+
+
+def test_plugin_schema_fill_skips_missing_section(tmp_path):
+    """整段缺失不归补全管（由 write_plugin_defaults 首启预设处理）。"""
+    from lifemate.utils.config import Config, Setting
+
+    cfg = Config(data_dir=tmp_path)
+    cfg.register_plugin_schema("qq", {"enabled": Setting(False)})
+    assert "qq" not in cfg.plugins

@@ -233,8 +233,41 @@ class Config:
     def register_plugin_schema(self, name: str, fields: dict[str, Setting]) -> None:
         """登记插件配置声明（装载器扫描时调用）。
 
-        schema 端点聚合与 plugins.<name>.<key> 写路径的校验依据。"""
+        schema 端点聚合与 plugins.<name>.<key> 写路径的校验依据；
+        顺手缺键补全：声明有而文件缺的键按默认值回写（与主白名单
+        reload 补全同一语义——config.json 始终是完整自文档，
+        用户已改的值不碰；整段缺失仍由 write_plugin_defaults 处理）。
+        """
         self._plugin_schemas[name] = fields
+        self._fill_plugin_section(name, fields)
+
+    def _fill_plugin_section(self, name: str, fields: dict[str, Setting]) -> None:
+        """插件段缺键补全：插件新版本声明的字段落盘（启动时触发）。"""
+        section = self.plugins.get(name)
+        if not isinstance(section, dict):
+            return  # 整段缺失 → write_plugin_defaults（首启预设）
+        missing = [k for k, f in fields.items() if k not in section]
+        if not missing:
+            return
+        try:
+            data = json.loads(self.path.read_text(encoding="utf-8"))
+        except (OSError, ValueError) as e:
+            log.warning("插件 %s 缺键补全读取失败：%s", name, e)
+            return
+        if not isinstance(data, dict):
+            return
+        on_disk = (data.get("plugins") or {}).get(name)
+        if not isinstance(on_disk, dict):
+            return  # 文件与内存不一致（异常态）：以文件为准，不补
+        merged = dict(on_disk)
+        for k in missing:
+            merged[k] = fields[k].default
+        data.setdefault("plugins", {})[name] = merged
+        self._atomic_write(data)
+        # 同步内存（_atomic_write 已同步戳，热重载不会重复解析）
+        self.plugins = dict(self.plugins)
+        self.plugins[name] = merged
+        log.info("插件 %s 补全缺失字段：%s", name, ", ".join(missing))
 
     def schema_dict(self) -> dict[str, Any]:
         """配置说明书（声明投影）：主配置字段 + 已登记插件声明。
