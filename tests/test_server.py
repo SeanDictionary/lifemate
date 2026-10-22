@@ -79,6 +79,7 @@ async def env(tmp_path):
     cfg.server_host = "127.0.0.1"
     cfg.server_port = 0
     cfg.server_token = ""
+    cfg.server_static_dir = str(tmp_path / "no-such-out")   # 隔离：测的是无构建提示页
     kernel = FakeKernel()
     store = Store(tmp_path / "memory.db")
     stop = asyncio.Event()

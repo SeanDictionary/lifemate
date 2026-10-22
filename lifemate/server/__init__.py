@@ -170,8 +170,10 @@ class Server:
             req = await read_request(reader)
             if req is None:
                 return
-            # 鉴权：token 非空时全端点校验（EventSource 不能设 header → query）
-            if self.cfg.server_token and req.query.get("token") != self.cfg.server_token:
+            # 鉴权：仅 /api/*（壳公开、数据保护——页面得先能加载才能输 token；
+            # 静态资源是应用本身，无数据敏感性）
+            if (req.path.startswith("/api/") and self.cfg.server_token
+                    and req.query.get("token") != self.cfg.server_token):
                 writer.write(json_resp({"ok": False, "error": "unauthorized"}, 401))
                 await writer.drain()
                 return
