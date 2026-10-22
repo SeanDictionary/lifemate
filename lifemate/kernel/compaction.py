@@ -63,7 +63,8 @@ class Compactor:
         except Exception:  # noqa: BLE001
             log.exception("压缩调用失败（跳过本轮）")
             return None
-        session.apply_compaction(summary, kept, span=self._span_of(dropped))
+        span = self._span_of(dropped)
+        session.apply_compaction(summary, kept, span=span)
         log.info("会话压缩：丢弃 %d 条，保留 %d 条，摘要 %d 字（%s）",
                  len(dropped), len(kept), len(summary), span or "无时间范围")
         return {

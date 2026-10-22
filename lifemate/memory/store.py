@@ -7,10 +7,13 @@ schema 变更直接改 CREATE TABLE 删表重建（未上线，不迁移）。
 from __future__ import annotations
 
 import json
+import logging
 import sqlite3
 import time
 from pathlib import Path
 from typing import Any
+
+log = logging.getLogger("memory.store")
 
 _SCHEMA = """
 CREATE TABLE IF NOT EXISTS episodes (
