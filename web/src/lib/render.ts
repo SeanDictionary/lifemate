@@ -6,7 +6,7 @@ import type { ObserveRecord, SseEvent } from "./types";
 import { brief } from "./format";
 
 export const GLYPHS: Record<string, string> = {
-  wake: "🌅",
+  wake: "☀️",
   assistant_msg: "💬",
   tool_call: "🔧",
   tool_result: "📥",
@@ -74,7 +74,7 @@ export function renderRecord(r: ObserveRecord): DisplayRow[] {
 
   switch (r.type) {
     case "wake":
-      return [{ icon: "🌅", main: `${t} 唤醒 ${r.rid ?? ""} trigger=${r.trigger ?? ""}` }];
+      return [{ icon: "☀️", main: `${t} 唤醒 ${r.rid ?? ""} trigger=${r.trigger ?? ""}` }];
     case "rest":
       return [{ icon: "🌙", main: `${t} 休息 reason=${r.reason ?? ""}` }];
     case "session_rotated":
@@ -118,7 +118,7 @@ export function renderEvent(ev: SseEvent): DisplayRow[] {
     return [{ icon: "🔧", main: `${t} ${get("name")}(${brief(get("arguments"), 120)})` }];
   if (ev.type === "tool_result")
     return [{ icon: "📥", main: `${t} ${get("name")} → ${get("ok") === "true" || d.ok ? "ok" : "FAIL"} ${get("latency_ms")}ms`, dim: brief(get("content"), 160) }];
-  if (ev.type === "wake") return [{ icon: "🌅", main: `${t} 唤醒 trigger=${get("trigger")}` }];
+  if (ev.type === "wake") return [{ icon: "☀️", main: `${t} 唤醒 trigger=${get("trigger")}` }];
   if (ev.type === "rest") return [{ icon: "🌙", main: `${t} 休息 ${get("reason")}` }];
   if (ev.type === "session_rotated") return [{ icon: "🔄", main: `${t} 会话轮换` }];
   if (ev.type === "error") return [{ icon: "❌", main: `${t} 异常 ${get("where")}: ${brief(get("error"), 200)}` }];

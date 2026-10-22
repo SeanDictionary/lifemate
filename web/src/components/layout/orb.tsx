@@ -36,7 +36,7 @@ export function Orb({ size = 44 }: { size?: number }) {
             "color-mix(in oklab, var(--color-primary) 45%, transparent)",
         }}
       />
-      <span style={{ fontSize: size * 0.44 }}>{sleeping ? "🌙" : "🌅"}</span>
+      <span style={{ fontSize: size * 0.44 }}>{sleeping ? "🌙" : "☀️"}</span>
     </div>
   );
 }

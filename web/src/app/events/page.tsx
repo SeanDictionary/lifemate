@@ -99,7 +99,7 @@ export default function EventsPage() {
                     <div className="rounded-md border">
                       {isCycle && (
                         <CollapsibleTrigger className="flex w-full items-center gap-2 px-3 py-1.5 text-left text-[11px] text-muted-foreground hover:bg-accent/40">
-                          <span>🌅 周期 {g.rid.slice(0, 10)}</span>
+                          <span>☀️ 周期 {g.rid.slice(0, 10)}</span>
                           {wakeEv?.data?.trigger ? (
                             <Badge variant="outline" className="h-4 px-1.5 text-[10px]">
                               {String(wakeEv.data.trigger)}

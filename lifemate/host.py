@@ -158,7 +158,7 @@ def _console_printer() -> None:
     from .kernel.contracts import (ASSISTANT_MSG, REST, SESSION_ROTATED,
                                    TOOL_CALL, TOOL_RESULT, WAKE)
     # 图标语言：与 replay.py / web(src/lib/render.ts) 同一套通用 emoji
-    glyph = {WAKE: "🌅", ASSISTANT_MSG: "💬", TOOL_CALL: "🔧",
+    glyph = {WAKE: "☀️", ASSISTANT_MSG: "💬", TOOL_CALL: "🔧",
              TOOL_RESULT: "📥", REST: "🌙", SESSION_ROTATED: "🔄"}
 
     def _print(ev) -> None:

@@ -64,7 +64,7 @@ def render(line: dict) -> str:
         return f"{ts} ？ {line}"
 
     if t == "wake":
-        return (f"{ts} 🌅 唤醒 {rid} trigger={line.get('trigger', '')} "
+        return (f"{ts} ☀️ 唤醒 {rid} trigger={line.get('trigger', '')} "
                 f"kind={line.get('kind', '')} source={line.get('source', '')}")
     if t == "rest":
         to = f" timeout={line.get('timeout_s')}s" if line.get("timeout_s") else ""
