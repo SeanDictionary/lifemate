@@ -218,6 +218,10 @@ env 仅部署种子）；热重载靠字段原地更新——新组件必须持�
   token 门（无账号体系，来自 config.json server_token，空值自动换新）；
   排障修复：Turbopack 模块复制→Context globalThis 单例、HTML no-cache
   （防重建后旧页）、Next16 RSC 预取 URL 翻译；Playwright 端到端验证通过
+- **自主节奏链路（2026-10-21）**：裸 wait 无限沉睡问题——rest-rhythm 增补睡前
+  自省（过 curiosity/needs/reminders 清单，全空也定闲时闹钟）+ 措辞事实化
+  （不定闹钟=无限期沉睡）；闹钟意图进 _Waiting.intent，事件唤醒取代
+  未到点闹钟时唤醒信封附注还给她自决（超时自然醒/裸 wait 不附注）
 - **待开发**：attention（门控升格）→ sandbox → webui → video
 
 ## 验证方式

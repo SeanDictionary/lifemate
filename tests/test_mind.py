@@ -89,6 +89,36 @@ async def test_wake_extras_appended_and_isolated(tmp_path):
     assert k.is_busy is False
 
 
+async def test_event_wake_supersedes_alarm_intent(tmp_path):
+    """外部事件唤醒取代未到点的闹钟：被取代的意图还给她自决。"""
+    llm = FakeLLM([
+        tool_reply("wait", args='{"timeout_s": 60, "reason": "潜水半小时"}',
+                   cid="c1"),
+        text_reply("有人找我，那不潜了"),
+    ])
+    k = make_kernel(tmp_path, llm)
+    evs = events_of(k)
+    k.notify(Envelope(text="去潜水"))
+    await wait_event(evs, REST, reason="explicit:潜水半小时")
+    # 60s 闹钟未到，事件先到：顶掉闹钟，唤醒信封要告知
+    k.notify(Envelope(text="有人@你"))
+    await k.wait_idle()
+    tool_msgs = [m for m in k._session.messages if m.get("role") == "tool"]
+    assert any("已被这次唤醒取代" in m["content"] and "潜水半小时" in m["content"]
+               for m in tool_msgs)
+    # 裸 wait（无超时，无未来承诺）被事件唤醒时不附注
+    llm.script.append(
+        tool_reply("wait", args='{"reason": "等真有话再说"}', cid="c2"))
+    llm.script.append(text_reply("继续等"))
+    k.notify(Envelope(text="再来一事"))
+    await wait_event(evs, REST, reason="explicit:等真有话再说")
+    k.notify(Envelope(text="又有人@你"))
+    await k.wait_idle()
+    tool_msgs = [m for m in k._session.messages if m.get("role") == "tool"]
+    assert not any("已被这次唤醒取代" in m["content"]
+                   and "等真有话再说" in m["content"] for m in tool_msgs)
+
+
 async def test_notify_wakes_thinks_rests(tmp_path):
     llm = FakeLLM([text_reply("我醒了")])
     k = make_kernel(tmp_path, llm)

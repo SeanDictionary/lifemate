@@ -48,14 +48,21 @@ def _cap(text: str, n: int = _TOOL_RESULT_MAX) -> str:
 
 
 class _Waiting:
-    """一次挂起的等待。reason: auto（收敛）/explicit（闹钟）/sleep（深睡）。"""
+    """一次挂起的等待。
 
-    __slots__ = ("future", "reason", "since")
+    reason: auto（收敛）/explicit（闹钟）/sleep（深睡）；
+    intent: 闹钟意图（wait 工具的 reason 文本，空=无未来承诺）。
+    """
 
-    def __init__(self, future: asyncio.Future, reason: str) -> None:
+    __slots__ = ("future", "reason", "since", "intent", "timeout_s")
+
+    def __init__(self, future: asyncio.Future, reason: str,
+                 intent: str = "", timeout_s: float | None = None) -> None:
         self.future = future
         self.reason = reason
         self.since = time.monotonic()
+        self.intent = intent
+        self.timeout_s = timeout_s
 
 
 class SelfKernel:
@@ -238,10 +245,12 @@ class SelfKernel:
                                        delivery="nudge"))
 
     # ── 等待与唤醒 ──────────────────────────────────────
-    async def _do_wait(self, timeout_s: float | None, reason: str) -> str:
+    async def _do_wait(self, timeout_s: float | None, reason: str,
+                       intent: str = "") -> str:
         """挂起等待。返回唤醒信封（组批事件 + 差值 + 附加事实）。"""
         fut: asyncio.Future = asyncio.get_event_loop().create_future()
-        self._wait = _Waiting(fut, reason)
+        self._wait = _Waiting(fut, reason, intent, timeout_s)
+        expired = False
         try:
             if timeout_s is None:
                 await fut  # 运行级取消（abort）穿透
@@ -249,12 +258,16 @@ class SelfKernel:
                 try:
                     await asyncio.wait_for(fut, timeout=timeout_s)
                 except TimeoutError:
-                    pass  # 闹钟到点，自然醒
+                    expired = True  # 闹钟到点，自然醒
         finally:
+            w = self._wait
             self._wait = None
-        return self._compose_wake()
+        # 被事件唤醒时，未到点的闹钟意图随本次唤醒失效——还给它自决
+        superseded = (None if expired or timeout_s is None or not w.intent
+                      else w.intent)
+        return self._compose_wake(superseded)
 
-    def _compose_wake(self) -> str:
+    def _compose_wake(self, superseded_alarm: str | None = None) -> str:
         """组装唤醒信封：时间差值 + 期间事件组批 + 附加事实。"""
         events, self._pending = self._pending, []
         now = clock.hm(time.time(), self._cfg.timezone)
@@ -267,6 +280,9 @@ class SelfKernel:
                 mark = _CIRCLED[i] if i < len(_CIRCLED) else f"({i + 1})"
                 text = env.text if len(env.text) <= 800 else env.text[:800] + "…"
                 lines.append(f"{mark} [{tag}] {text}" if tag else f"{mark} {text}")
+            if superseded_alarm:
+                lines.append(f"（你之前定的闹钟「{superseded_alarm}」已被这次唤醒"
+                             "取代——还要等的话重新定。）")
             body = "\n".join(lines) + "）"
         else:
             body = head + "没有新事件——是你设的闹钟或等待自然到期。）"
@@ -423,7 +439,7 @@ class SelfKernel:
             self._emit(REST, rid=self._rid,
                        reason=f"explicit{':' + reason if reason else ''}",
                        timeout_s=t)
-            wake = await self._do_wait(t, "explicit")
+            wake = await self._do_wait(t, "explicit", intent=reason)
             # 唤醒作为工具结果返回：同回合无缝延续（自己定闹钟自己醒）
             self._new_rid()
             self._emit(WAKE, rid=self._rid, trigger="explicit_wait")
