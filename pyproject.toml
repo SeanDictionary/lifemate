@@ -5,6 +5,8 @@ description = "器官化数字生命运行时：主体=认知自我（思维·�
 requires-python = ">=3.11"
 dependencies = [
     "openai>=1.50",
+    "websockets>=12",                                  # QQ 插件感知面（NapCat WS）
+    "tzdata>=2024.1; platform_system == 'Windows'",  # zoneinfo 在 Windows 无系统时区库
 ]
 
 [project.optional-dependencies]
