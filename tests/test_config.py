@@ -220,3 +220,16 @@ def test_server_token_generated_and_reset(tmp_path):
     masked = cfg.masked()
     assert masked["server_token"].startswith("***")
     assert cfg.server_token not in json.dumps(masked)
+
+
+def test_plugin_mask_no_false_positive_on_token_counts(tmp_path):
+    """插件命名空间掩码：token 数量类键（复数）不误掩，真凭证仍掩。"""
+    cfg = Config(data_dir=tmp_path)
+    cfg.plugins = {
+        "x": {"access_token": "secret-token-12345678",   # 真凭证 → 掩码
+              "max_tokens": "32000",                      # 数量（短值）→ 原样
+              "llm_api_key2": "sk-abcdefgh12345678"}      # endswith 命中 key？key2 不结尾 → 原样
+    }
+    m = cfg.masked()["plugins"]["x"]
+    assert m["access_token"].startswith("***")
+    assert m["max_tokens"] == "32000"

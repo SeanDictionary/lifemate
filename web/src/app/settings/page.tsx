@@ -22,7 +22,9 @@ const GROUPS: { title: string; keys: string[] }[] = [
   { title: "守护", keys: ["watchdog_interval_s", "max_run_s", "reminder_poll_s", "queue_max_steer", "backup_interval_s", "backup_keep", "config_poll_s"] },
 ];
 
-const SECRET_HINTS = ["token", "secret", "password", "key"];
+/** 密钥字段（镜像后端 _SECRET_KEYS——精确集合，不用子串启发：
+ *  compact_threshold_tokens 这类"token 数量"键不是凭证） */
+const SECRET_KEYS = new Set(["llm_api_key", "server_token"]);
 
 export default function SettingsPage() {
   const qc = useQueryClient();
@@ -43,8 +45,7 @@ export default function SettingsPage() {
     }
   }, [data]);
 
-  const secretOf = (k: string) =>
-    SECRET_HINTS.some((h) => k.toLowerCase().includes(h)) && k !== "server_static_dir";
+  const secretOf = (k: string) => SECRET_KEYS.has(k);
   const envLocked = (k: string) =>
     (data?.config?.env_locked as string[] | undefined)?.includes?.(k) ?? false;
 
@@ -117,7 +118,6 @@ export default function SettingsPage() {
                     <Input
                       id={k}
                       className="h-8 font-mono text-xs"
-                      type={secretOf(k) ? "password" : "text"}
                       value={draft[k] ?? ""}
                       onChange={(e) => setDraft((d) => ({ ...d, [k]: e.target.value }))}
                     />

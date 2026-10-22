@@ -356,11 +356,15 @@ _SECRET_HINT = ("token", "secret", "password", "key")
 
 
 def _mask_secrets(d: dict) -> dict:
-    """插件子对象深度掩码：键名含敏感词的字符串值只露尾 4 位。"""
+    """插件子对象深度掩码：键名以敏感词结尾的字符串值只露尾 4 位。
+
+    用 endswith 而非子串包含：access_token 掩码 ✓，
+    max_tokens（token 数量，复数）不误掩。
+    """
     out = {}
     for k, v in d.items():
         if (isinstance(v, str) and len(v) > 8
-                and any(h in str(k).lower() for h in _SECRET_HINT)):
+                and any(str(k).lower().endswith(h) for h in _SECRET_HINT)):
             out[k] = "***" + v[-4:]
         else:
             out[k] = v
