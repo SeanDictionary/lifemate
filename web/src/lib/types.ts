@@ -27,6 +27,7 @@ export interface SseEvent {
 export interface ObserveRecord {
   ts: number;
   seq?: number;
+  sid?: string;
   type: string;
   rid?: string;
   role?: string;

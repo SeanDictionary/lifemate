@@ -5,6 +5,7 @@ import { ThemeProvider } from "next-themes";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { Toaster } from "@/components/ui/sonner";
 import { SseProvider } from "@/hooks/use-sse";
+import { RecordsProvider } from "@/hooks/use-records";
 import { TokenGate } from "@/components/token-gate";
 
 export function Providers({ children }: { children: ReactNode }) {
@@ -20,9 +21,11 @@ export function Providers({ children }: { children: ReactNode }) {
     <ThemeProvider attribute="class" defaultTheme="dark" enableSystem={false}>
       <QueryClientProvider client={queryClient}>
         <SseProvider>
-          {children}
-          <TokenGate />
-          <Toaster position="top-center" richColors />
+          <RecordsProvider>
+            {children}
+            <TokenGate />
+            <Toaster position="top-center" richColors />
+          </RecordsProvider>
         </SseProvider>
       </QueryClientProvider>
     </ThemeProvider>

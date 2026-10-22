@@ -49,6 +49,8 @@ class Server:
         self.t0 = time.time()
 
         self.broadcaster = Broadcaster()
+        # 档案记录流：recorder tap → 落档行实时推送（与 /api/history 同形状同 seq）
+        self.rec_broadcaster = Broadcaster()
         self.chatbus = ChatBus(self.broadcaster, is_running=lambda: self._running)
         self._routes: list[Route] = []
         self._panels: list[dict[str, Any]] = []  # /api/plugins 声明
@@ -68,6 +70,9 @@ class Server:
         port = self._server.sockets[0].getsockname()[1]
         self._unsub = self.kernel.subscribe(self._on_event)
         self.kernel.register_tool(make_webui_tool(self.chatbus))
+        # 档案记录流：落档行实时分接（零 IO：broadcaster.push 只入队）
+        if self.recorder is not None:
+            self.recorder.tap = self.rec_broadcaster.push
         self._routes = build_core_routes(self) + self._plugin_routes()
         self._running = True
         log.info("server 启动：http://%s:%d（核心 %d + 插件面板 %d 路由）", self.cfg.server_host, port, len(self._routes) - self._plugin_route_count, self._plugin_route_count)
@@ -168,9 +173,13 @@ class Server:
                 writer.write(json_resp({"ok": False, "error": "unauthorized"}, 401))
                 await writer.drain()
                 return
-            # SSE：唯一流式端点，特判接管（多流需求出现再抽象）
+            # SSE 流式端点，特判接管：事件流（原始内核事件）+ 档案记录流
+            # （recorder 落档行，与 /api/history 同形状同 seq）
             if req.path == "/api/events":
-                await self._stream_sse(writer)
+                await self._stream_sse(writer, self.broadcaster)
+                return
+            if req.path == "/api/records":
+                await self._stream_sse(writer, self.rec_broadcaster)
                 return
             # 静态前端（非 /api/ 路径）
             if not req.path.startswith("/api/"):
@@ -205,9 +214,9 @@ class Server:
             except Exception:  # noqa: BLE001
                 pass
 
-    async def _stream_sse(self, writer: asyncio.StreamWriter) -> None:
-        """SSE 流：事件推送 + 15s 心跳；断开或停机即清理。"""
-        q = self.broadcaster.subscribe()
+    async def _stream_sse(self, writer: asyncio.StreamWriter, bc: Broadcaster) -> None:
+        """SSE 流：推送 + 15s 心跳；断开或停机即清理（事件/记录双流共用）。"""
+        q = bc.subscribe()
         writer.write(b"HTTP/1.1 200 OK\r\nContent-Type: text/event-stream\r\nCache-Control: no-cache\r\nConnection: keep-alive\r\n\r\n")
         try:
             await writer.drain()

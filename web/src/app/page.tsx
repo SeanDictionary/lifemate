@@ -1,10 +1,12 @@
 "use client";
-/** 概览：生命标识 + 状态卡 + 最近动态（observe 档案尾部轮询，近实时） */
-import { useMemo } from "react";
+/** 概览：生命标识 + 状态卡 + 最近动态（档案流：SSE 实时推送 + 30s 对账兑底） */
+import { useEffect, useMemo, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { apiGet } from "@/lib/api";
-import type { HistoryResp, StatusResp } from "@/lib/types";
+import type { HistoryResp, ObserveRecord, StatusResp } from "@/lib/types";
 import { fmtUptime } from "@/lib/format";
+import { mergeRecords } from "@/lib/records";
+import { useRecords } from "@/hooks/use-records";
 import { EventCard, recordToCards } from "@/components/history/event-card";
 import { Orb } from "@/components/layout/orb";
 import { Card, CardContent } from "@/components/ui/card";
@@ -30,18 +32,32 @@ export default function OverviewPage() {
     queryFn: () => apiGet<StatusResp>("/api/status"),
     refetchInterval: 3_000,
   });
-  // 最近动态：档案尾部（date 缺省=最新有档案日），3s 轮询近实时
+  // 最近动态：档案流——初始播种 + SSE 实时追加，30s 对账兑底断线
   const { data: feed } = useQuery({
     queryKey: ["recent-feed"],
     queryFn: () => apiGet<HistoryResp>("/api/history?tail=30"),
-    refetchInterval: 3_000,
+    refetchInterval: 30_000,
   });
+  const { subscribe } = useRecords();
+  const [live, setLive] = useState<ObserveRecord[]>([]);
+  useEffect(() => {
+    const un = subscribe((rec) =>
+      setLive((prev) => (prev.length > 200 ? [...prev.slice(-200), rec] : [...prev, rec])),
+    );
+    return un;
+  }, [subscribe]);
   const cards = useMemo(
     () =>
-      (feed?.rows ?? []).flatMap((r) =>
-        recordToCards(r).map((m) => ({ key: `${r.seq ?? r.ts}-${m.kind}`, model: m })),
-      ).reverse(),
-    [feed],
+      mergeRecords(feed?.rows ?? [], live)
+        .slice(-30)
+        .flatMap((r) =>
+          recordToCards(r).map((m) => ({
+            key: `${r.seq ?? r.ts}-${m.kind}`,
+            model: m,
+          })),
+        )
+        .reverse(),
+    [feed, live],
   );
 
   return (
@@ -77,7 +93,7 @@ export default function OverviewPage() {
         <Stat label="会话" value={st ? st.session_id : "—"} />
       </div>
 
-      {/* 最近动态（档案尾部 + 3s 轮询，最新在上） */}
+      {/* 最近动态（SSE 实时推送 + 30s 对账，最新在上） */}
       <Card>
         <CardContent className="p-0">
           <div className="flex items-center gap-2 px-4 pt-4 pb-2 text-sm font-medium">
@@ -85,7 +101,7 @@ export default function OverviewPage() {
             <span className="text-[11px] font-normal text-muted-foreground">
               {feed
                 ? feed.ok
-                  ? `档案尾部 ${feed.count} 条 · 3s 轮询`
+                  ? `档案尾部 ${feed.count} 条 · 实时推送`
                   : `读取失败：${feed.error ?? "未知错误"}`
                 : "加载中…"}
             </span>

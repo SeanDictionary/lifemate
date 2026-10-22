@@ -113,3 +113,25 @@ async def test_session_cleanup_on_rotate(tmp_path):
     kernel.swap_session("s3")  # s2 → s3（s1 应被清理，保留 keep=1 个旧文件）
     files = sorted(sessions_dir.glob("*.jsonl"))
     assert len(files) == 2  # 当前 + 1 个旧文件
+
+
+def test_tap_streams_archived_lines(tmp_path):
+    """实时分接：tap 收到与落档完全相同的行（同 seq/同形状），tap 异常不伤落档。"""
+    observe = tmp_path / "observe"
+    rec = Recorder(observe)
+    seen = []
+    rec.tap = seen.append
+    rec.event("boot", version="2.0.0")
+    assert len(seen) == 1 and seen[0]["type"] == "boot"
+    assert seen[0]["seq"] == 1 and "ts" in seen[0] and seen[0]["version"] == "2.0.0"
+    # 落档行与 tap 行完全一致
+    line = json.loads(next(observe.glob("*.jsonl")).read_text(encoding="utf-8").splitlines()[0])
+    assert line == seen[0]
+
+    # tap 抛错不影响落档（黑匣子优先）
+    def boom(_):
+        raise RuntimeError("tap 崩了")
+
+    rec.tap = boom
+    rec.event("host_stop")
+    assert len(next(observe.glob("*.jsonl")).read_text(encoding="utf-8").splitlines()) == 2

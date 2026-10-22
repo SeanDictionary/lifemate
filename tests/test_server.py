@@ -333,6 +333,53 @@ async def test_static_next_rsc_translation(tmp_path):
     assert resp.split(b"\r\n\r\n", 1)[1] == b"rsc"
 
 
+async def test_records_sse_stream(tmp_path):
+    """/api/records：recorder 落档行实时推送（与 /api/history 同形状同 seq）。"""
+    from lifemate.server import Server
+    from lifemate.utils.recorder import Recorder
+
+    class _K:
+        session_id = "s1"
+
+        def subscribe(self, cb):
+            return lambda: None
+
+        def register_tool(self, t):
+            pass
+
+        def emit(self, *a, **k):
+            pass
+
+    cfg = make_config(tmp_path)
+    cfg.server_host = "127.0.0.1"
+    cfg.server_port = 0
+    cfg.server_token = ""
+    cfg.server_static_dir = str(tmp_path / "no-out")
+    rec = Recorder(tmp_path / "observe")
+    stop = asyncio.Event()
+    srv = Server(_K(), None, rec, cfg, stop, plugins=[])
+    port = await srv.start()
+    assert port
+    try:
+        reader, writer = await asyncio.open_connection("127.0.0.1", port)
+        writer.write(b"GET /api/records HTTP/1.1\r\nHost: t\r\n\r\n")
+        await writer.drain()
+        await asyncio.sleep(0.2)  # 完成订阅
+        rec.event("boot", version="9.9")
+        line = await asyncio.wait_for(_read_data_line(reader), 3.0)
+        frame = json.loads(line)
+        # 帧即档案行：type/ts/seq + 字段直平（无 data 包一层）
+        assert frame["type"] == "boot" and frame["seq"] == 1
+        assert frame["version"] == "9.9" and "ts" in frame
+        # 落档一致
+        archived = json.loads(next((tmp_path / "observe").glob("*.jsonl")).read_text(encoding="utf-8").splitlines()[0])
+        assert archived == frame
+        writer.close()
+    finally:
+        stop.set()
+        await srv.close()
+
+
 async def test_close_with_open_sse(tmp_path):
     """回归：浏览器 SSE 连接未断开时，stop 后 close 必须限时完成。
 

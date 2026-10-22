@@ -34,6 +34,10 @@ class Recorder:
         self._seq = 0
         self._day = ""
         self._fh: Any = None
+        # 实时分接：落档同一行（同形状同 seq）同步推给订阅方（如 server 的
+        # /api/records SSE 流）。零 IO 约束同订阅回调——只接受非阻塞接收方。
+        # tap 异常绝不影响落档（黑匣子优先）。
+        self.tap: Callable[[dict[str, Any]], None] | None = None
 
     # ── 写入 ────────────────────────────────────────────
     def event(self, type_: str, **data: Any) -> None:
@@ -50,6 +54,11 @@ class Recorder:
         }
         for k, v in fields.items():
             line[k] = self._cap(v)
+        if self.tap is not None:
+            try:
+                self.tap(line)
+            except Exception:  # noqa: BLE001
+                log.exception("观测分接异常（不影响落档）")
         try:
             fh = self._file()
             fh.write(json.dumps(line, ensure_ascii=False) + "\n")
