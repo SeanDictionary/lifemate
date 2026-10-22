@@ -301,7 +301,11 @@ class SelfKernel:
         if not self._steer_q:
             return False
         while self._steer_q:
-            self._deliver(self._steer_q.popleft())
+            env = self._steer_q.popleft()
+            # 插话带时间标注（到达时刻）：长回合中途的输入不再被
+            # 误读为本轮早期语境（唤醒信封自带"现在 X"，不在此列）
+            env.text = f"[{clock.hm(env.ts, self._cfg.timezone)}] {env.text}"
+            self._deliver(env)
         return True
 
     def _touch(self) -> None:
@@ -446,7 +450,10 @@ class SelfKernel:
                    new=self._session.session_id, seed_chars=len(seed))
         self._new_rid()
         self._emit(WAKE, rid=self._rid, trigger="rebirth")
-        self._deliver(Envelope(text=seed, kind=SEED, delivery="seed"))
+        now = clock.now(self._cfg.timezone).strftime("%Y-%m-%d %H:%M")
+        self._deliver(Envelope(
+            text=f"（轮换完成。现在是 {now}。）\n\n{seed}",
+            kind=SEED, delivery="seed"))
 
     async def rest(self, timeout_s: float | None) -> str:
         """公开的休息原语（deep_sleep 等宿主工具使用）。"""

@@ -137,7 +137,7 @@ class Store:
 
     def pending_curiosity(self, n: int = 10) -> list[dict[str, Any]]:
         rows = self._exec(
-            "SELECT id, topic, source FROM curiosity"
+            "SELECT id, topic, source, ts FROM curiosity"
             " WHERE status = 'pending' ORDER BY ts DESC LIMIT ?", (n,)).fetchall()
         return [dict(r) for r in rows]
 
@@ -163,7 +163,7 @@ class Store:
 
     def pending_needs(self, n: int = 10) -> list[dict[str, Any]]:
         rows = self._exec(
-            "SELECT id, what, why FROM needs WHERE status = 'filed'"
+            "SELECT id, what, why, ts FROM needs WHERE status = 'filed'"
             " ORDER BY ts LIMIT ?", (n,)).fetchall()
         return [dict(r) for r in rows]
 

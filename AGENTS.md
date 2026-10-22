@@ -183,11 +183,15 @@ env 仅部署种子）；热重载靠字段原地更新——新组件必须持�
   发觉不对→撤销/补救/铭记，不可逆动作出手前慢一拍）；出站回执复述动作
   事实（contracts 约定，qq 发送回执带 text）；qq 自发消息落 chat_log
   （带 message_id 句柄，read_chat_log 可见，未读统计排除自己）
-- **会话时间戳（2026-10-22）**：数据层——消息全类型带 ts（user 取
-  Envelope.ts、assistant/tool 写入时刻；build_request 发 API 前剥离；
-  JSONL 持久化/重启恢复不再丢时间），压缩摘要带时间范围（span：
-  被压缩部分首尾，session.span 持久化，API 摘要行渲染），
-  latest_packet 返回 {content, ts}
+- **时间感全链路闭环（2026-10-22）**：数据层——会话消息全类型带 ts
+  （user 取 Envelope.ts、assistant/tool 写入时刻；build_request 发 API
+  前剥离；JSONL 持久化/重启恢复不再丢时间），压缩摘要带时间范围
+  （span：被压缩部分首尾，session.span 持久化，API 摘要行渲染），
+  latest_packet 返回 {content, ts}；展示层——记忆工具行内时间转人读
+  （ts→time/due_at→due，epoch 不进心智；format_ts 移入 utils/clock
+  + 新增 format_rel 相对时间；build_memory_tools 加 cfg 参数），
+  boot/restart/seed 信封带"现在是 X"（出生/重生知昼夜），插话带
+  [HH:MM] 到达前缀，未读/待办概览带相对时间，提醒到点信封带当前时间
 - **config 缺字段自动补全（2026-10-21）**：reload 发现白名单键缺失
   （升级新增键/手改丢失）时——内存回落默认值，并按默认生成的顺序与
   内容回写 config.json（文件始终保持完整自文档）；未知键在补全/

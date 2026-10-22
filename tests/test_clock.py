@@ -41,3 +41,15 @@ def test_datetime_at_naive_local_equivalence():
     pytest.importorskip("tzdata")
     utc = clock.datetime_at(ts, "UTC")
     assert utc.utcoffset().total_seconds() == 0
+
+
+def test_format_rel_buckets():
+    """相对时间分档：刚刚/分钟/小时/超窗退化绝对。"""
+    now = time.time()
+    assert clock.format_rel(now - 30, now) == "刚刚"
+    assert clock.format_rel(now + 30, now) == "马上"
+    assert clock.format_rel(now - 300, now) == "5 分钟前"
+    assert clock.format_rel(now + 4200, now) == "1 小时后"  # 70 分钟 → 小时档
+    assert clock.format_rel(now + 7200, now) == "2 小时后"
+    far = clock.format_rel(now - 5 * 86400, now)
+    assert "前" not in far and ":" in far  # 超窗 → 绝对标注

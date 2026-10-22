@@ -50,3 +50,43 @@ def now(tz_name: str | None = "") -> datetime:
 def hm(ts: float, tz_name: str | None = "") -> str:
     """"HH:MM"（主体时区）。"""
     return datetime_at(ts, tz_name).strftime("%H:%M")
+
+
+def format_ts(ts: float, now: float | None = None, tz_name: str = "") -> str:
+    """人类可读时间标注（给心智建立时间感）：
+
+    今天→HH:MM；昨天/前天→昨天 HH:MM；今年更早→MM-DD HH:MM；跨年带年份。
+    tz_name：主体时区（IANA 名，空=本机）；now 也按同时区解释。
+    """
+    now = now if now is not None else _time.time()
+    dt = datetime_at(ts, tz_name)
+    today = datetime_at(now, tz_name).date()
+    hm_ = dt.strftime("%H:%M")
+    if dt.date() == today:
+        return hm_
+    gap = (today - dt.date()).days
+    if gap == 1:
+        return f"昨天 {hm_}"
+    if gap == 2:
+        return f"前天 {hm_}"
+    if dt.year == today.year:
+        return dt.strftime("%m-%d %H:%M")
+    return dt.strftime("%Y-%m-%d %H:%M")
+
+
+def format_rel(ts: float, now: float | None = None, tz_name: str = "") -> str:
+    """相对时间（概览用）：刚刚/N 分钟前/N 小时前/N 分钟后/N 小时后；
+
+    超出 ±48h 退化为绝对标注（format_ts）。tz 仅为退化时服务。"""
+    now = now if now is not None else _time.time()
+    diff = ts - now
+    adiff = abs(diff)
+    if adiff < 90:
+        return "刚刚" if diff <= 0 else "马上"
+    mins = adiff / 60
+    if mins < 60:
+        return f"{mins:.0f} 分钟{'后' if diff > 0 else '前'}"
+    hours = mins / 60
+    if hours < 48:
+        return f"{hours:.0f} 小时{'后' if diff > 0 else '前'}"
+    return format_ts(ts, now=now, tz_name=tz_name)

@@ -8,6 +8,7 @@ import json
 import time
 
 from ..kernel.contracts import Tool
+from ..utils import clock
 from .store import Store, rows_json
 
 
@@ -19,9 +20,30 @@ def _err(msg: str) -> str:
     return json.dumps({"ok": False, "error": msg}, ensure_ascii=False)
 
 
-def build_memory_tools(store: Store) -> list[Tool]:
-    """构建绑定到某个 Store 实例的记忆工具集。"""
+def build_memory_tools(store: Store, cfg=None) -> list[Tool]:
+    """构建绑定到某个 Store 实例的记忆工具集。
+
+    cfg：全局活配置（timezone——记忆是一生的时间轴，按主体时区给人读）；
+    缺省 None = 本机时区（测试/剥夺模式）。
+    """
     tools: list[Tool] = []
+
+    def _tz() -> str:
+        return getattr(cfg, "timezone", "") or ""
+
+    def _readable(rows: list[dict]) -> list[dict]:
+        """行内时间字段转人读：ts→time、due_at→due（相对）。
+
+        裸 epoch 不进心智——"昨天记的"和"三个月前记的"不能是同一种数字串。"""
+        out = []
+        for r in rows:
+            r = dict(r)
+            if "ts" in r:
+                r["time"] = clock.format_ts(r.pop("ts"), tz_name=_tz())
+            if "due_at" in r:
+                r["due"] = clock.format_rel(r.pop("due_at"), tz_name=_tz())
+            out.append(r)
+        return out
 
     async def record_episode(args: dict) -> str:
         summary = str(args.get("summary") or "").strip()
@@ -39,7 +61,7 @@ def build_memory_tools(store: Store) -> list[Tool]:
             n=int(args.get("n") or 10),
             since_hours=float(args.get("hours") or 48),
             exclude_source=str(args.get("exclude_source") or ""))
-        return rows_json(rows)
+        return rows_json(_readable(rows))
 
     async def add_curiosity(args: dict) -> str:
         added = store.add_curiosity(
@@ -48,7 +70,7 @@ def build_memory_tools(store: Store) -> list[Tool]:
             added=False, note="7 天内已有同话题")
 
     async def list_curiosity(args: dict) -> str:
-        return rows_json(store.pending_curiosity(int(args.get("n") or 10)))
+        return rows_json(_readable(store.pending_curiosity(int(args.get("n") or 10))))
 
     async def resolve_curiosity(args: dict) -> str:
         store.resolve_curiosity(int(args.get("id") or 0),
@@ -61,7 +83,7 @@ def build_memory_tools(store: Store) -> list[Tool]:
         return _ok(added=added)
 
     async def list_needs(args: dict) -> str:
-        return rows_json(store.pending_needs(int(args.get("n") or 10)))
+        return rows_json(_readable(store.pending_needs(int(args.get("n") or 10))))
 
     async def set_reminder(args: dict) -> str:
         intent = str(args.get("intent") or "").strip()
@@ -75,7 +97,7 @@ def build_memory_tools(store: Store) -> list[Tool]:
         return _ok(id=rid)
 
     async def list_reminders(args: dict) -> str:
-        return rows_json(store.pending_reminders(int(args.get("n") or 10)))
+        return rows_json(_readable(store.pending_reminders(int(args.get("n") or 10))))
 
     async def save_rebuild_packet(args: dict) -> str:
         content = str(args.get("content") or "").strip()
@@ -89,7 +111,8 @@ def build_memory_tools(store: Store) -> list[Tool]:
         if row is None:
             return _err("还没有重建包")
         return json.dumps(
-            {"ok": True, "content": row["content"], "ts": row["ts"]},
+            {"ok": True, "content": row["content"],
+             "written": clock.format_ts(row["ts"], tz_name=_tz())},
             ensure_ascii=False)
 
     tools.extend([

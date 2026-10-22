@@ -134,8 +134,9 @@ async def test_strong_stimulus_interrupts_interruptible_tool(tmp_path):
     await k.wait_idle()
     tool_msgs = [m for m in k._session.messages if m.get("role") == "tool"]
     assert "打断" in tool_msgs[0]["content"] and "未完成" in tool_msgs[0]["content"]
-    # 主人消息随后送达（插话）
-    assert any(m.get("content") == "主人的消息"
+    # 主人消息随后送达（插话，带到达时间前缀）
+    assert any(str(m.get("content")).endswith("主人的消息")
+               and str(m.get("content")).startswith("[")
                for m in k._session.messages if m.get("role") == "user")
     # 总耗时远小于 3s（被打断）
     assert llm.calls  # 第二次调用已发生
@@ -258,6 +259,7 @@ async def test_swap_session_seeds_new_session(tmp_path):
     assert k.session_id != old_id
     msgs = k._session.messages
     assert "播种" in msgs[0]["content"] and msgs[0]["role"] == "user"
+    assert "现在是" in msgs[0]["content"]   # 播种带时间头（新我知道昼夜）
 
 
 async def test_deep_sleep_tool_full_cycle(tmp_path):

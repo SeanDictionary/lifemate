@@ -158,3 +158,14 @@ def test_chats_listing(tmp_path):
         assert {c["chat_id"]: c for c in cl.chats(200)}["group_1"]["unread"] == 0
     finally:
         cl.close()
+
+
+def test_unread_summary_earliest_age(tmp_path):
+    """未读概览带最早一条的相对时间（多老的消息心里有数）。"""
+    log = ChatLog(tmp_path)
+    now = time.time()
+    log.append("group_1", 1, "甲", "一小时前的", ts=now - 3600)
+    log.append("group_1", 1, "甲", "刚发的", ts=now - 60)
+    s = log.unread_summary()
+    assert "2 条" in s and "1 小时前" in s
+    log.close()

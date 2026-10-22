@@ -220,6 +220,9 @@ def test_boot_envelopes_three_states_objective():
     crash = _restart_envelope(True)
     assert "正常停机" in clean and "非正常退出" not in clean
     assert "非正常退出" in crash
+    # 出生/重生带时间头（新我知道昼夜；tz 空为本机时区）
+    for text in (with_plug, clean, crash, _boot_envelope([])):
+        assert "现在" in text
     # 客观性：无主观语气词（无安慰/建议/命令式）
     subjective = ["你醒了", "不是你的问题", "诚实面对", "由你决定",
                   "即可", "建议"]

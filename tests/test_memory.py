@@ -71,6 +71,30 @@ async def test_memory_tools_callable(tmp_path):
     assert '"ok": false' in r  # 还没有重建包
 
 
+async def test_memory_tools_readable_times(tmp_path):
+    """心智读记忆看到人读时间，不看到裸 epoch。"""
+    s = _store(tmp_path)
+    s.record_episode("记了一件事")
+    s.add_curiosity("好奇的事", "")
+    s.add_need("想要个新器官", "")
+    s.add_reminder(time.time() + 1800, "半小时后办事")
+    by = {t.schema["name"]: t for t in build_memory_tools(s)}
+
+    eps = json.loads(await by["recent_episodes"].func({}))
+    assert "time" in eps[0] and "ts" not in eps[0]
+    cur = json.loads(await by["list_curiosity"].func({}))
+    assert "time" in cur[0]
+    needs = json.loads(await by["list_needs"].func({}))
+    assert "time" in needs[0]
+    rems = json.loads(await by["list_reminders"].func({}))
+    assert "due" in rems[0] and "分钟" in rems[0]["due"]  # 半小时后 → 相对时间
+
+    s.save_packet("写给下一个自己的信")
+    out = json.loads(await by["latest_rebuild_packet"].func({}))
+    assert out["ok"] and "写给下一个自己" in out["content"]
+    assert out["written"]  # 写下时刻（人读）
+
+
 def test_latest_packet_returns_ts(tmp_path):
     s = _store(tmp_path)
     assert s.latest_packet() is None

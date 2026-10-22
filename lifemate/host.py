@@ -28,6 +28,7 @@ from .kernel.session import Session
 from .memory.store import Store
 from .memory.tools import build_memory_tools
 from .utils.config import Config
+from .utils import clock
 from .utils.log import get_logger
 from .utils.recorder import Recorder
 from .console import Console
@@ -50,18 +51,28 @@ CRASH_ENVELOPE = (
 )
 
 
-def _restart_envelope(unclean: bool) -> str:
+def _with_now(text: str, tz_name: str) -> str:
+    """括号信封开头插入"现在 X。"——出生/重生时的昼夜感。"""
+    now = clock.now(tz_name).strftime("%Y-%m-%d %H:%M")
+    if text.startswith("（"):
+        return f"（现在 {now}。" + text[1:]
+    return f"（现在 {now}。）{text}"
+
+
+def _restart_envelope(unclean: bool, tz_name: str = "") -> str:
     """重启信封：区分正常停机与意外中断（强杀/崩溃/断电）。"""
-    return CRASH_ENVELOPE if unclean else RESUME_ENVELOPE
+    return _with_now(
+        CRASH_ENVELOPE if unclean else RESUME_ENVELOPE, tz_name)
 
 
-def _boot_envelope(plugin_names: list[str]) -> str:
+def _boot_envelope(plugin_names: list[str], tz_name: str = "") -> str:
     """首次启动信封：客观陈述装配状态（无主观语气）。"""
     if not plugin_names:
-        return BOOT_ENVELOPE
+        return _with_now(BOOT_ENVELOPE, tz_name)
     names = "、".join(plugin_names)
-    return (f"（系统首次启动。已装配插件：{names}。"
-            "当前可用能力以工具列表与技能索引为准，记忆为空。）")
+    return _with_now(
+        f"（系统首次启动。已装配插件：{names}。"
+        "当前可用能力以工具列表与技能索引为准，记忆为空。）", tz_name)
 
 
 def build(cfg: Config) -> tuple[SelfKernel, Store, Recorder]:
@@ -92,7 +103,7 @@ def build(cfg: Config) -> tuple[SelfKernel, Store, Recorder]:
 
     # 内核自带：记忆工具 + read_skill + deep_sleep（wait 由内核内置；
     # 插件能力由 plugins/ 自动发现装载，见 run()）
-    for t in build_memory_tools(store):
+    for t in build_memory_tools(store, cfg):
         kernel.register_tool(t)
     kernel.register_tool(_read_skill_tool(persona))
     kernel.register_tool(_deep_sleep_tool(kernel, store))
@@ -103,7 +114,8 @@ def build(cfg: Config) -> tuple[SelfKernel, Store, Recorder]:
         if not pend:
             return ""
         items = "；".join(r["intent"][:30] for r in pend[:3])
-        return f"（你还有 {len(pend)} 条待办提醒，如：{items}。）"
+        rel = clock.format_rel(pend[0]["due_at"], tz_name=cfg.timezone)
+        return f"（你还有 {len(pend)} 条待办提醒，最近一条 {rel}，如：{items}。）"
     kernel.add_wake_extras(_extras)
 
     return kernel, store, recorder
@@ -259,7 +271,8 @@ async def _reminder_poller(cfg: Config, store: Store, kernel: SelfKernel,
             try:
                 for r in store.due_reminders(3):
                     kernel.notify(Envelope(
-                        text=f"（你自己定的提醒到点了：{r['intent']}）",
+                        text=f"（你自己定的提醒到点了：{r['intent']}。"
+                             f"现在 {clock.hm(time.time(), cfg.timezone)}。）",
                         kind=REMINDER, origin="host"))
             except Exception:  # noqa: BLE001
                 log.exception("提醒轮询异常")
@@ -313,9 +326,10 @@ class Host:
 
         # 启动信封：首次启动 / 正常停机重启 / 非正常退出重启，三态客观陈述
         if self._first_boot:
-            boot_text = _boot_envelope([p.name for p in plugins])
+            boot_text = _boot_envelope([p.name for p in plugins],
+                                       self._cfg.timezone)
         else:
-            boot_text = _restart_envelope(self._unclean_prev)
+            boot_text = _restart_envelope(self._unclean_prev, self._cfg.timezone)
         kernel.notify(Envelope(text=boot_text, kind=BOOT, origin="host"))
 
         # 开发控制台：stdin 调试信封 + /命令；信号经 stop 事件传入。

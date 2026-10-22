@@ -15,6 +15,7 @@ from pathlib import Path
 from typing import Any, Callable
 
 from ...utils import clock
+from ...utils.clock import format_ts  # 兼容导出：qq 插件与测试自此引用
 
 _SCHEMA = """
 CREATE TABLE IF NOT EXISTS chat_log (
@@ -32,28 +33,6 @@ CREATE INDEX IF NOT EXISTS idx_chat_ts ON chat_log (chat_id, ts);
 
 def _day_of(ts: float, tz_name: str = "") -> str:
     return clock.datetime_at(ts, tz_name).strftime("%Y-%m-%d")
-
-
-def format_ts(ts: float, now: float | None = None, tz_name: str = "") -> str:
-    """人类可读时间标注（给心智建立时间感）：
-
-    今天→HH:MM；昨天/前天→昨天 HH:MM；今年更早→MM-DD HH:MM；跨年带年份。
-    tz_name：主体时区（IANA 名，空=本机）；now 也按同时区解释。
-    """
-    now = now if now is not None else time.time()
-    dt = clock.datetime_at(ts, tz_name)
-    today = clock.datetime_at(now, tz_name).date()
-    hm = dt.strftime("%H:%M")
-    if dt.date() == today:
-        return hm
-    gap = (today - dt.date()).days
-    if gap == 1:
-        return f"昨天 {hm}"
-    if gap == 2:
-        return f"前天 {hm}"
-    if dt.year == today.year:
-        return dt.strftime("%m-%d %H:%M")
-    return dt.strftime("%Y-%m-%d %H:%M")
 
 
 class ChatLog:
@@ -213,6 +192,7 @@ CREATE TABLE IF NOT EXISTS chat_state (
                     self._state.execute(
                         "SELECT chat_id, last_read_ts FROM chat_state").fetchall()}
         counts: dict[str, int] = {}
+        earliest = 0.0  # 最早一条未读的时刻（概览给相对时间）
         # 24h 窗口最多涉及最近两个日库
         for path in self._day_files()[:2]:
             con = self._open_read(path)
@@ -225,6 +205,8 @@ CREATE TABLE IF NOT EXISTS chat_state (
                         continue
                     if r["ts"] > read_map.get(r["chat_id"], 0):
                         counts[r["chat_id"]] = counts.get(r["chat_id"], 0) + 1
+                        if not earliest or r["ts"] < earliest:
+                            earliest = r["ts"]
             finally:
                 con.close()
         if not counts:
@@ -232,5 +214,7 @@ CREATE TABLE IF NOT EXISTS chat_state (
         top_items = sorted(counts.items(), key=lambda x: -x[1])[:top]
         parts = [f"{cid.replace('group_', '群').replace('private_', '私聊')} {c} 条"
                  for cid, c in top_items]
+        age = (f"，最早的一条约 {clock.format_rel(earliest, tz_name=self._tz_name())}"
+               if earliest else "")
         return (f"（你有 {sum(counts.values())} 条没看的消息："
-                f"{'、'.join(parts)}。）")
+                f"{'、'.join(parts)}{age}。）")
