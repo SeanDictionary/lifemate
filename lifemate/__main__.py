@@ -68,11 +68,21 @@ def add_arguments(parser: argparse.ArgumentParser):
 
 
 def _install_signal_handlers(stop: asyncio.Event) -> None:
-    """SIGINT/SIGTERM → 统一停机事件（所有服务共同订阅）。"""
+    """SIGINT/SIGTERM → 统一停机事件；停机中再收信号 → 强制退出（逃生口）。"""
+    seen = False
+
+    def _on_signal(s, _f, _loop=asyncio.get_event_loop()):
+        nonlocal seen
+        if seen or stop.is_set():
+            # 停机已在进行：再收信号 = 逃生口，立即强退（进度见分步日志）
+            log.warning("停机中再次收到信号 %s——强制退出（停机进度见分步日志）", s)
+            logging.shutdown()
+            os._exit(130)
+        seen = True
+        _loop.call_soon_threadsafe(stop.set)
+
     for sig in ("SIGINT", "SIGTERM"):
         if hasattr(signal, sig):
-            def _on_signal(s, _f, _loop=asyncio.get_event_loop()):
-                _loop.call_soon_threadsafe(stop.set)
             try:
                 signal.signal(getattr(signal, sig), _on_signal)
             except (ValueError, OSError):
@@ -85,6 +95,7 @@ async def _orchestrate(silence: bool, log_level: str | None,
     lock = None
     run_marker: Path | None = None
     store = recorder = None
+    server_task: asyncio.Task | None = None
     try:
         cfg = Config()
         # 单实例锁先于一切数据访问
@@ -134,20 +145,41 @@ async def _orchestrate(silence: bool, log_level: str | None,
         host_task = asyncio.create_task(host.run())
         server_task = asyncio.create_task(server.serve())
         reason = await host_task      # host 主导生命周期（console/信号决定停）
-        await server_task             # stop 置位后 server 自行收尾退出
-
-        # 统一收尾（编排权在入口）：host 已中止思维与插件，此处记档关库
+        log.info("停机①：host 已退出（reason=%s）", reason)
         recorder.event("host_stop", reason=reason)
-        recorder.close()
-        store.close()
-        log.info("宿主退出")
     finally:
+        # ── 统一收尾：任何退出路径（正常/异常）都分步执行并留痕 ──
+        # 档案与库先落地，不被网络服务收尾阻塞
+        if recorder is not None:
+            try:
+                recorder.close()
+                log.info("停机②：观测档案已关闭")
+            except Exception:  # noqa: BLE001
+                log.exception("停机②：观测档案关闭失败")
+        if store is not None:
+            try:
+                store.close()
+                log.info("停机③：记忆库已关闭")
+            except Exception:  # noqa: BLE001
+                log.exception("停机③：记忆库关闭失败")
+        if server_task is not None:
+            try:
+                await asyncio.wait_for(asyncio.shield(server_task), timeout=5.0)
+                log.info("停机④：server 已退出")
+            except TimeoutError:
+                log.warning("停机④：server 收尾超时（5s），"
+                            "剩余连接由进程收尾取消")
+            except Exception:  # noqa: BLE001
+                log.exception("停机④：server 收尾异常")
+        log.info("停机⑤：释放单实例锁")
         instance.release(lock)
         if run_marker is not None:
             try:
-                run_marker.unlink(missing_ok=True)  # 优雅停机：移除运行标记
+                run_marker.unlink(missing_ok=True)
+                log.info("停机⑥：运行标记已移除（优雅停机完成）")
             except OSError:
-                pass
+                log.warning("停机⑥：运行标记移除失败")
+        log.info("=" * 40)
 
 
 def main() -> None:

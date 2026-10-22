@@ -91,7 +91,13 @@ class Server:
     async def close(self) -> None:
         if self._server is not None:
             self._server.close()
-            await self._server.wait_closed()
+            try:
+                # 3.12+ wait_closed 会等所有连接 handler 结束：限时，
+                # 防止朝着的 SSE/慢消费连接挂死整个停机流程
+                await asyncio.wait_for(self._server.wait_closed(), timeout=3.0)
+            except TimeoutError:
+                log.warning("server：连接收尾超时（3s），"
+                            "剩余连接由进程收尾取消")
             self._server = None
         if self._unsub is not None:
             self._unsub()
@@ -216,7 +222,7 @@ class Server:
                 pass
 
     async def _stream_sse(self, writer: asyncio.StreamWriter) -> None:
-        """SSE 流：事件推送 + 15s 心跳；断开即清理。"""
+        """SSE 流：事件推送 + 15s 心跳；断开或停机即清理。"""
         q = self.broadcaster.subscribe()
         writer.write(b"HTTP/1.1 200 OK\r\n"
                      b"Content-Type: text/event-stream\r\n"
@@ -225,14 +231,24 @@ class Server:
         try:
             await writer.drain()
             while True:
-                try:
-                    obj = await asyncio.wait_for(q.get(), timeout=_HEARTBEAT_S)
-                except TimeoutError:
-                    writer.write(b": ping\n\n")
+                # 事件/停机/心跳三路等待：停机立即退流，不被 15s 心跳周期拖住
+                get_f = asyncio.ensure_future(q.get())
+                stop_f = asyncio.ensure_future(self.stop.wait())
+                done, _ = await asyncio.wait(
+                    {get_f, stop_f}, timeout=_HEARTBEAT_S,
+                    return_when=asyncio.FIRST_COMPLETED)
+                if stop_f in done:
+                    get_f.cancel()
+                    break  # 停机：退出流（连接由 finally 关闭）
+                if get_f in done:
+                    stop_f.cancel()
+                    data = json.dumps(get_f.result(), ensure_ascii=False)
+                    writer.write(f"data: {data}\n\n".encode("utf-8"))
                     await writer.drain()
                     continue
-                data = json.dumps(obj, ensure_ascii=False)
-                writer.write(f"data: {data}\n\n".encode("utf-8"))
+                get_f.cancel()          # 心跳周期到点：证明流还活着
+                stop_f.cancel()
+                writer.write(b": ping\n\n")
                 await writer.drain()
         except (ConnectionError, OSError):
             pass

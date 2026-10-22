@@ -89,6 +89,7 @@ async def env(tmp_path):
     try:
         yield port, kernel, store, cfg, tmp_path
     finally:
+        stop.set()
         await srv.close()
         store.close()
 
@@ -314,3 +315,39 @@ async def test_static_next_rsc_translation(tmp_path):
     (out / "events" / "__next.events" / "__PAGE__.txt").write_text("rsc", encoding="utf-8")
     resp = static_resp(out, "/events/__next.events.__PAGE__.txt")
     assert resp.split(b"\r\n\r\n", 1)[1] == b"rsc"
+
+
+async def test_close_with_open_sse(tmp_path):
+    """回归：浏览器 SSE 连接未断开时，stop 后 close 必须限时完成。
+
+    旧行为：wait_closed() 等 SSE handler（while True + 心跳）永不结束
+    → 整个停机流程挂死（Ctrl+C 无法退出）。
+    """
+    cfg = make_config(tmp_path)
+    cfg.server_host = "127.0.0.1"
+    cfg.server_port = 0
+    cfg.server_token = ""
+    cfg.server_static_dir = str(tmp_path / "no-such-out")
+    kernel = FakeKernel()
+    store = Store(tmp_path / "memory.db")
+    stop = asyncio.Event()
+    srv = Server(kernel, store, None, cfg, stop, plugins=[])
+    port = await srv.start()
+    assert port
+    try:
+        # 建立一条 SSE 连接并保持不断开（模拟开着的浏览器面板）
+        reader, writer = await asyncio.open_connection("127.0.0.1", port)
+        writer.write(b"GET /api/events HTTP/1.1\r\nHost: t\r\n\r\n")
+        await writer.drain()
+        await asyncio.sleep(0.2)            # 服务端完成订阅
+        # 停机：SSE 感知 stop 立即退流，close 限时完成不挂死
+        stop.set()
+        await asyncio.wait_for(srv.close(), 5.0)
+        # 连接被服务端关闭：客户端读到 EOF
+        tail = await asyncio.wait_for(reader.read(-1), 5.0)
+        assert isinstance(tail, bytes)      # EOF（可能带残余帧）
+        writer.close()
+    finally:
+        stop.set()
+        await srv.close()
+        store.close()

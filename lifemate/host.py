@@ -346,8 +346,15 @@ class Host:
         # 优雅停机：中止思维 → 停后台任务 → 停插件（档案/关库由入口收尾）
         log.info("开始优雅停机（reason=%s）", reason)
         await kernel.abort()
+        log.info("停机（host）：思维已中止")
         await kernel.wait_idle()
         self._stop.set()
-        await asyncio.gather(*tasks, return_exceptions=True)
+        results = await asyncio.gather(*tasks, return_exceptions=True)
+        for t, r in zip(tasks, results):
+            if isinstance(r, BaseException):
+                log.warning("停机（host）：基建任务 %s 异常退出：%r",
+                            t.get_name(), r)
+        log.info("停机（host）：基建任务已停止（%d 项）", len(tasks))
         await stop_plugins(plugins)
+        log.info("停机（host）：插件已停止（%d 个）", len(plugins))
         return reason
