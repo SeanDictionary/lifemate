@@ -80,7 +80,11 @@ export default function OverviewPage() {
           <div className="flex items-center gap-2 px-4 pt-4 pb-2 text-sm font-medium">
             最近动态
             <span className="text-[11px] font-normal text-muted-foreground">
-              {feed ? `档案尾部 ${feed.count} 条 · 8s 轮询` : "加载中…"}
+              {feed
+                ? feed.ok
+                  ? `档案尾部 ${feed.count} 条 · 8s 轮询`
+                  : `读取失败：${feed.error ?? "未知错误"}`
+                : "加载中…"}
             </span>
           </div>
           <ScrollArea className="h-96">

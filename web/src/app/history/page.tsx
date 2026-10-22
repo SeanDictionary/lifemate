@@ -1,5 +1,5 @@
 "use client";
-/** 历史回放：observe 档案（日期/rid 过滤 + 分页）· 事件卡片视图 */
+/** 历史：observe 档案（日期/rid 过滤 + 分页）· 事件卡片视图 */
 import { useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { apiGet } from "@/lib/api";
@@ -50,7 +50,7 @@ export default function HistoryPage() {
 
   return (
     <div className="space-y-4">
-      <h1 className="text-lg font-semibold">历史回放</h1>
+      <h1 className="text-lg font-semibold">历史</h1>
 
       <div className="flex flex-wrap items-center gap-2">
         <div className="w-44">

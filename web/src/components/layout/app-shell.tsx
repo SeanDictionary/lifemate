@@ -45,7 +45,7 @@ interface NavItem {
 
 const NAV: NavItem[] = [
   { href: "/", label: "概览", icon: faGaugeHigh },
-  { href: "/history", label: "历史回放", icon: faClockRotateLeft },
+  { href: "/history", label: "历史", icon: faClockRotateLeft },
   { href: "/chat", label: "对话", icon: faComments },
   { href: "/memory", label: "记忆", icon: faBrain },
   { href: "/usage", label: "用量", icon: faChartColumn },

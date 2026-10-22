@@ -74,7 +74,7 @@ export default function ChatPage() {
       <div className="flex items-center gap-3">
         <h1 className="text-lg font-semibold">对话</h1>
         <span className="text-xs text-muted-foreground">
-          你说的话成为信封直达心智；它用 webui_send 回话
+          你可以在直接在这里交流
         </span>
       </div>
 
