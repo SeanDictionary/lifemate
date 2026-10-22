@@ -8,7 +8,6 @@ import { useQuery } from "@tanstack/react-query";
 import { FontAwesomeIcon } from "@fortawesome/react-fontawesome";
 import {
   faGaugeHigh,
-  faWaveSquare,
   faClockRotateLeft,
   faComments,
   faBrain,
@@ -29,7 +28,6 @@ import { cn } from "@/lib/utils";
 /** 图标注册表（Font Awesome 名 → 组件；插件面板 icon 字段同用此表） */
 export const FA_ICONS: Record<string, IconDefinition> = {
   gauge: faGaugeHigh,
-  wave: faWaveSquare,
   history: faClockRotateLeft,
   comments: faComments,
   brain: faBrain,
@@ -47,7 +45,6 @@ interface NavItem {
 
 const NAV: NavItem[] = [
   { href: "/", label: "概览", icon: faGaugeHigh },
-  { href: "/events", label: "事件流", icon: faWaveSquare },
   { href: "/history", label: "历史回放", icon: faClockRotateLeft },
   { href: "/chat", label: "对话", icon: faComments },
   { href: "/memory", label: "记忆", icon: faBrain },
