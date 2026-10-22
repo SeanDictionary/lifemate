@@ -40,12 +40,12 @@ export function QQPanel() {
   const status = useQuery({
     queryKey: ["qq", "status"],
     queryFn: () => apiGet<QQStatus>("/api/plugins/qq/status"),
-    refetchInterval: 15_000,
+    refetchInterval: 3_000,
   });
   const chats = useQuery({
     queryKey: ["qq", "chats"],
     queryFn: () => apiGet<QQChats>("/api/plugins/qq/chats"),
-    refetchInterval: 15_000,
+    refetchInterval: 3_000,
   });
   const log = useQuery({
     queryKey: ["qq", "chatlog", chat],

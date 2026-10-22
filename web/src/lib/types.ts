@@ -26,6 +26,7 @@ export interface SseEvent {
 /** observe 档案一行（/api/history rows；字段按记录类型而异，宽松 typing） */
 export interface ObserveRecord {
   ts: number;
+  seq?: number;
   type: string;
   rid?: string;
   role?: string;

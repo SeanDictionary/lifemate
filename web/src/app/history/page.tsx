@@ -1,6 +1,6 @@
 "use client";
-/** 历史：observe 档案（日期/rid 过滤 + 分页）· 事件卡片视图 */
-import { useState } from "react";
+/** 历史：observe 档案（日期/rid 过滤 + 尾部翻页倒序）· 事件卡片视图 · 3s 轮询近实时 */
+import { useMemo, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { apiGet } from "@/lib/api";
 import type { DatesResp, HistoryResp } from "@/lib/types";
@@ -23,30 +23,44 @@ const PAGE = 200; // 卡片比纯文本行重，分页收紧
 export default function HistoryPage() {
   const [date, setDate] = useState("");
   const [rid, setRid] = useState("");
-  const [offset, setOffset] = useState(0);
+  const [older, setOlder] = useState(0); // 从尾部跳过的条数（0=最新一页）
 
   const dates = useQuery({
     queryKey: ["dates"],
     queryFn: () => apiGet<DatesResp>("/api/dates"),
+    refetchInterval: 3_000,
   });
   const effectiveDate = date || dates.data?.dates.at(-1) || "";
   const effectiveRid = rid.trim();
 
+  // 尾部翻页 + 3s 轮询：首页即最新记录，新到达时窗口自然滑动
   const history = useQuery({
-    queryKey: ["history", effectiveDate, effectiveRid, offset],
+    queryKey: ["history", effectiveDate, effectiveRid, older],
     queryFn: () => {
       const p = new URLSearchParams({
         date: effectiveDate,
-        offset: String(offset),
+        offset: String(older),
         limit: String(PAGE),
+        tail: String(PAGE),
       });
       if (effectiveRid) p.set("rid", effectiveRid);
       return apiGet<HistoryResp>(`/api/history?${p}`);
     },
     enabled: !!effectiveDate,
+    refetchInterval: 3_000,
   });
 
   const total = history.data?.total ?? 0;
+  const cards = useMemo(
+    () =>
+      (history.data?.rows ?? []).flatMap((r) =>
+        recordToCards(r).map((m) => ({
+          key: `${r.seq ?? r.ts}-${m.kind}-${m.label}`,
+          model: m,
+        })),
+      ).reverse(), // 倒序：最新恒在顶部
+    [history.data],
+  );
 
   return (
     <div className="space-y-4">
@@ -58,7 +72,7 @@ export default function HistoryPage() {
             value={effectiveDate}
             onValueChange={(v) => {
               setDate(v);
-              setOffset(0);
+              setOlder(0);
             }}
           >
             <SelectTrigger size="sm">
@@ -81,7 +95,7 @@ export default function HistoryPage() {
           value={rid}
           onChange={(e) => {
             setRid(e.target.value);
-            setOffset(0);
+            setOlder(0);
           }}
         />
         {effectiveRid && (
@@ -90,24 +104,24 @@ export default function HistoryPage() {
           </Button>
         )}
         <span className="text-xs text-muted-foreground">
-          {history.data ? `共 ${total} 条` : ""}
+          {history.data ? `共 ${total} 条 · 3s 轮询` : ""}
         </span>
         <div className="ml-auto flex gap-2">
           <Button
             size="sm"
             variant="outline"
-            disabled={offset === 0 || !history.data}
-            onClick={() => setOffset(Math.max(0, offset - PAGE))}
+            disabled={!history.data || older === 0}
+            onClick={() => setOlder(Math.max(0, older - PAGE))}
           >
-            上一页
+            ← 更近
           </Button>
           <Button
             size="sm"
             variant="outline"
-            disabled={!history.data || offset + PAGE >= total}
-            onClick={() => setOffset(offset + PAGE)}
+            disabled={!history.data || older + PAGE >= total}
+            onClick={() => setOlder(older + PAGE)}
           >
-            下一页
+            更早 →
           </Button>
         </div>
       </div>
@@ -128,18 +142,12 @@ export default function HistoryPage() {
                   该条件下无记录
                 </div>
               )}
-              {history.data?.rows.flatMap((r, i) =>
-                recordToCards(r).map((m, j) => (
-                  <EventCard
-                    key={`${i}-${j}`}
-                    model={m}
-                    onRid={(v) => {
-                      setRid(v);
-                      setOffset(0);
-                    }}
-                  />
-                )),
-              )}
+              {cards.map((c) => (
+                <EventCard key={c.key} model={c.model} onRid={(v) => {
+                  setRid(v);
+                  setOlder(0);
+                }} />
+              ))}
             </div>
           </ScrollArea>
         </CardContent>

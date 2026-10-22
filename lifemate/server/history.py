@@ -20,7 +20,8 @@ def available_dates(observe_dir: Path) -> list[str]:
 def read_day(observe_dir: Path, date: str, rid: str = "", limit: int = 500, offset: int = 0, tail: int = 0) -> dict[str, Any] | None:
     """读一天档案（可按 rid 过滤、分页或取尾部 N 条）。无档案 → None。
 
-    tail>0 时取过滤后的最后 N 条（概览“最近动态”轮询用，忽略 offset/limit）。
+    tail>0 时从尾部翻页：取过滤后的倒数第 offset+1..offset+tail 条
+    （offset=0 即最后 N 条；历史页倒序展示用，新记录到达时窗口滑动）。
     """
     path = observe_dir / f"{date}.jsonl"
     if not path.exists():
@@ -39,7 +40,9 @@ def read_day(observe_dir: Path, date: str, rid: str = "", limit: int = 500, offs
             continue
         rows.append(rec)
     if tail:
-        return {"total": len(rows), "rows": rows[-tail:]}
+        end = max(0, len(rows) - offset)
+        start = max(0, end - tail)
+        return {"total": len(rows), "rows": rows[start:end]}
     return {"total": len(rows), "rows": rows[offset : offset + limit]}
 
 

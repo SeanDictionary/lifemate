@@ -28,7 +28,7 @@ function Rows({ table }: { table: string }) {
   const { data, isLoading } = useQuery({
     queryKey: ["memory", table],
     queryFn: () => apiGet<MemoryResp>(`/api/memory/${table}?limit=50`),
-    refetchInterval: 30_000,
+    refetchInterval: 3_000,
   });
 
   if (isLoading)

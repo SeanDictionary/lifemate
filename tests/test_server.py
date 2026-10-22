@@ -385,3 +385,13 @@ async def test_history_tail_and_default_date(env):
     # tail 与普通分页互不影响
     _, data = await _jget(port, "/api/history?date=2026-01-01")
     assert data["count"] == 5
+
+    # 尾部翻页（历史页倒序展示）：offset 跳过最新的 N 条
+    # 5 条 [早0..早4]：offset=2 → 窗口 [0:3] = 早0/早1/早2
+    _, data = await _jget(port, "/api/history?date=2026-01-01&tail=3&offset=2")
+    assert data["count"] == 3
+    assert data["rows"][0]["content"] == "早0" and data["rows"][-1]["content"] == "早2"
+    assert data["total"] == 5
+    # 翻出界：窗口收缩到开头，不越界
+    _, data = await _jget(port, "/api/history?date=2026-01-01&tail=3&offset=4")
+    assert data["count"] == 1 and data["rows"][0]["content"] == "早0"

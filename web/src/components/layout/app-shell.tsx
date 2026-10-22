@@ -77,7 +77,7 @@ function Brand() {
   const { data: st } = useQuery({
     queryKey: ["status"],
     queryFn: () => apiGet<StatusResp>("/api/status"),
-    refetchInterval: 10_000,
+    refetchInterval: 3_000,
     select: (d) => d.version,
   });
   return (
@@ -97,7 +97,7 @@ function Vitals() {
   const { data: st } = useQuery({
     queryKey: ["status"],
     queryFn: () => apiGet<StatusResp>("/api/status"),
-    refetchInterval: 10_000,
+    refetchInterval: 3_000,
     select: (d) => d.uptime_s,
   });
   return (
@@ -112,7 +112,7 @@ function PluginNav() {
   const { data } = useQuery({
     queryKey: ["plugins"],
     queryFn: () => apiGet<PluginsResp>("/api/plugins"),
-    refetchInterval: 30_000,
+    refetchInterval: 3_000,
   });
   const withPanel = (data?.plugins ?? []).filter((p) => p.panel);
   if (!withPanel.length) return null;

@@ -28,16 +28,19 @@ export default function OverviewPage() {
   const { data: st } = useQuery({
     queryKey: ["status"],
     queryFn: () => apiGet<StatusResp>("/api/status"),
-    refetchInterval: 10_000,
+    refetchInterval: 3_000,
   });
-  // 最近动态：档案尾部（date 缺省=最新有档案日），8s 轮询近实时
+  // 最近动态：档案尾部（date 缺省=最新有档案日），3s 轮询近实时
   const { data: feed } = useQuery({
     queryKey: ["recent-feed"],
     queryFn: () => apiGet<HistoryResp>("/api/history?tail=30"),
-    refetchInterval: 8_000,
+    refetchInterval: 3_000,
   });
   const cards = useMemo(
-    () => (feed?.rows ?? []).flatMap((r) => recordToCards(r)).reverse(),
+    () =>
+      (feed?.rows ?? []).flatMap((r) =>
+        recordToCards(r).map((m) => ({ key: `${r.seq ?? r.ts}-${m.kind}`, model: m })),
+      ).reverse(),
     [feed],
   );
 
@@ -74,7 +77,7 @@ export default function OverviewPage() {
         <Stat label="会话" value={st ? st.session_id : "—"} />
       </div>
 
-      {/* 最近动态（档案尾部 + 8s 轮询，最新在上） */}
+      {/* 最近动态（档案尾部 + 3s 轮询，最新在上） */}
       <Card>
         <CardContent className="p-0">
           <div className="flex items-center gap-2 px-4 pt-4 pb-2 text-sm font-medium">
@@ -82,7 +85,7 @@ export default function OverviewPage() {
             <span className="text-[11px] font-normal text-muted-foreground">
               {feed
                 ? feed.ok
-                  ? `档案尾部 ${feed.count} 条 · 8s 轮询`
+                  ? `档案尾部 ${feed.count} 条 · 3s 轮询`
                   : `读取失败：${feed.error ?? "未知错误"}`
                 : "加载中…"}
             </span>
@@ -94,8 +97,8 @@ export default function OverviewPage() {
                   暂无记录（它可能还没醒过）
                 </div>
               )}
-              {cards.map((m, i) => (
-                <EventCard key={i} model={m} />
+              {cards.map((c) => (
+                <EventCard key={c.key} model={c.model} />
               ))}
             </div>
           </ScrollArea>
