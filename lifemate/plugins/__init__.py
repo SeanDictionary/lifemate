@@ -126,7 +126,6 @@ def preset_plugin_defaults(cfg: Config) -> list[str]:
             module = importlib.import_module(f"lifemate.plugins.{sub.name}")
         except Exception:  # noqa: BLE001
             log.exception("插件导入失败：%s", sub.name)
-            ctx.recorder.event("error", where="plugins", error=f"插件 {sub.name} 导入失败", traceback=traceback.format_exc()[-4000:])
             continue
         conf_cls = getattr(module, "CONFIG", None)
         if isinstance(conf_cls, type) and issubclass(conf_cls, PluginConfig) and conf_cls.declared():
