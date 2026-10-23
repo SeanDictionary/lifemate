@@ -1,8 +1,8 @@
 """QQ 插件测试：协议解析（纯函数）+ FakeNapCat 端到端。"""
 
 import asyncio
-import time
 import json
+import time
 
 from lifemate.plugins.qq.protocol import compose_envelope_text, parse_event
 
@@ -302,7 +302,6 @@ async def _ambient_harness(tmp_path, extra_cfg: dict | None = None, replies=None
 
 async def test_conversation_window_upgrades_followup(tmp_path):
     """对话延续窗口：我发言后的跟话直达（文本保持背景形态，不标"对你说"）。"""
-    import time
 
     napcat, plugin, kernel, _ = await _ambient_harness(tmp_path)
     try:

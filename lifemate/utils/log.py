@@ -12,8 +12,9 @@ import logging
 import logging.handlers
 import sys
 import traceback
+from collections.abc import Callable
 from pathlib import Path
-from typing import Any, Callable
+from typing import Any
 
 _FORMAT = "%(asctime)s - %(name)s [%(levelname)s]: %(message)s"
 

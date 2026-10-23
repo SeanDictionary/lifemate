@@ -514,7 +514,6 @@ async def test_dangling_input_recovery(tmp_path):
     # 模拟崩溃遗留：会话尾部是未回应的 user 消息
     k._session.append({"role": "user", "content": "（被中断的任务：去群里说话）"})
     assert k._has_dangling_input() is True
-    evs = events_of(k)
     k._ensure_run()
     await k.wait_idle()
     users = [m["content"] for m in k._session.messages if m.get("role") == "user"]
@@ -548,12 +547,15 @@ async def test_live_crashed_event_carries_traceback(tmp_path):
 
 # ── 自主免打扰（DND）：wake_on="direct" ────────────────
 
+
 async def test_dnd_ambient_accumulates_direct_penetrates(tmp_path):
     """DND：ambient 只累积不唤醒；直达穿透；自然醒后组批可见。"""
-    llm = FakeLLM([
-        tool_reply("wait", args='{"timeout_s": 0.3, "reason": "睡长觉", "wake_on": "direct"}', cid="c1"),
-        text_reply("醒了"),
-    ])
+    llm = FakeLLM(
+        [
+            tool_reply("wait", args='{"timeout_s": 0.3, "reason": "睡长觉", "wake_on": "direct"}', cid="c1"),
+            text_reply("醒了"),
+        ]
+    )
     k = make_kernel(tmp_path, llm)
     evs = events_of(k)
     k.notify(Envelope(text="先睡一觉"))
@@ -575,10 +577,12 @@ async def test_dnd_reminder_kind_penetrates(tmp_path):
     """自定闹钟（REMINDER）在 DND 下照常穿透——自己的承诺不静音。"""
     from lifemate.kernel.contracts import REMINDER
 
-    llm = FakeLLM([
-        tool_reply("wait", args='{"timeout_s": 60, "reason": "睡到七点", "wake_on": "direct"}', cid="c1"),
-        text_reply("七点了"),
-    ])
+    llm = FakeLLM(
+        [
+            tool_reply("wait", args='{"timeout_s": 60, "reason": "睡到七点", "wake_on": "direct"}', cid="c1"),
+            text_reply("七点了"),
+        ]
+    )
     k = make_kernel(tmp_path, llm)
     evs = events_of(k)
     k.notify(Envelope(text="睡了"))
@@ -591,16 +595,19 @@ async def test_dnd_reminder_kind_penetrates(tmp_path):
 
 async def test_dnd_wake_batch_ambient_capped(tmp_path):
     """DND 累积超限：ambient 截断到最近 12 条 + 计数提示。"""
-    llm = FakeLLM([
-        tool_reply("wait", args='{"timeout_s": 0.3, "reason": "长觉", "wake_on": "direct"}', cid="c1"),
-        text_reply("醒"),
-    ])
+    llm = FakeLLM(
+        [
+            tool_reply("wait", args='{"timeout_s": 0.3, "reason": "长觉", "wake_on": "direct"}', cid="c1"),
+            text_reply("醒"),
+        ]
+    )
     k = make_kernel(tmp_path, llm)
     evs = events_of(k)
     k.notify(Envelope(text="睡"))
     await wait_event(evs, REST, reason="explicit:长觉")
     for i in range(30):
         k.notify(Envelope(text=f"水话{i}", kind=AMBIENT, origin="qq"))
+
     # 闹钟自然醒（0.3s 超时）→ 组批（轮询到周期完成）
     async def _batch_ready():
         msgs = [m["content"] for m in k._session.messages if m.get("role") == "tool"]
