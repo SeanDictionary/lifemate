@@ -72,8 +72,8 @@ export default function HistoryPage() {
       mergeRecords(history.data?.rows ?? [], live)
         .slice(-PAGE)
         .flatMap((r) =>
-          recordToCards(r).map((m) => ({
-            key: `${r.seq ?? r.ts}-${m.kind}-${m.label}`,
+          recordToCards(r).map((m, j) => ({
+            key: `${r.seq ?? r.ts}-${j}-${m.kind}-${m.label}`,
             model: m,
           })),
         )

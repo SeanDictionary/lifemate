@@ -51,8 +51,8 @@ export default function OverviewPage() {
       mergeRecords(feed?.rows ?? [], live)
         .slice(-30)
         .flatMap((r) =>
-          recordToCards(r).map((m) => ({
-            key: `${r.seq ?? r.ts}-${m.kind}`,
+          recordToCards(r).map((m, j) => ({
+            key: `${r.seq ?? r.ts}-${j}-${m.kind}`,
             model: m,
           })),
         )
