@@ -47,7 +47,8 @@ lifemate/
 │   ├── session.py     #   工作记忆：消息列表 + JSONL 持久化 + 轮换
 │   ├── compaction.py  #   上下文压缩（会话内兜底，阈值活配置）
 │   ├── persona.py     #   人格装配：identity + 内置指引 + skills 索引，每轮重建
-│   ├── tools.py       #   内核工具：wait（思维生理）/read_skill/deep_sleep
+│   ├── tools.py       #   内核工具：wait（思维生理）/read_skill/deep_sleep/
+│   │                  #   look_image（看图：四形态输入归一+hash 去重+原图归档）
 │   └── builtin/       #   内置机制说明（代码管理，常驻装配，客观陈述）
 ├── memory/            # 记忆系统（内核②：长期记忆）
 │   ├── store.py       #   SQLite：episodes/curiosity/needs/reminders/重建包/images
@@ -72,7 +73,7 @@ lifemate/
 └── __main__.py        # 入口=组合根：共享准备（锁/日志/装配/stop）+服务编排
 tests/                 # 单测 + 剥夺测试（必须常绿）
 data/                  # 运行数据（gitignore）：config.json / memory.db /
-                      #   sessions/ / observe/ / logs/*.log / backups/ /
+                      #   sessions/ / observe/ / logs/*.log / backups/ / images/ /
                       #   lifemate.lock
 ├── plugins/           # 插件目录（一个文件夹=一个插件，自动发现装载）
 │   ├── __init__.py    #   装载器（主代码，写一次）：扫描→create 工厂→注册+start
@@ -325,6 +326,17 @@ env 仅部署种子）；热重载靠字段原地更新——新组件必须持�
   附详细错误；同一故障期每 100 次再提醒，任何一次正常输出即清零；
   出站走同一风控钳制，被钳/发送失败回退下轮错误事件重试；
   界限硬编码（主人侧告警非行为参数）
+- **看图能力上线（2026-10-23）**：内核新增 look_image（看懂图像是心智天赋，
+  采集归器官）——四形态输入归一（URL/data:URI/base64://本地路径，
+  广泛适用不绑 QQ），防 SSRF（内网/回环拒绝）+大小上限+魔数嗅探；
+  感知记忆：内容 hash 去重（同图只识别一次，之后零 vision 成本回缓存，
+  附“何时看过”），原图归档 data/images/（URL 过期仍可回看），
+  带问题的特定问答不覆盖通用描述；能力门控：llm_vision_model 未配置时
+  look_image 不尝试不归档、直接回执明确告知（可转告主人，避免主模型
+  纯文本时收到费解的网关错误）；llm.py 新增 vision 多模态入口
+  （content blocks，llm_vision_model 必填才启用，复用重试/告警）；
+  host 维护任务加图片保留期清理（按最后查看时间淘汰）；
+  看/不看由心智自决（行动是拉的，工具自描述）
 - **待开发**：attention（门控升格）→ sandbox → webui → video
 
 ## 验证方式

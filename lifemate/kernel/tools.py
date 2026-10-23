@@ -1,4 +1,4 @@
-"""内核工具：思维生理（wait）+ 知情层入口（read_skill）+ 整觉（deep_sleep）。
+"""内核工具：思维生理（wait）+ 知情层入口（read_skill）+ 整觉（deep_sleep）+ 看图（look_image）。
 
 约定：每个模块的工具住该模块的 tools.py，无例外——开发者找工具只看这里。
 
@@ -8,13 +8,24 @@
   是思考本身的生理，故由 mind 持有并注册
 - deep_sleep 横跨 kernel（轮换会话）与 store（存信）：装配在 host
   （二者相遇处），工具定义在此
+- look_image 横跨 llm（vision 通路）与 store（感知记忆）：装配同在
+  host；看懂图像是心智天赋（模态中立），采集图像归器官
 """
 
 from __future__ import annotations
 
+import asyncio
+import base64
+import hashlib
+import ipaddress
 import json
+import socket
+import urllib.parse
+import urllib.request
+from pathlib import Path
 from typing import TYPE_CHECKING
 
+from ..utils import clock
 from .contracts import REST, WAKE, Tool
 
 if TYPE_CHECKING:
@@ -106,6 +117,193 @@ def make_deep_sleep_tool(kernel: SelfKernel, store: Store) -> Tool:
                     "hours": {"type": "number", "description": "睡多久（小时，默认 8）"},
                 },
                 "required": ["letter"],
+            },
+        },
+        func=_fn,
+        interruptible=False,
+    )
+
+
+# ── 看图 look_image ──────────────────────────────────
+
+
+class _Reject(Exception):
+    """取图被拒（回执制：转 ok=False，绝不抛穿思维循环）。"""
+
+
+_FETCH_TIMEOUT_S = 20.0  # 取图超时（网络兑现上限，非行为参数）
+_MEDIA_EXT = {"image/jpeg": "jpg", "image/png": "png", "image/gif": "gif", "image/webp": "webp", "image/bmp": "bmp"}
+_DESC_MAX = 1500  # 描述入库/回执截断字符
+
+
+def _ok_receipt(**kw) -> str:
+    return json.dumps({"ok": True, **kw}, ensure_ascii=False)
+
+
+def _err_receipt(msg: str) -> str:
+    return json.dumps({"ok": False, "error": msg}, ensure_ascii=False)
+
+
+def _sniff_image(data: bytes) -> str:
+    """魔数嗅探（内容即真相，不信任声明）。"""
+    if data[:3] == b"\xff\xd8\xff":
+        return "image/jpeg"
+    if data[:8] == b"\x89PNG\r\n\x1a\n":
+        return "image/png"
+    if data[:6] in (b"GIF87a", b"GIF89a"):
+        return "image/gif"
+    if data[:4] == b"RIFF" and data[8:12] == b"WEBP":
+        return "image/webp"
+    if data[:2] == b"BM":
+        return "image/bmp"
+    return ""
+
+
+def _assert_public_http(url: str) -> None:
+    """防 SSRF：只允许公网 http(s) 目标（内网/回环/链路本地一律拒绝）。
+
+    注：解析后连接存在 DNS 重绑定窗口，对当前威胁模型（取图工具）
+    可接受；将来接入不可信输入再收紧（解析即连接固定 IP）。
+    """
+    p = urllib.parse.urlsplit(url)
+    if p.scheme not in ("http", "https"):
+        raise _Reject(f"仅支持 http/https 取图（收到：{p.scheme or '无协议'}）")
+    host = p.hostname
+    if not host:
+        raise _Reject("URL 缺少主机名")
+    try:
+        port = p.port or (443 if p.scheme == "https" else 80)
+        infos = socket.getaddrinfo(host, port, proto=socket.IPPROTO_TCP)
+    except OSError as e:
+        raise _Reject(f"主机解析失败：{e}") from e
+    for info in infos:
+        ip = ipaddress.ip_address(info[4][0])
+        if ip.is_private or ip.is_loopback or ip.is_link_local or ip.is_reserved or ip.is_multicast or ip.is_unspecified:
+            raise _Reject(f"拒绝访问非公网地址：{host}")
+
+
+def _http_get_image(url: str, max_bytes: int) -> tuple[bytes, str]:
+    req = urllib.request.Request(url, headers={"User-Agent": "Mozilla/5.0 (lifemate-look-image)"})
+    try:
+        with urllib.request.urlopen(req, timeout=_FETCH_TIMEOUT_S) as resp:
+            ctype = (resp.headers.get("Content-Type") or "").split(";", 1)[0].strip().lower()
+            data = resp.read(max_bytes + 1)
+    except Exception as e:  # noqa: BLE001
+        raise _Reject(f"取图失败（URL 可能已过期）：{e}") from e
+    if len(data) > max_bytes:
+        raise _Reject(f"图片超过大小上限（{max_bytes // 1_048_576}MB）")
+    return data, ctype
+
+
+def _resolve_image(image: str, max_bytes: int) -> tuple[bytes, str]:
+    """四形态归一：URL / data:URI / base64:// / 本地路径 → (字节, 媒体类型)。
+
+    广泛适用性：任何器官将来都可以用任一形态喂图（web 插件的网页图、
+    video 的帧、本地文件……），本工具不感知来源。媒体类型以魔数嗅探
+    为准，声明仅为兑底。
+    """
+    s = image.strip()
+    declared = ""
+    if s.startswith(("http://", "https://")):
+        _assert_public_http(s)
+        data, declared = _http_get_image(s, max_bytes)
+    elif s.startswith("data:"):
+        try:
+            head, _, payload = s.partition(",")
+            meta = head[5:].split(";", 1)
+            declared = meta[0].strip().lower()
+            if len(meta) > 1 and meta[1].strip().lower() == "base64":
+                data = base64.b64decode(payload)
+            else:
+                data = urllib.parse.unquote_to_bytes(payload)
+        except Exception as e:  # noqa: BLE001
+            raise _Reject(f"data URI 解析失败：{e}") from e
+        if len(data) > max_bytes:
+            raise _Reject(f"图片超过大小上限（{max_bytes // 1_048_576}MB）")
+    elif s.startswith("base64://"):
+        try:
+            data = base64.b64decode(s[9:])
+        except Exception as e:  # noqa: BLE001
+            raise _Reject(f"base64 解码失败：{e}") from e
+        if len(data) > max_bytes:
+            raise _Reject(f"图片超过大小上限（{max_bytes // 1_048_576}MB）")
+    else:
+        try:
+            data = Path(s).expanduser().read_bytes()
+        except OSError as e:
+            raise _Reject(f"读取本地图片失败：{e}") from e
+        if len(data) > max_bytes:
+            raise _Reject(f"图片超过大小上限（{max_bytes // 1_048_576}MB）")
+    media = _sniff_image(data) or (declared if declared.startswith("image/") else "")
+    if not media:
+        raise _Reject("不是可识别的图片（支持 jpg/png/gif/webp/bmp）")
+    return data, media
+
+
+def make_look_image_tool(llm, store: Store, cfg) -> Tool:
+    """看图：任何来源的图 → 内容描述（感知记忆：内容 hash 去重 + 原图归档）。
+
+    llm 需提供 vision(text, image_b64, media_type)（OpenAILLM 已具备）。
+    装配在 host（llm 与 store 相遇处）。看与不看由心智自决（行动是拉的）。
+    """
+
+    async def _fn(args: dict) -> str:
+        # 能力门控：vision 模型未配置→不尝试、不归档，直接给心智明确事实
+        # （主模型多半纯文本，试了只会得到费解的网关错误）
+        if not str(getattr(cfg, "llm_vision_model", "") or "").strip():
+            return _err_receipt("看图能力未配置：llm_vision_model 为空。可以告诉主人：在 config.json「模型」组设置支持图像的模型名（llm_vision_model），保存后 /reload 即生效")
+        image = str(args.get("image") or "").strip()
+        question = str(args.get("question") or "").strip()
+        if not image:
+            return _err_receipt("需要 image（图片 URL / data:URI / base64:// / 本地路径）")
+        max_bytes = int(float(cfg.image_max_mb) * 1_048_576)
+        try:
+            data, media = await asyncio.to_thread(_resolve_image, image, max_bytes)
+        except _Reject as e:
+            return _err_receipt(str(e))
+        h = hashlib.sha256(data).hexdigest()
+        row = store.find_image(h)
+        # 缓存命中（不问新问题）：零 vision 成本，直接回描述
+        if row and row["description"] and not question:
+            store.touch_image(h)
+            seen = clock.format_rel(row["first_seen"], tz_name=cfg.timezone)
+            return _ok_receipt(detail=row["description"], hash=h, note=f"这张图你 {seen} 看过，直接回缓存描述（未重复识别）")
+        # 归档原图（一次即档：之后 URL 过期也能看；文件丢失则补写）
+        fname = f"{h}.{_MEDIA_EXT.get(media, 'img')}"
+        fpath = Path(cfg.data_dir) / "images" / fname
+        if not fpath.is_file():
+
+            def _save() -> None:
+                fpath.parent.mkdir(parents=True, exist_ok=True)
+                fpath.write_bytes(data)
+
+            await asyncio.to_thread(_save)
+        store.record_image(h, fname, len(data), "")
+        q = question or "客观、简洁地描述这张图片的内容（人物/场景/文字/情绪）"
+        try:
+            resp = await llm.vision(q, base64.b64encode(data).decode("ascii"), media)
+        except Exception as e:  # noqa: BLE001
+            return _err_receipt(f"看图失败：{e}")
+        answer = (resp.content or "").strip()[:_DESC_MAX]
+        if not answer:
+            return _err_receipt("看图失败：模型未返回内容")
+        if question:
+            store.touch_image(h)  # 带问题的回答不覆盖通用描述（特定问答不缓存）
+        else:
+            store.record_image(h, fname, len(data), answer)
+        return _ok_receipt(detail=answer, hash=h, note="已归档原图与描述：同图再看（不问新问题）直接回缓存")
+
+    return Tool(
+        schema={
+            "name": "look_image",
+            "description": "看一张图，返回内容的描述；可带 question 提具体问题（图里写了什么/这是什么梗）。输入支持图片 URL、data:URI、base64://、本地路径——任何来源的图都能看。同一张图（内容相同）只识别一次，之后直接回缓存；原图自动归档，URL 过期也能回看。",
+            "inputSchema": {
+                "type": "object",
+                "properties": {
+                    "image": {"type": "string", "description": "图片：URL / data:URI / base64:// 前缀 / 本地路径"},
+                    "question": {"type": "string", "description": "想问这张图什么（不填=通用描述）"},
+                },
+                "required": ["image"],
             },
         },
         func=_fn,

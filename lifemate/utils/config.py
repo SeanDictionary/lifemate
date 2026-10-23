@@ -106,6 +106,9 @@ _JSON_FIELDS: dict[str, Setting] = {
     "observe_retention_days": Setting(90, description="观测档案保留天数（0=永久）", group="观测与档案"),
     "observe_max_field_chars": Setting(65_536, description="观测行单字段截断上限字符", group="观测与档案"),
     "session_keep_rotated": Setting(2, description="轮换后保留的旧会话文件数（档案在 observe）", group="观测与档案"),
+    # 图像（look_image 感知能力）
+    "image_max_mb": Setting(10, description="单张图片大小上限 MB（取图/归档/看图共用）", group="图像"),
+    "image_cache_retention_days": Setting(30, description="图片缓存保留天数（0=永久；按最后查看时间淘汰，描述档案随之删除）", group="图像"),
 }
 
 # env 种子：显式设置时覆盖 JSON（容器部署用）

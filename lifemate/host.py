@@ -27,7 +27,7 @@ from .kernel.llm import OpenAILLM
 from .kernel.mind import SelfKernel
 from .kernel.persona import Persona
 from .kernel.session import Session
-from .kernel.tools import make_deep_sleep_tool, make_read_skill_tool
+from .kernel.tools import make_deep_sleep_tool, make_look_image_tool, make_read_skill_tool
 from .memory.store import Store
 from .memory.tools import build_memory_tools
 from .plugins import stop_plugins
@@ -94,6 +94,7 @@ def build(cfg: Config) -> tuple[SelfKernel, Store, Recorder]:
         kernel.register_tool(t, source="记忆")
     kernel.register_tool(make_read_skill_tool(persona))
     kernel.register_tool(make_deep_sleep_tool(kernel, store))
+    kernel.register_tool(make_look_image_tool(llm, store, cfg))
 
     # 唤醒附加事实（身体感受：待办提醒概览——内核不解其义，只附上）
     def _extras() -> str:
@@ -214,6 +215,9 @@ async def _maintenance(cfg: Config, store: Store, recorder: Recorder, stop: asyn
             removed = recorder.cleanup(cfg.observe_retention_days)
             if removed:
                 log.info("观测档案清理：%d 个超期日档", removed)
+            img_removed = _cleanup_images(cfg, store)
+            if img_removed:
+                log.info("图片缓存清理：%d 张超期图（含描述档案）", img_removed)
             if time.time() - last_backup >= cfg.backup_interval_s:
                 last_backup = time.time()
                 ts = time.strftime("%Y%m%d-%H%M%S")
@@ -231,6 +235,24 @@ def _prune_backups(directory: Path, keep: int) -> None:
             old.unlink()
         except OSError:
             pass
+
+
+def _cleanup_images(cfg: Config, store: Store) -> int:
+    """图片缓存保留期清理：超期图删文件+删档案（0=永久，不清理）。"""
+    days = int(cfg.image_cache_retention_days)
+    if days <= 0:
+        return 0
+    cutoff = time.time() - days * 86400
+    img_dir = Path(cfg.data_dir) / "images"
+    removed = 0
+    for row in store.stale_images(cutoff):
+        try:
+            (img_dir / row["path"]).unlink(missing_ok=True)
+        except OSError:
+            continue  # 文件删不掉则保留档案，下轮再试
+        store.forget_image(row["hash"])
+        removed += 1
+    return removed
 
 
 # ── 闹钟兑现器 ─────────────────────────────────────────
