@@ -111,7 +111,9 @@ function ImageModal({ r, onClose }: { r: Record<string, unknown>; onClose: () =>
             <FontAwesomeIcon icon={faXmark} />
           </Button>
         </div>
-        <ScrollArea className="min-h-0 flex-1">
+        {/* 原生滚动：radix viewport 的百分比高度在 flex 收缩语境下不解析
+            （viewport 恒等于内容高→永不滚），改用 overflow-y-auto 一劳永逸 */}
+        <div className="min-h-0 flex-1 overflow-y-auto">
           <div className="space-y-3 px-5 py-4">
             {hash && (
               /* eslint-disable-next-line @next/next/no-img-element */
@@ -129,7 +131,7 @@ function ImageModal({ r, onClose }: { r: Record<string, unknown>; onClose: () =>
               {hash.slice(0, 12)}… · 首次 {fmtDate(firstSeen)}
             </div>
           </div>
-        </ScrollArea>
+        </div>
       </div>
     </div>
   );

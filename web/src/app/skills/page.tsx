@@ -7,7 +7,6 @@ import type { SkillDetailResp, SkillsResp } from "@/lib/types";
 import { Card, CardContent } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
-import { ScrollArea } from "@/components/ui/scroll-area";
 import { Skeleton } from "@/components/ui/skeleton";
 import { FontAwesomeIcon } from "@fortawesome/react-fontawesome";
 import { faBookOpen, faXmark } from "@fortawesome/free-solid-svg-icons";
@@ -50,7 +49,9 @@ function SkillModal({ name, onClose }: { name: string; onClose: () => void }) {
             <FontAwesomeIcon icon={faXmark} />
           </Button>
         </div>
-        <ScrollArea className="min-h-0 flex-1">
+        {/* 原生滚动：radix viewport 的百分比高度在 flex 收缩语境下不解析
+            （viewport 恒等于内容高→永不滚），改用 overflow-y-auto 一劳永逸 */}
+        <div className="min-h-0 flex-1 overflow-y-auto">
           <div className="px-5 py-4">
             {isLoading || !data ? (
               <div className="space-y-2">
@@ -64,7 +65,7 @@ function SkillModal({ name, onClose }: { name: string; onClose: () => void }) {
               </pre>
             )}
           </div>
-        </ScrollArea>
+        </div>
       </div>
     </div>
   );
