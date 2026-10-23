@@ -13,6 +13,9 @@ import {
   faBrain,
   faChartColumn,
   faGear,
+  faGears,
+  faBookOpen,
+  faXmark,
   faCircleDot,
   faPuzzlePiece,
   type IconDefinition,
@@ -46,8 +49,10 @@ interface NavItem {
 const NAV: NavItem[] = [
   { href: "/", label: "概览", icon: faGaugeHigh },
   { href: "/history", label: "历史", icon: faClockRotateLeft },
-  { href: "/chat", label: "对话", icon: faComments },
   { href: "/memory", label: "记忆", icon: faBrain },
+  { href: "/tools", label: "工具", icon: faGears },
+  { href: "/skills", label: "技能", icon: faBookOpen },
+  { href: "/chat", label: "对话", icon: faComments },
   { href: "/usage", label: "用量", icon: faChartColumn },
   { href: "/settings", label: "设置", icon: faGear },
 ];

@@ -131,6 +131,35 @@ export interface ApplyResult {
   env_locked: string[];
 }
 
+export interface SkillsResp {
+  ok: boolean;
+  skills: { name: string; description: string; source: string }[];
+}
+
+export interface SkillDetailResp {
+  ok: boolean;
+  name: string;
+  content: string;
+  source: string;
+}
+
+export interface ToolInfo {
+  name: string;
+  description: string;
+  inputSchema: {
+    type?: string;
+    properties?: Record<string, { type?: string; description?: string }>;
+    required?: string[];
+  };
+  interruptible: boolean;
+  source: string;
+}
+
+export interface ToolsResp {
+  ok: boolean;
+  tools: ToolInfo[];
+}
+
 export interface UsageResp {
   ok: boolean;
   date: string;
