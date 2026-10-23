@@ -1,4 +1,4 @@
-"""长期记忆存储（SQLite）：episodes / curiosity / needs / reminders / 重建包。
+"""长期记忆存储（SQLite）：episodes / curiosity / needs / reminders / 重建包 / 图像。
 
 记忆的持久性在这里，不在会话（架构铁律 6）。存储引擎可整体更换，
 对外形状只经 memory.tools 暴露给心智。
@@ -54,6 +54,15 @@ CREATE TABLE IF NOT EXISTS rebuild_packets (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     ts REAL NOT NULL,
     content TEXT NOT NULL
+);
+CREATE TABLE IF NOT EXISTS images (
+    hash TEXT PRIMARY KEY,
+    path TEXT NOT NULL,
+    size INTEGER NOT NULL DEFAULT 0,
+    first_seen REAL NOT NULL,
+    last_seen REAL NOT NULL,
+    hit_count INTEGER NOT NULL DEFAULT 0,
+    description TEXT NOT NULL DEFAULT ''
 );
 """
 
@@ -183,10 +192,35 @@ class Store:
         row = self._exec("SELECT content, ts FROM rebuild_packets ORDER BY ts DESC LIMIT 1").fetchone()
         return dict(row) if row else None
 
+    # ── 图像档案 images（感知记忆：看过的图及其内容）──
+    def record_image(self, h: str, path: str, size: int, description: str = "") -> None:
+        """登记/更新一张图（hash 主键）；description 空串不清盖已有描述。"""
+        now = time.time()
+        self._exec(
+            "INSERT INTO images (hash, path, size, first_seen, last_seen, description) VALUES (?, ?, ?, ?, ?, ?) ON CONFLICT(hash) DO UPDATE SET path=excluded.path, size=excluded.size, last_seen=excluded.last_seen, description=CASE WHEN excluded.description != '' THEN excluded.description ELSE images.description END",
+            (h, path, size, now, now, description[:1500]),
+        )
+
+    def find_image(self, h: str) -> dict[str, Any] | None:
+        row = self._exec("SELECT hash, path, size, first_seen, last_seen, hit_count, description FROM images WHERE hash = ?", (h,)).fetchone()
+        return dict(row) if row else None
+
+    def touch_image(self, h: str) -> None:
+        """看过一次：刷新 last_seen、计数。"""
+        self._exec("UPDATE images SET last_seen = ?, hit_count = hit_count + 1 WHERE hash = ?", (time.time(), h))
+
+    def stale_images(self, before_ts: float) -> list[dict[str, Any]]:
+        """超过 before_ts 未再看的图（保留期淘汰用）。"""
+        rows = self._exec("SELECT hash, path FROM images WHERE last_seen < ?", (before_ts,)).fetchall()
+        return [dict(r) for r in rows]
+
+    def forget_image(self, h: str) -> None:
+        self._exec("DELETE FROM images WHERE hash = ?", (h,))
+
     # ── 观测辅助 ────────────────────────────────────────
     def stats(self) -> dict[str, Any]:
         out: dict[str, Any] = {}
-        for table in ("episodes", "curiosity", "needs", "reminders", "rebuild_packets"):
+        for table in ("episodes", "curiosity", "needs", "reminders", "rebuild_packets", "images"):
             row = self._exec(f"SELECT COUNT(*) AS c FROM {table}").fetchone()
             out[table] = row["c"]
         return out

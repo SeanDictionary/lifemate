@@ -102,3 +102,27 @@ def test_latest_packet_returns_ts(tmp_path):
     s.save_packet("v1")
     row = s.latest_packet()
     assert row["content"] == "v1" and row["ts"] >= before
+
+
+def test_store_image_record_touch_stale(tmp_path):
+    s = Store(tmp_path / "memory.db")
+    s.record_image("h1", "h1.png", 100, "一只猫")
+    row = s.find_image("h1")
+    assert row["description"] == "一只猫" and row["hit_count"] == 0
+    # 空描述不清盖
+    s.record_image("h1", "h1.png", 100, "")
+    assert s.find_image("h1")["description"] == "一只猫"
+    # 新描述覆盖
+    s.record_image("h1", "h1.png", 100, "一只橘猫")
+    assert s.find_image("h1")["description"] == "一只橘猫"
+    # touch
+    s.touch_image("h1")
+    assert s.find_image("h1")["hit_count"] == 1
+    # stale / forget
+    s.record_image("h2", "h2.png", 50, "旧图")
+    old = time.time() - 40 * 86400
+    s._exec("UPDATE images SET last_seen = ? WHERE hash = 'h2'", (old,))
+    assert [r["hash"] for r in s.stale_images(time.time() - 30 * 86400)] == ["h2"]
+    s.forget_image("h2")
+    assert s.find_image("h2") is None
+    assert s.stats()["images"] == 1

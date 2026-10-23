@@ -49,7 +49,7 @@ lifemate/
 │   ├── tools.py       #   内核工具：wait（思维生理）/read_skill/deep_sleep
 │   └── builtin/       #   内置机制说明（代码管理，常驻装配，客观陈述）
 ├── memory/            # 记忆系统（内核②：长期记忆）
-│   ├── store.py       #   SQLite：episodes/curiosity/needs/reminders/重建包
+│   ├── store.py       #   SQLite：episodes/curiosity/needs/reminders/重建包/images
 │   └── tools.py       #   记忆工具（MCP 形状，内核自带）
 ├── utils/             # 共享中立层（依赖锚点：全系统可用，不依赖任何上层）
 │   ├── config.py      #   活配置：{data_dir}/config.json 事实源 + env 种子
