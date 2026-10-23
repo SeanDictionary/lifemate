@@ -675,10 +675,10 @@ async def test_command_framework(tmp_path):
     try:
         assert await _wait_for(lambda: plugin._client.connected)
 
-        # ① 未知命令（空表）：拦截并提示，不进心智
+        # ① 未知命令：拦截并提示（可用清单含已注册命令），不进心智
         await plugin._on_event(_priv("/stats"))
         assert await _wait_for(lambda: _cmd_replies() and "没有这个命令" in _cmd_replies()[-1])
-        assert "（暂无）" in _cmd_replies()[-1]  # 空表清单
+        assert "可用：/status" in _cmd_replies()[-1]
         assert not any(e.type == "USER_MSG" for e in evs)  # 零信封
 
         # ② 注册命令：分发 + 参数解析 + 异常回执 + 交互入档
@@ -718,6 +718,50 @@ async def test_command_framework(tmp_path):
         users = [m["content"] for m in kernel._session.messages if m.get("role") == "user"]
         assert any("/stats" in u for u in users)
         assert len(_cmd_replies()) == n_before  # 身体没有应答
+    finally:
+        await plugin.stop()
+        await napcat.stop()
+
+
+async def test_status_command(tmp_path):
+    """/status：面板 API 字段齐全时完整输出；面板未运行时降级本地字段不失败。"""
+    from lifemate.plugins.qq import commands as cmd_mod
+
+    def _priv(text, sender=OWNER):
+        return {"post_type": "message", "message_type": "private", "user_id": sender, "message": [{"type": "text", "data": {"text": text}}], "message_id": 777, "sender": {"nickname": "SeanDictionary"}}
+
+    def _cmd_replies():
+        return [str(r["params"]["message"]) for r in napcat.received if r["action"] == "send_private_msg"]
+
+    napcat, plugin, kernel, _ = await _ambient_harness(tmp_path, extra_cfg={"owner_uin": OWNER, "send_min_interval_s": 0})
+    try:
+        assert await _wait_for(lambda: plugin._client.connected)
+
+        # 降级路径：面板未运行（端口 1 必拒绝）→ 本地字段照常、命令不失败
+        plugin._cfg.server_port = 1
+        await plugin._on_event(_priv("/status"))
+        assert await _wait_for(lambda: _cmd_replies() and "面板服务未运行" in _cmd_replies()[-1])
+        assert "连接" in _cmd_replies()[-1]
+
+        # 完整路径：注入面板应答，验证聚合与格式化
+        async def fake_fetch(p, path):
+            if path == "/api/status":
+                return {"ok": True, "version": "9.9.9", "uptime_s": 19533, "session_id": "abc12", "model": "test-model", "busy": False, "tool_count": 7, "plugins": ["qq"]}
+            return {"ok": True, "by_model": {"m": {"calls": 3, "tokens_in": 90000, "tokens_out": 30000}}}
+
+        orig = cmd_mod._fetch
+        cmd_mod._fetch = fake_fetch
+        try:
+            await plugin._on_event(_priv("/status"))
+            assert await _wait_for(lambda: any("9.9.9" in x for x in _cmd_replies()))
+            reply = next(x for x in _cmd_replies() if "9.9.9" in x)
+            assert "运行 5 小时 25 分" in reply  # 19533s
+            assert "心智 休息中" in reply and "会话 abc12" in reply
+            assert "模型 test-model" in reply and "工具 7 个" in reply
+            assert "今日 12.0 万 token · 3 次调用" in reply
+            assert "本分钟发送" in reply
+        finally:
+            cmd_mod._fetch = orig
     finally:
         await plugin.stop()
         await napcat.stop()

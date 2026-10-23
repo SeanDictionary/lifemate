@@ -7,16 +7,22 @@
 纪律：
 - 未知命令拦截并提示可用清单（不进心智）
 - 命令执行异常转错误回执，绝不抛错
-- 应答走同一风控钳制；命令交互与应答均入背景听觉（心智翻档案能看全，
-  但不被打扰——与私聊消息一致的未读语义）
+- 应答出站走同一风控钳制（有界等待：最小间隔等得过去，每分钟硬上限
+  放弃）；命令交互与应答均入背景听觉（心智翻档案能看全，但不被打扰）
 """
 
 from __future__ import annotations
 
+import asyncio
+import json
 import logging
+import time
+import urllib.parse
+import urllib.request
 from collections.abc import Awaitable, Callable
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
+from ...utils import clock
 from .protocol import ParsedEvent
 
 if TYPE_CHECKING:
@@ -24,13 +30,73 @@ if TYPE_CHECKING:
 
 log = logging.getLogger("plugins.qq.commands")
 
-# 命令表：/命令名 → 处理函数。返回回复文本；空串 = 不回。
-# 填充示例：
-#   async def _status(p: QQPlugin, ev: ParsedEvent, arg: str) -> str:
-#       return f"连接 {p._client.connected if p._client else False}"
-#   _COMMANDS["/status"] = _status
 CommandFn = Callable[["QQPlugin", ParsedEvent, str], Awaitable[str]]
 _COMMANDS: dict[str, CommandFn] = {}
+
+
+# ── /status：面板 API 聚合 + 身体本地事实 ──────────────
+def _http_get_json(url: str, timeout: float = 2.0) -> Any:
+    """同进程回环调用面板 API（阻塞，供 to_thread 包装）。失败返回 None。"""
+    try:
+        with urllib.request.urlopen(url, timeout=timeout) as resp:
+            return json.loads(resp.read().decode("utf-8"))
+    except Exception:  # noqa: BLE001
+        return None
+
+
+async def _fetch(p: QQPlugin, path: str) -> Any:
+    base = f"http://127.0.0.1:{p._cfg.server_port}"
+    token = urllib.parse.quote(p._cfg.server_token or "")
+    sep = "&" if "?" in path else "?"
+    return await asyncio.to_thread(_http_get_json, f"{base}{path}{sep}token={token}")
+
+
+def _fmt_uptime(s: int) -> str:
+    if s < 60:
+        return f"{s} 秒"
+    if s < 3600:
+        return f"{s // 60} 分钟"
+    if s < 86400:
+        return f"{s // 3600} 小时 {s % 3600 // 60} 分"
+    return f"{s // 86400} 天 {s % 86400 // 3600} 小时"
+
+
+def _fmt_tokens(n: int) -> str:
+    return f"{n / 10000:.1f} 万" if n >= 10000 else str(n)
+
+
+async def _status(p: QQPlugin, ev: ParsedEvent, arg: str) -> str:
+    """/status：面板 API（版本/运行时长/心智/工具/今日用量）+ 身体本地
+    事实（NapCat 连接/未读/发送窗口）。面板未运行时降级为本地字段。"""
+    status, usage = await asyncio.gather(_fetch(p, "/api/status"), _fetch(p, "/api/usage"))
+    conn = "正常" if p._client is not None and p._client.connected else "断开"
+    lines: list[str] = []
+    if isinstance(status, dict) and status.get("ok"):
+        lines.append(f"lifemate {status.get('version', '?')} · 运行 {_fmt_uptime(int(status.get('uptime_s') or 0))}")
+        busy = "思考中" if status.get("busy") else "休息中"
+        lines.append(f"连接 {conn} · 心智 {busy} · 会话 {status.get('session_id', '?')}")
+        extra = f" · 插件 {'/'.join(status.get('plugins') or [])}" if status.get("plugins") else ""
+        lines.append(f"模型 {status.get('model') or '?'} · 工具 {status.get('tool_count', '?')} 个{extra}")
+    else:
+        lines.append(f"连接 {conn}（面板服务未运行，心智/用量字段缺）")
+    if isinstance(usage, dict) and usage.get("by_model"):
+        calls = sum(m.get("calls", 0) for m in usage["by_model"].values())
+        tokens = sum(m.get("tokens_in", 0) + m.get("tokens_out", 0) for m in usage["by_model"].values())
+        lines.append(f"今日 {_fmt_tokens(tokens)} token · {calls} 次调用")
+    if p._chatlog is not None:
+        scan = p._chatlog._unread_scan(p._conf.bot_uin)
+        if scan:
+            top = sorted(scan.items(), key=lambda x: -x[1][0])[:3]
+            parts = [f"{cid.replace('group_', '群').replace('private_', '私聊')} {st[0]}" for cid, st in top]
+            lines.append("未读：" + "、".join(parts))
+    now = clock.now(p._cfg.timezone)
+    tz = p._cfg.timezone or "本机时区"
+    sent = len([t for t in p._send_times if time.monotonic() - t < 60])
+    lines.append(f"现在 {now:%H:%M}（{tz}）· 本分钟发送 {sent}/{p._conf.send_max_per_min}")
+    return "\n".join(lines)
+
+
+_COMMANDS["/status"] = _status
 
 
 async def handle_command(p: QQPlugin, ev: ParsedEvent) -> None:
@@ -56,8 +122,20 @@ async def handle_command(p: QQPlugin, ev: ParsedEvent) -> None:
 
 
 async def _reply(p: QQPlugin, ev: ParsedEvent, text: str) -> None:
-    """命令应答出站：同一风控钳制 + 回执入档。失败只留痕不抛错。"""
-    blocked = p._throttle()
+    """命令应答出站：风控钳制下有界等待——最小间隔等得过去（查询接口
+    不沉默），每分钟硬上限放弃（几乎只可能是异常循环）；正式发送仍经
+    _throttle 记账，回执入档。失败只留痕不抛错。"""
+    for _ in range(3):
+        now = time.monotonic()
+        window = [t for t in p._send_times if now - t < 60]
+        if len(window) >= p._conf.send_max_per_min:
+            log.warning("命令应答撞每分钟发送上限（丢弃）")
+            return
+        if window and (gap := p._conf.send_min_interval_s - (now - window[-1])) > 0:
+            await asyncio.sleep(gap + 0.05)
+            continue
+        break
+    blocked = p._throttle()  # 记账（时序上应已放行）
     if blocked:
         log.warning("命令应答被风控钳制（丢弃）：%s", blocked)
         return
