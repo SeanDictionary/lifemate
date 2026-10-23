@@ -20,9 +20,11 @@ import time
 import urllib.parse
 import urllib.request
 from collections.abc import Awaitable, Callable
+from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 from ...utils import clock
+from .chatlog import format_ts
 from .protocol import ParsedEvent
 
 if TYPE_CHECKING:
@@ -34,7 +36,7 @@ CommandFn = Callable[["QQPlugin", ParsedEvent, str], Awaitable[str]]
 _COMMANDS: dict[str, CommandFn] = {}
 
 
-# ── /status：面板 API 聚合 + 身体本地事实 ──────────────
+# ── 工具：HTTP/JSON 回环调用面板 ──────────────
 def _http_get_json(url: str, timeout: float = 2.0) -> Any:
     """同进程回环调用面板 API（阻塞，供 to_thread 包装）。失败返回 None。"""
     try:
@@ -65,6 +67,14 @@ def _fmt_tokens(n: int) -> str:
     return f"{n / 10000:.1f} 万" if n >= 10000 else str(n)
 
 
+def _register_command(func: CommandFn) -> CommandFn:
+    """命令注册装饰器：函数名即命令名（去下划线前缀，补 /）。"""
+    _COMMANDS[f"/{func.__name__.lstrip('_')}"] = func
+    return func
+
+
+# ── /status：状态输出 ──────────────
+@_register_command
 async def _status(p: QQPlugin, ev: ParsedEvent, arg: str) -> str:
     """/status：面板 API（版本/运行时长/心智/工具/今日用量）+ 身体本地
     事实（NapCat 连接/未读/发送窗口）。面板未运行时降级为本地字段。"""
@@ -96,7 +106,82 @@ async def _status(p: QQPlugin, ev: ParsedEvent, arg: str) -> str:
     return "\n".join(lines)
 
 
-_COMMANDS["/status"] = _status
+# ── /history：心智最近活动（observe 档案尾部） ──────────
+def _oneline(s: str, n: int) -> str:
+    s = s.replace("\n", " ").strip()
+    return s[:n] + "…" if len(s) > n else s
+
+
+def _fmt_record(r: dict, tz: str) -> str:
+    """档案记录 → 一行摘要（时间 + 图标 + 事实头）。"""
+    ts = r.get("ts") or 0
+    head = f"[{format_ts(ts, tz_name=tz) if ts else '?'}] "
+    typ, role = r.get("type"), r.get("role")
+    if typ == "msg":
+        if role == "assistant":
+            tcs = r.get("tool_calls") or []
+            if tcs:
+                calls = ", ".join(f"{tc.get('name', '?')}({_oneline(str(tc.get('arguments', '')), 30)})" for tc in tcs[:3])
+                extra = f" …共{len(tcs)}个" if len(tcs) > 3 else ""
+                body = f"🔧 {calls}{extra}"
+            else:
+                body = "💬 " + _oneline(r.get("content") or "", 60)
+        elif role == "user":
+            body = "📨 " + _oneline(r.get("content") or "", 60)
+        elif role == "tool":
+            body = f"📥 {r.get('name', '?')} {'✓' if r.get('ok') else '✗'} " + _oneline(str(r.get("content") or ""), 40)
+        else:
+            body = f"{role} " + _oneline(str(r.get("content") or ""), 40)
+    elif typ == "rest":
+        body = f"🌙 休息 {_oneline(str(r.get('reason', '')), 40)}"
+    elif typ == "wake":
+        body = f"☀️ 唤醒 {r.get('trigger', '')}"
+    elif typ == "error":
+        body = f"✗ {r.get('error', '')}"
+    elif typ == "compact":
+        body = f"🗜️ 压缩 丢{r.get('dropped', 0)} 保{r.get('kept', 0)}"
+    else:
+        body = f"· {typ}"
+    return head + body
+
+
+def _observe_tail(p: QQPlugin, n: int) -> list[dict] | None:
+    """面板未运行时的兑底：直读最新日档尾部 N 行（坏行跳过）。"""
+    files = sorted((Path(p._cfg.data_dir) / "observe").glob("*.jsonl"))
+    if not files:
+        return None
+    try:
+        lines = files[-1].read_text(encoding="utf-8").splitlines()
+    except OSError:
+        return None
+    rows = []
+    for raw in lines[-n:]:
+        try:
+            rows.append(json.loads(raw))
+        except ValueError:
+            continue
+    return rows
+
+
+@_register_command
+async def _history(p: QQPlugin, ev: ParsedEvent, arg: str) -> str:
+    """/history [条数]：心智最近活动（observe 档案尾部）——输出/工具调用/
+    收到输入/休息/唤醒/错误各一行。默认 10 条，上限 50。
+    面板 API 优先，未运行时直读日档兑底。"""
+    n = 10
+    if arg.strip():
+        if arg.strip().isdigit():
+            n = max(1, min(int(arg.strip()), 50))
+        else:
+            return f"看不懂参数：{arg}\n用法：/history [条数]"
+    data = await _fetch(p, f"/api/history?tail={n}")
+    rows = data.get("rows") if isinstance(data, dict) and data.get("ok") else None
+    if not rows:
+        rows = _observe_tail(p, n)  # 面板未运行：直读档案
+    if not rows:
+        return "没有活动记录（无档案且面板未运行）"
+    tz = p._cfg.timezone
+    return f"最近 {len(rows)} 条活动：\n" + "\n".join(_fmt_record(r, tz) for r in rows)
 
 
 async def handle_command(p: QQPlugin, ev: ParsedEvent) -> None:

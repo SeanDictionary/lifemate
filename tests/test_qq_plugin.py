@@ -678,7 +678,8 @@ async def test_command_framework(tmp_path):
         # ① 未知命令：拦截并提示（可用清单含已注册命令），不进心智
         await plugin._on_event(_priv("/stats"))
         assert await _wait_for(lambda: _cmd_replies() and "没有这个命令" in _cmd_replies()[-1])
-        assert "可用：/status" in _cmd_replies()[-1]
+        last = _cmd_replies()[-1]
+        assert "没有这个命令：/stats" in last and "/status" in last and "/history" in last
         assert not any(e.type == "USER_MSG" for e in evs)  # 零信封
 
         # ② 注册命令：分发 + 参数解析 + 异常回执 + 交互入档
@@ -762,6 +763,71 @@ async def test_status_command(tmp_path):
             assert "本分钟发送" in reply
         finally:
             cmd_mod._fetch = orig
+    finally:
+        await plugin.stop()
+        await napcat.stop()
+
+
+async def test_history_command(tmp_path):
+    """/history：心智最近活动——面板 API 优先（注入应答验格式化），
+    面板未运行直读 observe 日档兑底，无档案时优雅回执。"""
+    import json as _json
+    from pathlib import Path
+
+    from lifemate.plugins.qq import commands as cmd_mod
+
+    def _priv(text, sender=OWNER):
+        return {"post_type": "message", "message_type": "private", "user_id": sender, "message": [{"type": "text", "data": {"text": text}}], "message_id": 777, "sender": {"nickname": "SeanDictionary"}}
+
+    def _cmd_replies():
+        return [str(r["params"]["message"]) for r in napcat.received if r["action"] == "send_private_msg"]
+
+    napcat, plugin, kernel, _ = await _ambient_harness(tmp_path, extra_cfg={"owner_uin": OWNER, "send_min_interval_s": 0})
+    try:
+        assert await _wait_for(lambda: plugin._client.connected)
+
+        # ① 面板 API 路径：注入档案记录，验证各类型格式化
+        rows = [
+            {"type": "msg", "ts": 1792741360, "role": "assistant", "tool_calls": [{"name": "send_message", "arguments": '{"target_id": 840851185}'}]},
+            {"type": "msg", "ts": 1792741329, "role": "user", "content": "[15:41] [私聊·主人] SeanDictionary：测试"},
+            {"type": "msg", "ts": 1792741151, "role": "assistant", "content": "12:20 发的。我看到是12:21"},
+            {"type": "msg", "ts": 1792741148, "role": "tool", "name": "wait", "ok": True, "content": "（你从等待中醒来…）"},
+            {"type": "rest", "ts": 1792740930, "reason": "explicit:刚回完私聊和群"},
+            {"type": "wake", "ts": 1792740811, "trigger": "boot"},
+            {"type": "error", "ts": 1792729289, "error": "llm_failed"},
+        ]
+
+        async def fake_fetch(p, path):
+            assert "tail=10" in path
+            return {"ok": True, "count": len(rows), "rows": rows}
+
+        orig = cmd_mod._fetch
+        cmd_mod._fetch = fake_fetch
+        try:
+            await plugin._on_event(_priv("/history"))
+            assert await _wait_for(lambda: any("最近 7 条活动" in x for x in _cmd_replies()))
+            reply = next(x for x in _cmd_replies() if "最近 7 条活动" in x)
+            assert "🔧 send_message(" in reply
+            assert "📨 " in reply and "[私聊·主人]" in reply
+            assert "💬 12:20 发的" in reply
+            assert "📥 wait ✓" in reply
+            assert "🌙 休息" in reply and "☀️ 唤醒 boot" in reply and "✗ llm_failed" in reply
+        finally:
+            cmd_mod._fetch = orig
+
+        # ② 兑底路径：面板未运行（端口 1），直读 observe 日档
+        plugin._cfg.server_port = 1
+        obs = Path(plugin._cfg.data_dir) / "observe"
+        obs.mkdir(parents=True, exist_ok=True)
+        (obs / "2026-10-23.jsonl").write_text("\n".join(_json.dumps(r, ensure_ascii=False) for r in rows[-3:]), encoding="utf-8")
+        await plugin._on_event(_priv("/history"))
+        assert await _wait_for(lambda: any("最近 3 条活动" in x for x in _cmd_replies()))
+        # 条数参数
+        await plugin._on_event(_priv("/history 2"))
+        assert await _wait_for(lambda: any("最近 2 条活动" in x for x in _cmd_replies()))
+        # 坏参数回执用法
+        await plugin._on_event(_priv("/history abc"))
+        assert await _wait_for(lambda: any("看不懂参数" in x for x in _cmd_replies()))
     finally:
         await plugin.stop()
         await napcat.stop()
