@@ -58,7 +58,7 @@ export function QQPanel() {
       <h1 className="text-lg font-semibold">QQ</h1>
 
       {/* 连接状态 */}
-      <Card>
+      <Card className="pt-0 pb-0">
         <CardContent className="flex flex-wrap items-center gap-x-6 gap-y-2 p-5 text-sm">
           <div className="flex items-center gap-2">
             <span
@@ -82,7 +82,7 @@ export function QQPanel() {
         </CardContent>
       </Card>
 
-      <div className="grid gap-4 lg:grid-cols-[20rem_1fr]">
+      <div className="grid gap-4 lg:grid-cols-[11rem_1fr]">
         {/* 会话清单 */}
         <Card>
           <CardHeader className="pb-2">
@@ -95,17 +95,19 @@ export function QQPanel() {
                 <button
                   key={c.chat_id}
                   onClick={() => setChat(c.chat_id)}
-                  className={`flex w-full items-center gap-2 border-b px-3 py-2 text-left text-sm hover:bg-accent/40 ${
+                  className={`block w-full border-b px-2.5 py-2 text-left text-sm hover:bg-accent/40 ${
                     chat === c.chat_id ? "bg-accent" : ""
                   }`}
                 >
-                  <span className="min-w-0 flex-1 truncate">{chatLabel(c.chat_id)}</span>
-                  {c.unread > 0 && (
-                    <Badge className="h-5 px-1.5 text-[10px]">{c.unread}</Badge>
-                  )}
-                  <span className="font-mono text-[10px] text-muted-foreground">
+                  <div className="flex items-center gap-1.5">
+                    <span className="min-w-0 flex-1 truncate">{chatLabel(c.chat_id)}</span>
+                    {c.unread > 0 && (
+                      <Badge className="h-5 shrink-0 px-1.5 text-[10px]">{c.unread}</Badge>
+                    )}
+                  </div>
+                  <div className="mt-0.5 font-mono text-[10px] text-muted-foreground">
                     {fmtTime(c.last_ts)}
-                  </span>
+                  </div>
                 </button>
               ))}
               {chats.data && chats.data.chats.length === 0 && (
@@ -133,16 +135,44 @@ export function QQPanel() {
           </CardHeader>
           <CardContent className="p-0">
             <ScrollArea className="h-[calc(100vh-20rem)]">
-              <div className="space-y-1.5 p-4 text-sm">
-                {log.data?.rows.map((r, i) => (
-                  <div key={i} className="leading-relaxed">
-                    <span className="font-mono text-[10px] text-muted-foreground">
-                      {fmtTime(r.ts)}{" "}
-                    </span>
-                    <span className="font-medium">{r.sender_name || r.sender_id}：</span>
-                    <span className="break-all">{r.text}</span>
-                  </div>
-                ))}
+              <div className="space-y-2 p-4 text-sm">
+                {log.data?.rows.map((r, i) => {
+                  const self = !!status.data?.bot_uin && r.sender_id === status.data.bot_uin;
+                  const prev = log.data!.rows[i - 1];
+                  // 换人或自己发言才显示名字行；连续同人不再重复标
+                  const showName = self || !prev || prev.sender_id !== r.sender_id;
+                  const name = self ? "我" : r.sender_name || r.sender_id;
+                  return (
+                    <div
+                      key={i}
+                      className={`group/msg relative flex flex-col ${self ? "items-end" : "items-start"}`}
+                    >
+                      {showName ? (
+                        /* 名字行：grid 同格叠放（宽度取两者较宽者），hover 交叉淡切为时间 */
+                        <div className="mb-0.5 grid text-[11px] font-medium text-muted-foreground">
+                          <span className="[grid-area:1/1] transition-opacity duration-200 group-hover/msg:opacity-0">{name}</span>
+                          <span className="[grid-area:1/1] font-mono opacity-0 transition-opacity duration-200 group-hover/msg:opacity-100">{fmtTime(r.ts)}</span>
+                        </div>
+                      ) : (
+                        /* 连续消息无名字行：时间 hover 时浮在气泡侧边（不挤布局） */
+                        <div
+                          className={`absolute top-1/2 -translate-y-1/2 font-mono text-[10px] text-muted-foreground opacity-0 transition-opacity duration-200 group-hover/msg:opacity-100 ${
+                            self ? "right-full mr-2" : "left-full ml-2"
+                          }`}
+                        >
+                          {fmtTime(r.ts)}
+                        </div>
+                      )}
+                      <div
+                        className={`max-w-[75%] rounded-xl px-5 py-1.5 text-sm leading-relaxed ${
+                          self ? "bg-primary text-primary-foreground" : "bg-muted"
+                        }`}
+                      >
+                        <div className="whitespace-pre-wrap wrap-break-word">{r.text}</div>
+                      </div>
+                    </div>
+                  );
+                })}
                 {log.data && log.data.count === 0 && (
                   <div className="py-10 text-center text-xs text-muted-foreground">
                     无记录
