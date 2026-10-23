@@ -23,7 +23,6 @@ class QQConfig(PluginConfig):
     ambient_wake_threshold = Field(8, description="弱刺激攒批唤醒阈值：未读群消息攒 N 条即唤醒瞟一眼（0=关，纯背景听觉）")
     ambient_wake_gap_s = Field(600.0, description="弱刺激兑底唤醒秒：距上次唤醒超 N 秒且有≥2条未读即唤醒（防慢速闲聊攒不满）")
     ambient_wake_cooldown_s = Field(180.0, description="弱刺激唤醒冷却秒：两次攒批唤醒的最小间隔（防刷屏风暴叫醒心智）")
-    quiet_hours = Field("", description="弱刺激静音时段 HH:MM-HH:MM（如 01:00-07:00，支持跨午夜）：时段内攒批/兑底唤醒关闭、消息只入档；直达/@/私聊不受影响。空=关", group="注意力")
     chatlog_retention_days = Field(0, description="聊天记录保留天数（0=永久）")
     envelope_context_n = Field(4, description="跨会话切换时信封附带的该会话最近消息条数（0=关）")
     send_min_interval_s = Field(1.0, description="发送最小间隔秒（风控钳制）")
