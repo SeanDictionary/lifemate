@@ -172,7 +172,7 @@ def _parse_allow_cidrs(raw: str) -> list:
         try:
             nets.append(ipaddress.ip_network(part, strict=False))
         except ValueError:
-            log.warning("image_fetch_allow_cidrs 含无法解析的网段（已跳过）：%s", part)
+            log.warning("ssrf_exclude_ips 含无法解析的网段（已跳过）：%s", part)
     return nets
 
 
