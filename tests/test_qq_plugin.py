@@ -1,6 +1,7 @@
 """QQ 插件测试：协议解析（纯函数）+ FakeNapCat 端到端。"""
 
 import asyncio
+import time
 import json
 
 from lifemate.plugins.qq.protocol import compose_envelope_text, parse_event
@@ -609,5 +610,44 @@ async def test_envelope_context_disabled(tmp_path):
         await plugin._on_event(_group_msg(gid=111, sender=1, name="甲", text="旧话"))
         await plugin._on_event(_group_msg(gid=111, at_me=True, text="叫我"))
         assert "该会话最近" not in k.envs[-1].text
+    finally:
+        plugin._chatlog.close()
+
+
+async def test_quiet_hours_suppress_ambient_wake(tmp_path):
+    """静音时段：弱刺激攒批唤醒关闭（直达不受影响）。"""
+    from lifemate.plugins.qq import QQConfig, QQPlugin
+    from lifemate.plugins.qq.chatlog import ChatLog
+    from lifemate.utils.config import Config
+
+    now = time.strftime("%H:%M").split(":")
+    spec = f"{int(now[0]):02d}:00-{int(now[0]):02d}:59"  # 当前小时 → 必在静音中
+    cfg = Config(data_dir=tmp_path / "cfg")
+    cfg.plugins = {"qq": {"enabled": True, "bot_uin": SELF, "owner_uin": OWNER,
+                          "quiet_hours": spec, "ambient_wake_threshold": 3}}
+    plugin = QQPlugin(QQConfig(cfg), cfg, tmp_path / "pd")
+    plugin._chatlog = ChatLog(tmp_path / "pd" / "cl")
+
+    class _K:
+        def __init__(self):
+            self.envs = []
+
+        def notify(self, env):
+            self.envs.append(env)
+
+    k = _K()
+    plugin._kernel = k
+    try:
+        assert plugin._in_quiet_hours() is True
+        # 攒满阈值条弱刺激 → 静音时段不唤醒
+        for i in range(5):
+            await plugin._on_event(_group_msg(gid=333, sender=9, name=f"路人{i}", text=f"水群{i}"))
+        assert not any("你不在时聊了" in e.text for e in k.envs)
+        # 直达（@）照常唤醒
+        await plugin._on_event(_group_msg(gid=333, at_me=True, text="叫你"))
+        assert any("叫你" in e.text for e in k.envs)
+        # 跨午夜区间解析（不抛错即可）
+        cfg.plugins["qq"]["quiet_hours"] = "23:00-07:00"
+        assert isinstance(plugin._in_quiet_hours(), bool)
     finally:
         plugin._chatlog.close()

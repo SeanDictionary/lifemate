@@ -291,6 +291,15 @@ env 仅部署种子）；热重载靠字段原地更新——新组件必须持�
   write_plugin_defaults）——与主白名单 reload 补全（0240185）同语义，
   config.json 对主键与插件键都始终是完整自文档；修插件新版本声明
   字段（wake_aliases 等 6 键）在老 config.json 里隐形的问题
+- **过夜审计与任务保护（2026-10-23）**：网关 200+脏响应体（new-api 把上游
+  错误包成字符串体）击穿思维循环→ llm.py 形状校验（BadGatewayBody
+  可重试）+ _think LLM 兑底（退避休息自动续，输入不丢，REST/ERROR
+  入档）；_live 崩溃恢复（悬空输入续处理，修 07:01 提醒任务被静默
+  吞掉）；实测依据：过夜 5 次 live_crashed、30 万 token 花在
+  “反复确认自己要睡觉”
+- **弱刺激静音时段（2026-10-23）**：quiet_hours（HH:MM-HH:MM，跨午夜
+  支持）时段内攒批/兑底唤醒关闭、消息只入档；直达/@/私聊照常——
+  attention 门控第一步，修深夜被群消息反复吵醒的 token 烧耗
 - **待开发**：attention（门控升格）→ sandbox → webui → video
 
 ## 验证方式

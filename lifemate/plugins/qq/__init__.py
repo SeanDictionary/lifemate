@@ -17,6 +17,7 @@ from pathlib import Path
 from typing import Any
 
 from ...kernel.contracts import AMBIENT, DIRECT, PLATFORM_EVENT, Envelope
+from ...utils import clock
 from .. import Plugin, PluginContext
 from .chatlog import ChatLog, format_ts
 from .config import QQConfig
@@ -137,6 +138,22 @@ class QQPlugin(Plugin):
         except Exception:  # noqa: BLE001
             log.exception("出站消息入档失败（不影响发送）")
 
+    def _in_quiet_hours(self) -> bool:
+        """弱刺激静音时段判定（HH:MM-HH:MM，支持跨午夜如 23:00-07:00）。"""
+        spec = str(self._conf.quiet_hours or "").strip()
+        if "-" not in spec:
+            return False
+        try:
+            a, b = spec.split("-", 1)
+            ah, am = (int(x) for x in a.strip().split(":"))
+            bh, bm = (int(x) for x in b.strip().split(":"))
+        except ValueError:
+            return False
+        now = clock.datetime_at(time.time(), self._cfg.timezone)
+        cur = now.hour * 60 + now.minute
+        start, end = ah * 60 + am, bh * 60 + bm
+        return start <= cur < end if start <= end else (cur >= start or cur < end)
+
     def _maybe_ambient_wake(self, chat_id: str) -> None:
         """弱刺激攒批唤醒：阈值/兑底双触发，冷却钳制。
 
@@ -146,6 +163,8 @@ class QQPlugin(Plugin):
         """
         if self._chatlog is None or self._kernel is None:
             return
+        if self._in_quiet_hours():
+            return  # 静音时段：弱刺激只入档不唤醒（直达/@/私聊照常）
         threshold = self._conf.ambient_wake_threshold
         if threshold <= 0:
             return  # 关闭：纯背景听觉
