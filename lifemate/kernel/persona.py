@@ -61,8 +61,7 @@ class Persona:
             for path in sorted(paths):
                 skill = self._parse(path)
                 if skill:
-                    skill.source = (path.parent.name
-                                    if path.is_relative_to(_PLUGINS_DIR) else "")
+                    skill.source = path.parent.name if path.is_relative_to(_PLUGINS_DIR) else ""
                     self._skills[skill.name] = skill
         return self._skills
 
@@ -119,11 +118,9 @@ class Persona:
                 continue
             # 描述取首个一级标题（内置文档无 frontmatter）
             m = re.search(r"^# (.+)$", text, re.M)
-            out.append({"name": p.stem, "description": m.group(1).strip() if m else "",
-                        "content": text, "source": "内置"})
+            out.append({"name": p.stem, "description": m.group(1).strip() if m else "", "content": text, "source": "内置"})
         items = sorted(self.skills().values(), key=lambda s: (not s.source, s.name))
-        out += [{"name": s.name, "description": s.description,
-                 "content": s.content, "source": s.source} for s in items]
+        out += [{"name": s.name, "description": s.description, "content": s.content, "source": s.source} for s in items]
         return out
 
     def system_prompt(self) -> str:
