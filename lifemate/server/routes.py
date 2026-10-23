@@ -54,7 +54,8 @@ def build_core_routes(srv) -> list[Route]:
         text = str(req.json().get("text") or "").strip()
         if not text:
             return {"ok": False, "error": "text 不能为空"}
-        kernel.notify(Envelope(text=text, kind=DIRECT, source="webui", origin="server"))
+        # 场景自述同 console：标明来源面孔，心智才知道该用哪个出口回
+        kernel.notify(Envelope(text=f"[网页·主人] {text}", kind=DIRECT, source="webui", origin="server"))
         srv.chatbus.record("in", text)
         return {"ok": True}
 

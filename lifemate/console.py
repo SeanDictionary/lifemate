@@ -73,5 +73,7 @@ class Console:
                     self._recorder.event("config_reload", changed=changed)
                 print(f"🔄 配置重载：{', '.join(changed) or '无变化'}")
                 continue
-            self._kernel.notify(Envelope(text=text, origin="console"))
+            # 场景自述：QQ 信封自带“[私聊·主人]…”，console/webui 同样要标——
+            # 否则心智看不出输入来自哪张面孔，只能对冲式到处回
+            self._kernel.notify(Envelope(text=f"[终端·主人] {text}", origin="console"))
         return "signal"

@@ -141,7 +141,7 @@ async def test_say_and_chat_ring(env):
     status, body = await _req(port, "POST", "/api/say", {"text": "你好"})
     assert status == 200 and json.loads(body)["ok"]
     env_ = kernel.envelopes[-1]
-    assert env_.text == "你好" and env_.kind == "direct"
+    assert env_.text == "[网页·主人] 你好" and env_.kind == "direct"
     assert env_.source == "webui" and env_.origin == "server"
     # 环形缓冲补拉（刷新恢复）
     status, data = await _jget(port, "/api/chat")
