@@ -90,7 +90,7 @@ data/                  # 运行数据（gitignore）：config.json / memory.db /
 └── __main__.py        # 入口=组合根（CLI：-v/-l/-s/--no-stdin）：共享准备+服务编排；
                       #   stdin 每行=调试信封）
 web/                  # 前端观测台（Next.js 源码，pnpm；node_modules/out 不入库）
-├── src/app/           #   8 页面：概览/事件流/历史回放/对话/记忆/用量/设置/插件
+├── src/app/           #   10 页面：概览/事件流/历史回放/对话/记忆(含图片 Tab)/用量/设置/插件/工具/技能
 ├── src/lib/           #   api(token/401门)/sse/use-sse(Context 挂 globalThis：对
 │                      #   Turbopack 模块复制免疫)/types(契约镜像)/render(emoji 图标)
 ├── src/components/    #   layout(侧栏/生命标识/Vitals)+plugins/qq+ui(shadcn)
@@ -337,10 +337,13 @@ env 仅部署种子）；热重载靠字段原地更新——新组件必须持�
   （content blocks，llm_vision_model 必填才启用，复用重试/告警）；
   host 维护任务加图片保留期清理（按最后查看时间淘汰）；
   看/不看由心智自决（行动是拉的，工具自描述）
-- **图片档案 API（2026-10-23）**：/api/memory/images 列表
+- **面板记忆页图片 Tab（2026-10-23）**：/api/memory/images 列表
   （recent_images，按最后查看时间倒序）+/api/memory/image/{hash} 原图
   字节直出（hash 严格 64hex 校验+文件名防穿越+内容寻址长缓存；
-  dispatch 支持处理器返回原始响应字节——非 JSON 资源通用能力）
+  dispatch 支持处理器返回原始响应字节——非 JSON 资源通用能力）；
+  前端记忆页新增图片 Tab（描述主行+看过次数/大小徽标+时间，
+  行尾「>」展开内联看图，token 走查询参数经 authedUrl）；
+  api.ts 导出 authedUrl（img 等原生标签无法设 header）
 - **待开发**：attention（门控升格）→ sandbox → webui → video
 
 ## 验证方式

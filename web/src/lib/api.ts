@@ -28,6 +28,11 @@ function withToken(path: string): string {
   return path + (path.includes("?") ? "&" : "?") + "token=" + encodeURIComponent(t);
 }
 
+/** 带鉴权的资源 URL（img 等原生标签无法设 header，token 走查询参数）。 */
+export function authedUrl(path: string): string {
+  return withToken(path);
+}
+
 async function request<T>(path: string, init?: RequestInit): Promise<T> {
   const resp = await fetch(withToken(path), {
     ...init,
