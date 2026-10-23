@@ -50,7 +50,7 @@ function SkillModal({ name, onClose }: { name: string; onClose: () => void }) {
             <FontAwesomeIcon icon={faXmark} />
           </Button>
         </div>
-        <ScrollArea className="flex-1">
+        <ScrollArea className="min-h-0 flex-1">
           <div className="px-5 py-4">
             {isLoading || !data ? (
               <div className="space-y-2">

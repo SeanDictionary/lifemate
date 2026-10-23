@@ -111,7 +111,7 @@ function ImageModal({ r, onClose }: { r: Record<string, unknown>; onClose: () =>
             <FontAwesomeIcon icon={faXmark} />
           </Button>
         </div>
-        <ScrollArea className="flex-1">
+        <ScrollArea className="min-h-0 flex-1">
           <div className="space-y-3 px-5 py-4">
             {hash && (
               /* eslint-disable-next-line @next/next/no-img-element */
