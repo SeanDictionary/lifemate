@@ -246,3 +246,10 @@ def test_store_boots_with_wal_residue(tmp_path):
     assert "强杀前的记忆" in rows and "残留wal里的记忆" in rows
     s2.close()
     raw.close()
+
+
+def test_bad_gateway_body_retryable():
+    """网关 200+脏响应体的形状校验异常必须可重试（不击穿思维循环）。"""
+    from lifemate.kernel.llm import BadGatewayBody
+
+    assert is_retryable(BadGatewayBody("网关返回非标准响应体")) is True

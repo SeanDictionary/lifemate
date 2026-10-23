@@ -30,7 +30,14 @@ _RETRYABLE_NAMES = {
     "ServiceUnavailableError",
     "ReadTimeout",
     "RemoteProtocolError",
+    "BadGatewayBody",
 }
+
+
+class BadGatewayBody(Exception):
+    """网关 HTTP 200 但响应体非标准（如 new-api 把上游错误包成字符串体）。
+
+    按瞬态错误处理：退避重试而非击穿思维循环。"""
 
 
 def is_retryable(exc: BaseException) -> bool:
@@ -162,6 +169,10 @@ class OpenAILLM:
             ]
         t0 = time.monotonic()
         resp = await self._get_client().chat.completions.create(model=self._cfg.llm_model, messages=messages, **kwargs)
+        if not getattr(resp, "choices", None):
+            # 网关 200+脏响应体（实测：new-api 中转把上游错误包成字符串体，
+            # SDK 解析成 str）——按瞬态错误重试，不让它击穿思维循环
+            raise BadGatewayBody(f"网关返回非标准响应体：{str(resp)[:120]}")
         choice = resp.choices[0]
         msg = choice.message
         thinking, content = _extract_thinking(msg)

@@ -397,3 +397,60 @@ async def test_envelope_origin_in_wake_and_archive(tmp_path):
     users = [m["content"] for m in k._session.messages if m.get("role") == "user"]
     wake = [u for u in users if "期间收到" in u]
     assert wake and "[console·direct]" in wake[0]
+
+
+async def test_llm_failure_fallback_no_crash(tmp_path):
+    """LLM 故障兜底：不崩循环——退避休息后自动续，输入保留在会话。"""
+    from lifemate.kernel.contracts import ERROR
+
+    class FlakyLLM:
+        def __init__(self):
+            self.calls = 0
+
+        async def chat(self, messages, tools=None):
+            self.calls += 1
+            if self.calls <= 2:
+                raise RuntimeError("网关返回非标准响应体")
+            return LLMResponse(content="恢复了，继续处理")
+
+    llm = FlakyLLM()
+    k = make_kernel(tmp_path, llm)
+    k._cfg.llm_retry_backoff_s = 0.05  # 测试加速：退避 0.1/0.2s
+    evs = events_of(k)
+    k.notify(Envelope(text="做点事"))
+    await wait_event(evs, REST, reason="llm_retry", timeout=10)
+    assert any(t == ERROR for t, _ in evs)  # 错误已记档
+    # 退避到点自动醒 → LLM 恢复 → 继续处理未完成的输入（轮询到收敛）
+    async def _done():
+        users = [m["content"] for m in k._session.messages if m.get("role") == "user"]
+        assistants = [m["content"] for m in k._session.messages if m.get("role") == "assistant"]
+        return (any("做点事" in u for u in users)
+                and any("尚未处理完" in u for u in users)
+                and "恢复了，继续处理" in assistants)
+
+    async def _poll():
+        while not await _done():
+            await asyncio.sleep(0.05)
+
+    await asyncio.wait_for(_poll(), timeout=15)
+    assert not any(t == ERROR and d.get("error") == "live_crashed" for t, d in evs)  # 没崩循环
+    assert any(m["content"] == "恢复了，继续处理" for m in k._session.messages
+               if m.get("role") == "assistant")
+
+
+async def test_dangling_input_recovery(tmp_path):
+    """崩溃恢复：会话尾部悬空输入（user/tool 未回应）→ 复活后续处理。"""
+    llm = FakeLLM([text_reply("续上了"), text_reply("处理完了")])
+    k = make_kernel(tmp_path, llm)
+    # 模拟崩溃遗留：会话尾部是未回应的 user 消息
+    k._session.append({"role": "user", "content": "（被中断的任务：去群里说话）"})
+    assert k._has_dangling_input() is True
+    evs = events_of(k)
+    k._ensure_run()
+    await k.wait_idle()
+    users = [m["content"] for m in k._session.messages if m.get("role") == "user"]
+    assert any("思考中断后恢复" in u for u in users)
+    assert k.is_busy is False
+    # 正常休息后无悬空 → 不再触发恢复
+    k._session.append({"role": "assistant", "content": "done"})
+    assert k._has_dangling_input() is False

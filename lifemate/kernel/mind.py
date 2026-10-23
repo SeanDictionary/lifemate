@@ -81,6 +81,7 @@ class SelfKernel:
         self._last_prompt_tokens = 0
         self._rid = ""  # 当前唤醒周期 id（观测归组）
         self._wait: _Waiting | None = None
+        self._llm_fail_streak = 0  # LLM 连续失败计数（兑底退避用，成功即清零）
         self._wake_extras: list[Callable[[], str]] = []
         self._current_tool: asyncio.Task | None = None
         self._current_tool_interruptible = False
@@ -182,6 +183,10 @@ class SelfKernel:
             first = True
             if self._steer_q:
                 wake_env = self._steer_q.popleft()  # 出生/重启信封
+            elif self._has_dangling_input():
+                # 崩溃恢复：上次思考中断（如进程异常/残余 bug），
+                # 输入还在会话里没处理完——续上，不静默丢弃
+                wake_env = Envelope(text="（思考中断后恢复：上一条输入尚未处理完，请继续处理。）", kind=DIRECT, origin="host")
             while True:
                 if wake_env is None:
                     # 无待处理输入：休息等敲门
@@ -198,13 +203,30 @@ class SelfKernel:
             log.exception("永续循环异常（watchdog 将拉起）")
             self._emit(ERROR, error="live_crashed")
 
+    def _has_dangling_input(self) -> bool:
+        """会话尾部有未回应的输入（崩溃/中断遗留，正常休息时尾部是 assistant）。"""
+        msgs = self._session.messages
+        return bool(msgs) and msgs[-1].get("role") in ("user", "tool")
+
     async def _think(self) -> str:
         """一个唤醒周期：思考直到休息。返回下一次唤醒的组批文本。"""
         turns = 0
         nudged = False
         while True:
             await self._maybe_compact()
-            resp = await self._llm.chat(self._build_messages(), tools=self._tool_schemas() or None)
+            try:
+                resp = await self._llm.chat(self._build_messages(), tools=self._tool_schemas() or None)
+            except Exception as e:  # noqa: BLE001
+                # LLM 兑底：不崩循环——输入保留在会话，退避休息后自动续。
+                # 重试机制（llm.py 内部）已打过一轮；这里接住全部残余
+                self._llm_fail_streak += 1
+                delay = min(self._cfg.llm_retry_backoff_s * (2 ** min(self._llm_fail_streak, 6)), 300.0)
+                log.error("LLM 调用失败（连续第 %d 次，%.0fs 后自动重试本轮）：%s", self._llm_fail_streak, delay, e)
+                self._emit(ERROR, error="llm_failed", detail={"streak": self._llm_fail_streak, "retry_in_s": round(delay, 1), "error": str(e)[:200]})
+                self._emit(REST, rid=self._rid, reason="llm_retry", timeout_s=delay)
+                wake = await self._do_wait(delay, "llm_retry")
+                return wake + "\n（上一次思考因 LLM 故障中断，之前的输入尚未处理完，请继续处理。）"
+            self._llm_fail_streak = 0
             self._last_prompt_tokens = resp.prompt_tokens
             self._touch()
             self._record_assistant(resp)
