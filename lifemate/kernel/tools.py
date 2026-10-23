@@ -49,7 +49,7 @@ def make_wait_tool(kernel: SelfKernel) -> Tool:
                 "properties": {
                     "timeout_s": {"type": "number", "description": "多少秒后醒来（闹钟）"},
                     "reason": {"type": "string", "description": "在等什么/到点做什么"},
-                    "wake_on": {"type": "string", "enum": ["any", "direct"], "description": "any=任何事件部唤醒（默认）；direct=只被直达消息（@/私聊/叫名/回复）和自己定的闹钟唤醒，群聊水话静默累积、醒来一起看——挂长觉用它"},
+                    "wake_on": {"type": "string", "enum": ["any", "direct"], "description": "any=默认，任何事件都唤醒：群消息攒批到量也会递到你眼前，想留意群里动态用它。direct=免打扰长睡专用：只被直达（@/私聊/叫名/回复/戳）和自己定的闹钟唤醒，群聊消息完全不递、攒批也不唤醒——代价是整段等待里你对群里动态零感知，只能到点靠闹钟回看。注意两点：①你发言后约 10 分钟内该会话的跟话也算直达，仍会唤醒你；②它屏蔽的是感知不是发言——'不想接话'不该用它，用 any 醒来看一眼不说话即可"},
                 },
             },
         },
