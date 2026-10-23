@@ -399,9 +399,11 @@ async def test_envelope_origin_in_wake_and_archive(tmp_path):
     assert wake and "[console·direct]" in wake[0]
 
 
-async def test_llm_failure_fallback_no_crash(tmp_path):
-    """LLM 故障兜底：不崩循环——退避休息后自动续，输入保留在会话。"""
+async def test_llm_transient_failure_silent_retry(tmp_path):
+    """LLM 瞬态故障：静默重试不进上下文——过程信息（故障/重试/醒来噪声）
+    一律不投递，输入保留，恢复后直接续完（心智无感）。"""
     from lifemate.kernel.contracts import ERROR
+    from lifemate.kernel.llm import BadGatewayBody
 
     class FlakyLLM:
         def __init__(self):
@@ -410,7 +412,7 @@ async def test_llm_failure_fallback_no_crash(tmp_path):
         async def chat(self, messages, tools=None):
             self.calls += 1
             if self.calls <= 2:
-                raise RuntimeError("网关返回非标准响应体")
+                raise BadGatewayBody("网关返回非标准响应体")
             return LLMResponse(content="恢复了，继续处理")
 
     llm = FlakyLLM()
@@ -419,14 +421,12 @@ async def test_llm_failure_fallback_no_crash(tmp_path):
     evs = events_of(k)
     k.notify(Envelope(text="做点事"))
     await wait_event(evs, REST, reason="llm_retry", timeout=10)
-    assert any(t == ERROR for t, _ in evs)  # 错误已记档
+    assert any(t == ERROR and d.get("error") == "llm_failed" for t, d in evs)  # 错误已记档
+
     # 退避到点自动醒 → LLM 恢复 → 继续处理未完成的输入（轮询到收敛）
     async def _done():
-        users = [m["content"] for m in k._session.messages if m.get("role") == "user"]
         assistants = [m["content"] for m in k._session.messages if m.get("role") == "assistant"]
-        return (any("做点事" in u for u in users)
-                and any("尚未处理完" in u for u in users)
-                and "恢复了，继续处理" in assistants)
+        return "恢复了，继续处理" in assistants
 
     async def _poll():
         while not await _done():
@@ -434,8 +434,77 @@ async def test_llm_failure_fallback_no_crash(tmp_path):
 
     await asyncio.wait_for(_poll(), timeout=15)
     assert not any(t == ERROR and d.get("error") == "live_crashed" for t, d in evs)  # 没崩循环
-    assert any(m["content"] == "恢复了，继续处理" for m in k._session.messages
-               if m.get("role") == "assistant")
+    # 过程信息零进上下文：没有故障说明、没有退避醒来的空噪声信封
+    users = [m["content"] for m in k._session.messages if m.get("role") == "user"]
+    assert users == ["做点事"]
+
+
+async def test_llm_permanent_failure_receipt_enters_context(tmp_path):
+    """永久错误（如内容被拒/鉴权失败）：是结果不是过程——回执进上下文，
+    处置权在心智；心智调整后重试成功，不需要人介入。"""
+    from lifemate.kernel.contracts import ERROR
+
+    class SensitiveRefused(Exception):
+        pass
+
+    class RefusingLLM:
+        def __init__(self):
+            self.calls = 0
+
+        async def chat(self, messages, tools=None):
+            self.calls += 1
+            if self.calls == 1:
+                raise SensitiveRefused("内容含敏感信息，被服务方拒绝")
+            return LLMResponse(content="那我换个说法")
+
+    llm = RefusingLLM()
+    k = make_kernel(tmp_path, llm)
+    evs = events_of(k)
+    k.notify(Envelope(text="说点敏感的"))
+    await k.wait_idle()
+    # 回执进了上下文，说明结果与求助选项
+    users = [m["content"] for m in k._session.messages if m.get("role") == "user"]
+    receipts = [u for u in users if u.startswith("（系统回执：")]
+    assert receipts and "敏感信息" in receipts[0] and "主人" in receipts[0]
+    assert any(t == ERROR and d.get("error") == "llm_refused" for t, d in evs)
+    assert any(m["content"] == "那我换个说法" for m in k._session.messages if m.get("role") == "assistant")
+    assert k._refuse_streak == 0  # 成功后清零
+
+
+async def test_llm_content_filter_receipt(tmp_path):
+    """输出被内容过滤拦截（有响应无内容）：同样是结果——回执给心智自决。"""
+    llm = FakeLLM([LLMResponse(content="", stop_reason="content_filter"), text_reply("好吧，我换种方式说")])
+    k = make_kernel(tmp_path, llm)
+    k.notify(Envelope(text="说点什么"))
+    await k.wait_idle()
+    users = [m["content"] for m in k._session.messages if m.get("role") == "user"]
+    receipts = [u for u in users if u.startswith("（系统回执：")]
+    assert receipts and "内容过滤" in receipts[0]
+    assert any(m["content"] == "好吧，我换种方式说" for m in k._session.messages if m.get("role") == "assistant")
+
+
+async def test_llm_refuse_cap_stops_repeating_receipts(tmp_path):
+    """连续被拒超过阈值：不再重复回执（心智已知情），改退避重试防烧 token。"""
+    from lifemate.kernel.contracts import ERROR
+
+    class AlwaysRefused(Exception):
+        pass
+
+    class RefusingLLM:
+        async def chat(self, messages, tools=None):
+            raise AlwaysRefused("一直被拒")
+
+    k = make_kernel(tmp_path, RefusingLLM())
+    k._cfg.llm_retry_backoff_s = 0.05
+    k._cfg.llm_refuse_receipts = 2
+    evs = events_of(k)
+    k.notify(Envelope(text="说点敏感的"))
+    await wait_event(evs, REST, reason="llm_refuse_retry", timeout=10)
+    users = [m["content"] for m in k._session.messages if m.get("role") == "user"]
+    receipts = [u for u in users if u.startswith("（系统回执：")]
+    assert len(receipts) == 2  # 恰好回执阈值次，不再重复
+    assert any(t == ERROR and d.get("error") == "llm_refused" for t, d in evs)
+    await k.abort()  # 止性无限退避循环，干净收尾
 
 
 async def test_dangling_input_recovery(tmp_path):

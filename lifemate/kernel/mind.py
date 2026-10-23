@@ -27,7 +27,7 @@ from typing import Any
 from ..utils import clock
 from .compaction import Compactor
 from .contracts import AMBIENT, ASSISTANT_MSG, COMPACTED, DIRECT, ERROR, QUEUE_DROP, REST, SEED, SESSION_ROTATED, TOOL_CALL, TOOL_RESULT, USER_MSG, WAKE, Envelope, EventCallback, MindEvent, PluginPack, Tool
-from .llm import LLMClient, LLMResponse
+from .llm import LLMClient, LLMResponse, is_retryable
 from .persona import Persona
 from .session import Session
 from .tools import make_wait_tool
@@ -86,7 +86,9 @@ class SelfKernel:
         self._last_prompt_tokens = 0
         self._rid = ""  # 当前唤醒周期 id（观测归组）
         self._wait: _Waiting | None = None
-        self._llm_fail_streak = 0  # LLM 连续失败计数（兑底退避用，成功即清零）
+        self._llm_fail_streak = 0  # LLM 瞬态连续失败计数（兑底退避用，成功即清零）
+        self._refuse_streak = 0  # 结果性失败连续计数（被拒/永久错误，成功即清零）
+        self._last_wake_events = 0  # 最近一次组批唤醒携带的事件数（退避续跑判断用）
         self._wake_extras: list[Callable[[], str]] = []
         self._current_tool: asyncio.Task | None = None
         self._current_tool_interruptible = False
@@ -217,6 +219,32 @@ class SelfKernel:
             # 完整堆栈入档（黑匣子可独立排查，不必翻日志对时间戳）
             self._emit(ERROR, error="live_crashed", detail={"traceback": traceback.format_exc()[-4000:], "rid": self._rid})
 
+    async def _backoff_wait(self, delay: float, reason: str) -> None:
+        """瞬态故障退避：挂起休息后原地续跑。
+
+        退避期间到达的真实事件照常送达（与故障无关，不能丢）；
+        纯到点醒来（无事件）不投递任何内容——过程信息不进上下文。
+        """
+        self._emit(REST, rid=self._rid, reason=reason, timeout_s=delay)
+        wake = await self._do_wait(delay, reason)
+        if self._last_wake_events:
+            self._deliver(Envelope(text=wake, kind=WAKE, origin="host"))
+
+    async def _refuse(self, summary: str) -> None:
+        """结果性失败回执（进上下文）：永久错误/内容拦截——处置权在心智。
+
+        连续超过阈值后不再重复回执（心智已知情），改退避重试——
+        避免回执循环烧 token；任何一次正常输出即清零计数。
+        """
+        self._refuse_streak += 1
+        log.error("LLM 结果性失败（连续第 %d 次）：%s", self._refuse_streak, summary)
+        self._emit(ERROR, error="llm_refused", detail={"streak": self._refuse_streak, "error": summary[:200]})
+        if self._refuse_streak > self._cfg.llm_refuse_receipts:
+            delay = min(self._cfg.llm_retry_backoff_s * (2 ** min(self._refuse_streak, 6)), 300.0)
+            await self._backoff_wait(delay, "llm_refuse_retry")
+            return
+        self._deliver(Envelope(text=(f"（系统回执：{summary[:300]}。这不是网络波动——不会自动消失，原样重试大概率同样的结果。这是需要你知道的结果，怎么处置由你决定：调整后重试、先搁置，或主动联系主人说明情况、请主人帮忙排查。）"), kind="system", origin="host", delivery="receipt"))
+
     def _has_dangling_input(self) -> bool:
         """会话尾部有未回应的输入（崩溃/中断遗留，正常休息时尾部是 assistant）。"""
         msgs = self._session.messages
@@ -231,20 +259,32 @@ class SelfKernel:
             try:
                 resp = await self._llm.chat(self._build_messages(), tools=self._tool_schemas() or None)
             except Exception as e:  # noqa: BLE001
-                # LLM 兑底：不崩循环——输入保留在会话，退避休息后自动续。
-                # 重试机制（llm.py 内部）已打过一轮；这里接住全部残余
-                self._llm_fail_streak += 1
-                delay = min(self._cfg.llm_retry_backoff_s * (2 ** min(self._llm_fail_streak, 6)), 300.0)
-                log.error("LLM 调用失败（连续第 %d 次，%.0fs 后自动重试本轮）：%s", self._llm_fail_streak, delay, e)
-                self._emit(ERROR, error="llm_failed", detail={"streak": self._llm_fail_streak, "retry_in_s": round(delay, 1), "error": str(e)[:200]})
-                self._emit(REST, rid=self._rid, reason="llm_retry", timeout_s=delay)
-                wake = await self._do_wait(delay, "llm_retry")
-                return wake + "\n（上一次思考因 LLM 故障中断，之前的输入尚未处理完，请继续处理。）"
+                if is_retryable(e):
+                    # 瞬态故障（网络波动/限流/5xx）：静默重试——过程信息
+                    # 不进上下文，心智无感（llm.py 内部已重试一轮，这里
+                    # 接住残余，退避后原地续，输入保留在会话）
+                    self._llm_fail_streak += 1
+                    delay = min(self._cfg.llm_retry_backoff_s * (2 ** min(self._llm_fail_streak, 6)), 300.0)
+                    log.error("LLM 瞬态故障（连续第 %d 次，%.0fs 后自动重试本轮）：%s", self._llm_fail_streak, delay, e)
+                    self._emit(ERROR, error="llm_failed", detail={"streak": self._llm_fail_streak, "retry_in_s": round(delay, 1), "error": str(e)[:200]})
+                    await self._backoff_wait(delay, "llm_retry")
+                    continue
+                # 永久错误（鉴权/参数/内容被拒）：这是结果不是过程——
+                # 回执进上下文，处置权在心智（换方式重试/搁置/找主人）
+                await self._refuse(f"模型服务返回确定性错误，本次思考未能完成：{e}")
+                continue
             self._llm_fail_streak = 0
             self._last_prompt_tokens = resp.prompt_tokens
             self._touch()
             self._record_assistant(resp)
             turns += 1
+
+            if resp.stop_reason == "content_filter":
+                # 输出被内容过滤拦截（敏感内容等）：同样是结果——回执
+                # 给心智自决（换说法/搁置/求助），不属于自动重试的过程
+                await self._refuse("上一次输出被内容过滤拦截，未产生内容")
+                continue
+            self._refuse_streak = 0
 
             if not resp.tool_calls:
                 if self._drain_steer():
@@ -293,6 +333,7 @@ class SelfKernel:
     def _compose_wake(self, superseded_alarm: str | None = None) -> str:
         """组装唤醒信封：时间差值 + 期间事件组批 + 附加事实。"""
         events, self._pending = self._pending, []
+        self._last_wake_events = len(events)
         # DND 累积截断：ambient 只保留最近 N 条，更早的计数提示
         # （信息已入背景听觉，read_chat_log 可看——不丢，只去噪）
         ambient_idx = [i for i, e in enumerate(events) if e.kind == AMBIENT]
@@ -516,13 +557,15 @@ class SelfKernel:
         out = []
         for name in sorted(self._tools):
             t = self._tools[name]
-            out.append({
-                "name": name,
-                "description": t.schema.get("description", ""),
-                "inputSchema": t.schema.get("inputSchema", {}),
-                "interruptible": bool(t.interruptible),
-                "source": self._tool_src.get(name, "内核"),
-            })
+            out.append(
+                {
+                    "name": name,
+                    "description": t.schema.get("description", ""),
+                    "inputSchema": t.schema.get("inputSchema", {}),
+                    "interruptible": bool(t.interruptible),
+                    "source": self._tool_src.get(name, "内核"),
+                }
+            )
         return out
 
     async def wait_idle(self) -> None:
