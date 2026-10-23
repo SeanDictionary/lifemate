@@ -97,6 +97,9 @@ async def _orchestrate(silence: bool, log_level: str | None, no_stdin: bool) -> 
         # 插件默认段必须已落盘（否则首启生成的 config.json 缺插件段）
         preset_plugin_defaults(cfg)
         kernel, store, recorder = build(cfg)
+        # 崩溃入档：进程级未捕获异常也进黑匣子（recorder 就位后重挂带钩版本）
+        install_excepthooks(on_crash=lambda summary, tb: recorder.event("error", where="process", error=summary, traceback=tb))
+        install_loop_handler(asyncio.get_event_loop(), on_crash=lambda summary, tb: recorder.event("error", where="loop", error=summary, traceback=tb))
 
         # 统一停机信号（信号/`/quit`/EOF 都指向它；服务共同订阅）
         stop = asyncio.Event()

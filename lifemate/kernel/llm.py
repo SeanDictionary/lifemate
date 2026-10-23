@@ -89,11 +89,12 @@ async def chat_with_retry(
 class _FailStreak:
     """连续失败计数与告警（借签 v1：第 N 次连续失败触发一次回调）。"""
 
-    def __init__(self, threshold: int, on_alert: Callable[[int], None] | None = None) -> None:
+    def __init__(self, threshold: int, on_alert: Callable[[int, str], None] | None = None) -> None:
         self._threshold = threshold
         self._on_alert = on_alert
         self.count = 0
         self._alerted = False
+        self.last = ""  # 最近一次失败原因（告警携带，档案可排查）
 
     def reset(self) -> None:
         self.count = 0
@@ -101,13 +102,14 @@ class _FailStreak:
 
     def record(self, reason: str) -> None:
         self.count += 1
+        self.last = reason[:300]
         if self.count >= self._threshold:
             log.critical("LLM 连续失败 %d 次（最近：%s）——自主性已受影响", self.count, reason[:200])
             if not self._alerted:
                 self._alerted = True
                 if self._on_alert is not None:
                     try:
-                        self._on_alert(self.count)
+                        self._on_alert(self.count, self.last)
                     except Exception:  # noqa: BLE001
                         log.exception("LLM 失败告警回调异常")
 

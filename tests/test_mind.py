@@ -454,3 +454,24 @@ async def test_dangling_input_recovery(tmp_path):
     # 正常休息后无悬空 → 不再触发恢复
     k._session.append({"role": "assistant", "content": "done"})
     assert k._has_dangling_input() is False
+
+
+async def test_live_crashed_event_carries_traceback(tmp_path):
+    """live_crashed 事件必须带完整堆栈（黑匣子可独立排查）。"""
+    from lifemate.kernel.contracts import ERROR
+
+    llm = FakeLLM([text_reply("x")])
+    k = make_kernel(tmp_path, llm)
+    evs = events_of(k)
+
+    async def _boom():
+        raise RuntimeError("循环里炸了")
+
+    k._think = _boom  # 模拟非 LLM 路径的崩溃
+    k.notify(Envelope(text="触发"))
+    for _ in range(100):
+        if k._task is not None and k._task.done():
+            break
+        await asyncio.sleep(0.02)
+    errors = [d for t, d in evs if t == ERROR]
+    assert any(d.get("error") == "live_crashed" and "循环里炸了" in d.get("detail", {}).get("traceback", "") for d in errors)

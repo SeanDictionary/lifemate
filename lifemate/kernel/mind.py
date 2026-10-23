@@ -18,6 +18,7 @@ import asyncio
 import json
 import logging
 import time
+import traceback
 import uuid
 from collections import deque
 from collections.abc import Callable
@@ -201,7 +202,8 @@ class SelfKernel:
             raise
         except Exception:  # noqa: BLE001
             log.exception("永续循环异常（watchdog 将拉起）")
-            self._emit(ERROR, error="live_crashed")
+            # 完整堆栈入档（黑匣子可独立排查，不必翻日志对时间戳）
+            self._emit(ERROR, error="live_crashed", detail={"traceback": traceback.format_exc()[-4000:], "rid": self._rid})
 
     def _has_dangling_input(self) -> bool:
         """会话尾部有未回应的输入（崩溃/中断遗留，正常休息时尾部是 assistant）。"""

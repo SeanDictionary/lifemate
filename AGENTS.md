@@ -300,6 +300,12 @@ env 仅部署种子）；热重载靠字段原地更新——新组件必须持�
 - **弱刺激静音时段（2026-10-23）**：quiet_hours（HH:MM-HH:MM，跨午夜
   支持）时段内攒批/兑底唤醒关闭、消息只入档；直达/@/私聊照常——
   attention 门控第一步，修深夜被群消息反复吵醒的 token 烧耗
+- **错误诊断入档（2026-10-23）**：修“日志有档案无”的错误信息缺口——
+  live_crashed 带完整 traceback（observe 可独立排查，不必翻日志对
+  时间戳）；_FailStreak 告警携带 (次数， 最近错误)，host 回调入档；
+  进程级未捕获异常/asyncio 未捕获任务异常经 on_crash 钩子入档
+  （excepthook/loop_handler 可选回调，build 后重挂）；插件装载失败
+  （导入/工厂/启动）三处入档带堆栈
 - **待开发**：attention（门控升格）→ sandbox → webui → video
 
 ## 验证方式

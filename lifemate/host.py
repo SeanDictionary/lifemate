@@ -78,7 +78,7 @@ def build(cfg: Config) -> tuple[SelfKernel, Store, Recorder]:
         max_field_chars=cfg.observe_max_field_chars,
     )
 
-    llm = OpenAILLM(cfg, on_persistent_failure=lambda streak: recorder.event("error", where="llm", error=f"连续失败 {streak} 次——自主性受影响，请检查网关/渠道"))
+    llm = OpenAILLM(cfg, on_persistent_failure=lambda streak, last: recorder.event("error", where="llm", error=f"连续失败 {streak} 次——自主性受影响，请检查网关/渠道", last_error=last))
 
     store = Store(Path(cfg.data_dir) / "memory.db")
     session = Session.load_latest(Path(cfg.data_dir) / "sessions")

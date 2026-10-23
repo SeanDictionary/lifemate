@@ -17,6 +17,7 @@ from __future__ import annotations
 
 import importlib
 import logging
+import traceback
 from dataclasses import dataclass, replace
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
@@ -125,6 +126,7 @@ def preset_plugin_defaults(cfg: Config) -> list[str]:
             module = importlib.import_module(f"lifemate.plugins.{sub.name}")
         except Exception:  # noqa: BLE001
             log.exception("插件导入失败：%s", sub.name)
+            ctx.recorder.event("error", where="plugins", error=f"插件 {sub.name} 导入失败", traceback=traceback.format_exc()[-4000:])
             continue
         conf_cls = getattr(module, "CONFIG", None)
         if isinstance(conf_cls, type) and issubclass(conf_cls, PluginConfig) and conf_cls.declared():
@@ -151,6 +153,7 @@ async def load_plugins(ctx: PluginContext) -> list[Plugin]:
             module = importlib.import_module(f"lifemate.plugins.{sub.name}")
         except Exception:  # noqa: BLE001
             log.exception("插件导入失败：%s", sub.name)
+            ctx.recorder.event("error", where="plugins", error=f"插件 {sub.name} 导入失败", traceback=traceback.format_exc()[-4000:])
             continue
         create = getattr(module, "create", None)
         if not callable(create):
@@ -163,6 +166,7 @@ async def load_plugins(ctx: PluginContext) -> list[Plugin]:
             plugin = create(plugin_ctx)
         except Exception:  # noqa: BLE001
             log.exception("插件工厂失败：%s", sub.name)
+            ctx.recorder.event("error", where="plugins", error=f"插件 {sub.name} 工厂失败", traceback=traceback.format_exc()[-4000:])
             continue
         if plugin is None:
             log.info("插件未启用：%s", sub.name)
@@ -172,6 +176,7 @@ async def load_plugins(ctx: PluginContext) -> list[Plugin]:
             await plugin.start(plugin_ctx)
         except Exception:  # noqa: BLE001
             log.exception("插件启动失败：%s（摘除）", sub.name)
+            ctx.recorder.event("error", where="plugins", error=f"插件 {sub.name} 启动失败（已摘除）", traceback=traceback.format_exc()[-4000:])
             ctx.kernel.unregister_plugin(plugin.name)
             continue
         loaded.append(plugin)

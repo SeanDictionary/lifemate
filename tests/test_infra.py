@@ -55,7 +55,7 @@ async def test_retry_permanent_raises_immediately():
 
 async def test_retry_exhausted_alerts_streak():
     alerts: list[int] = []
-    streak = _FailStreak(threshold=2, on_alert=alerts.append)
+    streak = _FailStreak(threshold=2, on_alert=lambda n, last: alerts.append((n, last)))
 
     async def always_dead():
         raise TransientError("彻底挂了")
@@ -67,7 +67,8 @@ async def test_retry_exhausted_alerts_streak():
                 await chat_with_retry(always_dead, max_retries=1, backoff_s=0, fail_streak=streak)
     finally:
         TransientError.__name__ = "TransientError"
-    assert streak.count == 2 and alerts == [2]  # 第二次失败触发一次告警
+    assert streak.count == 2  # 第二次失败触发一次告警
+    assert alerts and alerts[0][0] == 2 and "彻底挂了" in alerts[0][1]  # 告警携带 (次数, 最近错误)
 
 
 def test_is_retryable_classification():
@@ -253,3 +254,36 @@ def test_bad_gateway_body_retryable():
     from lifemate.kernel.llm import BadGatewayBody
 
     assert is_retryable(BadGatewayBody("网关返回非标准响应体")) is True
+
+
+def test_crash_hooks_report_to_archive():
+    """崩溃档案钩子：excepthook/loop handler 把 summary+traceback 交给回调。"""
+    import asyncio
+    import sys
+
+    from lifemate.utils.log import install_excepthooks, install_loop_handler
+
+    got: list[tuple[str, str]] = []
+    install_excepthooks(on_crash=lambda s, tb: got.append((s, tb)))
+    try:
+        try:
+            raise ValueError("炸了")
+        except ValueError:
+            sys.excepthook(*sys.exc_info())
+        assert got and "ValueError: 炸了" in got[0][0]
+        assert "raise ValueError" in got[0][1]  # traceback 带源码行
+    finally:
+        sys.excepthook = sys.__excepthook__
+
+    got.clear()
+    loop = asyncio.new_event_loop()
+    try:
+        install_loop_handler(loop, on_crash=lambda s, tb: got.append((s, tb)))
+
+        try:
+            raise RuntimeError("任务炸了")
+        except RuntimeError as e:
+            loop.call_exception_handler({"message": "任务异常", "exception": e})
+        assert got and "任务异常" in got[0][0] and "RuntimeError" in got[0][1]
+    finally:
+        loop.close()
