@@ -25,10 +25,11 @@ _KV_RE = re.compile(r"^(\w[\w-]*):\s*(.+)$", re.M)
 
 
 class _Skill:
-    def __init__(self, name: str, description: str, content: str) -> None:
+    def __init__(self, name: str, description: str, content: str, source: str = "") -> None:
         self.name = name
         self.description = description
         self.content = content
+        self.source = source  # 来源标记：插件名（插件自带）/空（skills/ 第三方）
 
 
 class Persona:
@@ -60,6 +61,8 @@ class Persona:
             for path in sorted(paths):
                 skill = self._parse(path)
                 if skill:
+                    skill.source = (path.parent.name
+                                    if path.is_relative_to(_PLUGINS_DIR) else "")
                     self._skills[skill.name] = skill
         return self._skills
 
@@ -98,6 +101,29 @@ class Persona:
                 continue
             if text:
                 out.append(text)
+        return out
+
+    def skills_catalog(self) -> list[dict[str, str]]:
+        """技能全目录（观测面板用）：内置（标记"内置"）+ 插件 SKILL.md
+        （标记插件名）+ skills/ 第三方（不标记）。
+
+        与 skills() 的心智装配语义分离：内置是代码管理的常驻制度，
+        不进 read_skill 索引（生存制度不能依赖"模型碰巧去读"）。"""
+        out: list[dict[str, str]] = []
+        for p in sorted(_BUILTIN_DIR.glob("*.md")):
+            try:
+                text = p.read_text(encoding="utf-8").strip()
+            except OSError:
+                continue
+            if not text:
+                continue
+            # 描述取首个一级标题（内置文档无 frontmatter）
+            m = re.search(r"^# (.+)$", text, re.M)
+            out.append({"name": p.stem, "description": m.group(1).strip() if m else "",
+                        "content": text, "source": "内置"})
+        items = sorted(self.skills().values(), key=lambda s: (not s.source, s.name))
+        out += [{"name": s.name, "description": s.description,
+                 "content": s.content, "source": s.source} for s in items]
         return out
 
     def system_prompt(self) -> str:

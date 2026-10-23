@@ -8,6 +8,7 @@ from pathlib import Path
 
 from .. import __version__
 from ..kernel.contracts import DIRECT, Envelope
+from ..kernel.persona import Persona
 from ..utils.config import _ENV_SEED
 from .history import available_dates, read_day, today, usage_of_day
 from .http import Route
@@ -64,6 +65,38 @@ def build_core_routes(srv) -> list[Route]:
     async def plugins(req, p):
         return {"ok": True, "plugins": srv.plugin_panels()}
 
+    # ── 技能清单（人格装配的知情层：skills/ + 插件 SKILL.md） ──
+    def _persona() -> Persona:
+        """惰性单例（Persona 自带 mtime 缓存，热改 SKILL.md 即时可见）。"""
+        if getattr(srv, "_persona", None) is None:
+            srv._persona = Persona(cfg.soul_dir, cfg.skills_dir)
+        return srv._persona
+
+    async def skills(req, p):
+        items = _persona().skills_catalog()
+        return {"ok": True, "skills": [
+            {"name": s["name"], "description": s["description"], "source": s["source"]}
+            for s in items]}
+
+    async def skill_detail(req, p):
+        name = p.get("name", "")
+        for s in _persona().skills_catalog():
+            if s["name"] == name:
+                return {"ok": True, "name": name, "content": s["content"],
+                        "source": s["source"]}
+        return {"ok": False, "error": f"skill 不存在: {name}"}
+
+    # ── 工具清单 ────────────────────────────────────
+    async def tools(req, p):
+        """全部已装载工具（含来源/参数 schema/可打断标记）。"""
+        detail = getattr(kernel, "tools_detail", None)
+        if callable(detail):
+            return {"ok": True, "tools": detail()}
+        return {"ok": True, "tools": [
+            {"name": n, "description": "", "inputSchema": {},
+             "interruptible": False, "source": "内核"}
+            for n in kernel.tool_names()]}
+
     # ── 配置（读 / 改存 / 重载 / 说明书） ───────────
     async def config_get(req, p):
         return {"ok": True, "config": cfg.masked()}
@@ -109,4 +142,7 @@ def build_core_routes(srv) -> list[Route]:
         Route("POST", "/api/config", config_post),
         Route("POST", "/api/config/reload", config_reload),
         Route("GET", "/api/memory/{table}", memory),
+        Route("GET", "/api/tools", tools),
+        Route("GET", "/api/skills", skills),
+        Route("GET", "/api/skills/{name}", skill_detail),
     ]

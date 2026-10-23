@@ -91,7 +91,7 @@ def build(cfg: Config) -> tuple[SelfKernel, Store, Recorder]:
     # 插件能力由 plugins/ 自动发现装载，见 run()）——工具定义在各自
     # 模块的 tools.py，此处只装配
     for t in build_memory_tools(store, cfg):
-        kernel.register_tool(t)
+        kernel.register_tool(t, source="记忆")
     kernel.register_tool(make_read_skill_tool(persona))
     kernel.register_tool(make_deep_sleep_tool(kernel, store))
 

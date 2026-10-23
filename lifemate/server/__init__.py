@@ -69,7 +69,7 @@ class Server:
             return None
         port = self._server.sockets[0].getsockname()[1]
         self._unsub = self.kernel.subscribe(self._on_event)
-        self.kernel.register_tool(make_webui_tool(self.chatbus))
+        self.kernel.register_tool(make_webui_tool(self.chatbus), source="宿主")
         # 档案记录流：落档行实时分接（零 IO：broadcaster.push 只入队）
         if self.recorder is not None:
             self.recorder.tap = self.rec_broadcaster.push

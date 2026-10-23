@@ -34,7 +34,7 @@ class FakeKernel:
         self.subs.append(cb)
         return lambda: self.subs.remove(cb)
 
-    def register_tool(self, t):
+    def register_tool(self, t, source=""):
         self.tools[t.name] = t
 
     def tool_names(self):
@@ -344,7 +344,7 @@ async def test_records_sse_stream(tmp_path):
         def subscribe(self, cb):
             return lambda: None
 
-        def register_tool(self, t):
+        def register_tool(self, t, source=""):
             pass
 
         def emit(self, *a, **k):
