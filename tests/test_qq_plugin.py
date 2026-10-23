@@ -611,3 +611,48 @@ async def test_envelope_context_disabled(tmp_path):
         assert "该会话最近" not in k.envs[-1].text
     finally:
         plugin._chatlog.close()
+
+
+async def test_llm_failure_alerts_owner(tmp_path):
+    """身体告警：LLM 长故障（瞬态连续 10 次）/永久错误（连续 3 次）→ 私聊主人附详细错误；
+    恢复即清零；同一故障期不重复轰炸；未达阈值不打扰。"""
+    from lifemate.kernel.contracts import ASSISTANT_MSG, ERROR
+
+    napcat, plugin, kernel, _ = await _ambient_harness(tmp_path, extra_cfg={"owner_uin": OWNER, "send_min_interval_s": 0})
+    try:
+        assert await _wait_for(lambda: plugin._client.connected)
+
+        def _owner_msgs():
+            return [r for r in napcat.received if r["action"] == "send_private_msg" and r["params"].get("user_id") == OWNER]
+
+        # 瞬态失败未达阈值（9 次）：不打扰主人
+        for i in range(9):
+            kernel._emit(ERROR, error="llm_failed", detail={"streak": i + 1, "retry_in_s": 8, "error": "网关超时"})
+        await asyncio.sleep(0.1)
+        assert _owner_msgs() == []
+
+        # 第 10 次：告警，附详细错误
+        kernel._emit(ERROR, error="llm_failed", detail={"streak": 10, "retry_in_s": 64, "error": "APIConnectionError: 连不上网关"})
+        assert await _wait_for(lambda: any("连不上网关" in str(m["params"]["message"]) for m in _owner_msgs()))
+        # 同一故障期继续失败：不重复轰炸
+        kernel._emit(ERROR, error="llm_failed", detail={"streak": 11, "retry_in_s": 128, "error": "APIConnectionError: 连不上网关"})
+        await asyncio.sleep(0.1)
+        assert len(_owner_msgs()) == 1
+
+        # 恢复（正常输出）：告警状态清零
+        kernel._emit(ASSISTANT_MSG, content="好了")
+        assert plugin._llm_alert_sent == {}
+
+        # 永久错误：心智自解失败（3 次 = 回执上限）才升级主人，前 2 次不打扰
+        for i in range(2):
+            kernel._emit(ERROR, error="llm_refused", detail={"streak": i + 1, "error": "AuthenticationError: key 失效"})
+        await asyncio.sleep(0.1)
+        assert not any("key 失效" in str(m["params"]["message"]) for m in _owner_msgs())
+        kernel._emit(ERROR, error="llm_refused", detail={"streak": 3, "error": "AuthenticationError: key 失效"})
+        assert await _wait_for(lambda: any("key 失效" in str(m["params"]["message"]) for m in _owner_msgs()))
+        # 告警文本说明这不是网络波动
+        alert = next(m for m in _owner_msgs() if "key 失效" in str(m["params"]["message"]))
+        assert "不是网络波动" in str(alert["params"]["message"])
+    finally:
+        await plugin.stop()
+        await napcat.stop()

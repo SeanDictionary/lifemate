@@ -11,12 +11,13 @@
 
 from __future__ import annotations
 
+import asyncio
 import logging
 import time
 from pathlib import Path
 from typing import Any
 
-from ...kernel.contracts import AMBIENT, DIRECT, PLATFORM_EVENT, Envelope
+from ...kernel.contracts import AMBIENT, ASSISTANT_MSG, DIRECT, ERROR, PLATFORM_EVENT, Envelope
 from .. import Plugin, PluginContext
 from .chatlog import ChatLog, format_ts
 from .config import QQConfig
@@ -32,6 +33,13 @@ read_chat_log / approve_friend_request / handle_group_request /
 get_friends / get_groups / get_group_members / get_group_info /
 poke / send_like / set_group_card / leave_group /
 mute_member / kick_member / set_qq_status / set_profile / qq_api"""
+
+# 身体告警界限（硬编码——心智求助不了时的条件反射，非行为参数）：
+# 瞬态连续失败 10 次 = 长故障；结果性失败 3 次 = 心智自解失败（= 回执上限）；
+# 同一故障期每 100 次再提醒一次（恢复即清零：任何一次正常输出）
+_LLM_FAIL_ALERT = 10
+_LLM_REFUSE_ALERT = 3
+_LLM_REALERT_EVERY = 100
 
 
 class QQPlugin(Plugin):
@@ -49,6 +57,8 @@ class QQPlugin(Plugin):
         self._last_direct_chat = ""  # 跨会话切换检测（上下文供给判定）
         self._last_outbound: dict[str, float] = {}  # 会话 → 我最后发言时刻（对话延续窗口起算）
         self._last_ambient_wake: dict[str, float] = {}  # 会话 → 最后攒批唤醒时刻（冷却/兑底用）
+        self._llm_alert_sent: dict[str, int] = {}  # LLM 故障 → 已告警时的连失次数（恢复即清）
+        self._unsub_events: Any = None  # 内核事件订阅退订句柄
 
     # ── 感知面 ────────────────────────────────────────
     async def start(self, ctx: PluginContext) -> None:
@@ -59,8 +69,13 @@ class QQPlugin(Plugin):
         self._client.start()
         # 身体感受：未读消息概览挂进每次唤醒（自己的出站不算未读）
         ctx.kernel.add_wake_extras(lambda: self._chatlog.unread_summary(self_id=self._conf.bot_uin) if self._chatlog else "")
+        # 身体告警：LLM 故障升级 watching（仅本插件装载时存在——内核只发事件不知器官）
+        self._unsub_events = ctx.kernel.subscribe(self._on_kernel_event)
 
     async def stop(self) -> None:
+        if self._unsub_events is not None:
+            self._unsub_events()
+            self._unsub_events = None
         if self._client is not None:
             await self._client.stop()
         if self._chatlog is not None:
@@ -105,6 +120,56 @@ class QQPlugin(Plugin):
         if kind == DIRECT:
             self._last_direct_chat = ev.chat_id
         self._kernel.notify(Envelope(text=text, kind=kind, source=ev.chat_id, origin="qq", meta={"sender_id": ev.sender_id}))
+
+    # ── 身体告警（LLM 故障升级） ────────────────────
+    def _on_kernel_event(self, ev: Any) -> None:
+        """内核事件 watching：LLM 故障达界限 → 告警主人。
+
+        心智自己求助不了的场景（LLM 不可用 = 没有思考能力），
+        由身体条件反射补位；恢复（任何一次正常输出）即清零。
+        """
+        if ev.type == ASSISTANT_MSG:
+            self._llm_alert_sent.clear()  # 正常输出 = 恢复
+            return
+        if ev.type != ERROR or ev.data.get("error") not in ("llm_failed", "llm_refused"):
+            return
+        kind = ev.data["error"]
+        detail = ev.data.get("detail") or {}
+        streak = int(detail.get("streak") or 0)
+        threshold = _LLM_FAIL_ALERT if kind == "llm_failed" else _LLM_REFUSE_ALERT
+        last = self._llm_alert_sent.get(kind)
+        if streak < threshold or (last is not None and streak - last < _LLM_REALERT_EVERY):
+            return
+        self._llm_alert_sent[kind] = streak  # 先占位；发送失败回退重试
+        try:
+            loop = asyncio.get_running_loop()
+        except RuntimeError:  # 无事件循环（理论不可达）：放弃本轮
+            self._llm_alert_sent.pop(kind, None)
+            return
+        loop.create_task(self._alert_owner(kind, streak, detail))
+
+    async def _alert_owner(self, kind: str, streak: int, detail: dict) -> None:
+        """LLM 故障告警：私聊主人，附详细错误；出站走同一风控钳制。"""
+        owner = int(self._conf.owner_uin or 0)
+        if not owner or self._client is None:
+            return
+        err = str(detail.get("error") or "").strip() or "（无错误详情）"
+        if kind == "llm_failed":
+            text = f"【身体告警】LLM 已连续失败 {streak} 次（自动重试中，未处理的输入都保留着）。\n最近错误：{err}\n长时间不恢复请检查网关/渠道。"
+        else:
+            text = f"【身体告警】LLM 已连续 {streak} 次被确定性拒绝（不是网络波动，重试不会自愈）。\n最近错误：{err}\n心智已收到回执但未能自行解决，正在退避重试——可能是密钥失效或内容拦截，请排查。"
+        blocked = self._throttle()
+        if blocked:
+            self._llm_alert_sent.pop(kind, None)  # 回退：下轮错误事件重试
+            log.warning("LLM 告警被风控钳制（下轮重试）：%s", blocked)
+            return
+        try:
+            data = await self._call("send_private_msg", {"user_id": owner, "message": [{"type": "text", "data": {"text": text}}]})
+            self._log_sent(f"private_{owner}", text, int(data.get("message_id") or 0))
+            log.error("LLM 故障已告警主人（%s 连续 %d 次）", kind, streak)
+        except Exception:  # noqa: BLE001
+            self._llm_alert_sent.pop(kind, None)  # 发送失败同样回退重试
+            log.exception("LLM 故障告警发送失败（下轮错误事件重试）")
 
     # ── 表达面基建 ─────────────────────────────────────
     def _recent_context(self, chat_id: str, cur_mid: int, line_limit: int = 60) -> str:
