@@ -3,6 +3,8 @@
 import { useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { ChevronRight } from "lucide-react";
+import { FontAwesomeIcon } from "@fortawesome/react-fontawesome";
+import { faImage, faXmark } from "@fortawesome/free-solid-svg-icons";
 import { apiGet, authedUrl } from "@/lib/api";
 import type { MemoryResp } from "@/lib/types";
 import { fmtDate } from "@/lib/format";
@@ -79,7 +81,61 @@ function Rows({ table }: { table: string }) {
   );
 }
 
-/** 图片行：描述 + 徽标 + 时间 + 「>」展开看原图（内容寻址，token 走查询参数） */
+/** 图片详情弹窗（SkillModal 同款遮罩模式：无 radix-dialog 依赖）：
+ *  原图 + 完整描述 + 元信息；点遮罩/× 关闭 */
+function ImageModal({ r, onClose }: { r: Record<string, unknown>; onClose: () => void }) {
+  const hash = String(r.hash ?? "");
+  const desc = String(r.description ?? "");
+  const hit = Number(r.hit_count ?? 0);
+  const size = Number(r.size ?? 0);
+  const firstSeen = Number(r.first_seen ?? 0);
+  return (
+    <div
+      className="fixed inset-0 z-50 grid place-items-center bg-background/80 p-4 backdrop-blur-sm"
+      onClick={onClose}
+    >
+      <div
+        className="flex max-h-[85vh] w-[52rem] max-w-full flex-col rounded-xl border bg-card shadow-lg"
+        onClick={(e) => e.stopPropagation()}
+      >
+        <div className="flex items-center gap-3 border-b px-5 py-3">
+          <FontAwesomeIcon icon={faImage} className="text-muted-foreground" />
+          <span className="min-w-0 flex-1 truncate text-sm font-semibold">
+            {desc.length > 40 ? desc.slice(0, 40) + "…" : desc || "（未描述）"}
+          </span>
+          {hit > 0 && (
+            <Badge variant="outline" className="text-[10px]">看过{hit}次</Badge>
+          )}
+          <Badge variant="outline" className="text-[10px]">{fmtSize(size)}</Badge>
+          <Button variant="ghost" size="sm" className="ml-auto h-7 px-2" onClick={onClose}>
+            <FontAwesomeIcon icon={faXmark} />
+          </Button>
+        </div>
+        <ScrollArea className="flex-1">
+          <div className="space-y-3 px-5 py-4">
+            {hash && (
+              /* eslint-disable-next-line @next/next/no-img-element */
+              <img
+                src={authedUrl(`/api/memory/image/${hash}`)}
+                alt={desc || hash}
+                loading="lazy"
+                className="mx-auto max-h-[55vh] rounded-md border object-contain"
+              />
+            )}
+            <div className="whitespace-pre-wrap break-words text-sm leading-relaxed">
+              {desc || "（未描述）"}
+            </div>
+            <div className="font-mono text-[11px] text-muted-foreground">
+              {hash.slice(0, 12)}… · 首次 {fmtDate(firstSeen)}
+            </div>
+          </div>
+        </ScrollArea>
+      </div>
+    </div>
+  );
+}
+
+/** 图片行：单行描述（100 字截断）+ 徽标 + 时间 + 「>」弹窗看原图与全文 */
 function ImageRow({ r }: { r: Record<string, unknown> }) {
   const [open, setOpen] = useState(false);
   const hash = String(r.hash ?? "");
@@ -87,12 +143,12 @@ function ImageRow({ r }: { r: Record<string, unknown> }) {
   const hit = Number(r.hit_count ?? 0);
   const size = Number(r.size ?? 0);
   const lastSeen = Number(r.last_seen ?? 0);
-  const firstSeen = Number(r.first_seen ?? 0);
+  const brief = desc.length > 100 ? desc.slice(0, 100) + "…" : desc;
 
   return (
     <div className="px-4 py-2.5 text-sm">
       <div className="flex flex-wrap items-center gap-2">
-        <span className="min-w-0 flex-1 break-all">{desc || "（未描述）"}</span>
+        <span className="min-w-0 flex-1 break-all">{brief || "（未描述）"}</span>
         {hit > 0 && <Badge variant="outline" className="text-[11px]">看过{hit}次</Badge>}
         <Badge variant="outline" className="text-[11px]">{fmtSize(size)}</Badge>
         <span className="font-mono text-xs text-muted-foreground">{fmtDate(lastSeen)}</span>
@@ -100,28 +156,13 @@ function ImageRow({ r }: { r: Record<string, unknown> }) {
           variant="ghost"
           size="icon"
           className="size-6"
-          aria-label={open ? "收起图片" : "查看图片"}
-          onClick={() => setOpen((v) => !v)}
+          aria-label="查看图片与完整描述"
+          onClick={() => setOpen(true)}
         >
-          <ChevronRight
-            className={`size-4 text-muted-foreground transition-transform ${open ? "rotate-90" : ""}`}
-          />
+          <ChevronRight className="size-4 text-muted-foreground" />
         </Button>
       </div>
-      {open && hash && (
-        <div className="mt-2 space-y-1">
-          {/* eslint-disable-next-line @next/next/no-img-element */}
-          <img
-            src={authedUrl(`/api/memory/image/${hash}`)}
-            alt={desc || hash}
-            loading="lazy"
-            className="max-h-96 rounded-md border"
-          />
-          <div className="font-mono text-[11px] text-muted-foreground">
-            {hash.slice(0, 12)}… · 首次 {fmtDate(firstSeen)}
-          </div>
-        </div>
-      )}
+      {open && <ImageModal r={r} onClose={() => setOpen(false)} />}
     </div>
   );
 }
