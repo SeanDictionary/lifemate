@@ -656,3 +656,68 @@ async def test_llm_failure_alerts_owner(tmp_path):
     finally:
         await plugin.stop()
         await napcat.stop()
+
+
+async def test_command_framework(tmp_path):
+    """命令面框架：仅主人私聊拦截——未知命令提示、注册命令分发+参数+异常回执、
+    交互入档；群聊/非主人不拦截走原路由；全程零信封（心智零感知）。"""
+    from lifemate.plugins.qq import commands as cmd_mod
+
+    def _priv(text, sender=OWNER):
+        return {"post_type": "message", "message_type": "private", "user_id": sender, "message": [{"type": "text", "data": {"text": text}}], "message_id": 777, "sender": {"nickname": "SeanDictionary"}}
+
+    def _cmd_replies():
+        return [str(r["params"]["message"]) for r in napcat.received if r["action"] == "send_private_msg"]
+
+    napcat, plugin, kernel, _ = await _ambient_harness(tmp_path, extra_cfg={"owner_uin": OWNER, "send_min_interval_s": 0})
+    evs = []
+    kernel.subscribe(lambda ev: evs.append(ev))
+    try:
+        assert await _wait_for(lambda: plugin._client.connected)
+
+        # ① 未知命令（空表）：拦截并提示，不进心智
+        await plugin._on_event(_priv("/stats"))
+        assert await _wait_for(lambda: _cmd_replies() and "没有这个命令" in _cmd_replies()[-1])
+        assert "（暂无）" in _cmd_replies()[-1]  # 空表清单
+        assert not any(e.type == "USER_MSG" for e in evs)  # 零信封
+
+        # ② 注册命令：分发 + 参数解析 + 异常回执 + 交互入档
+        async def _ping(p, ev, arg):
+            return f"pong {arg}".strip()
+
+        async def _boom(p, ev, arg):
+            raise RuntimeError("炸了")
+
+        cmd_mod._COMMANDS["/ping"] = _ping
+        cmd_mod._COMMANDS["/boom"] = _boom
+        try:
+            await plugin._on_event(_priv("/ping hello"))
+            assert await _wait_for(lambda: any("pong hello" in x for x in _cmd_replies()))
+            await plugin._on_event(_priv("/boom"))
+            assert await _wait_for(lambda: any("执行出错" in x for x in _cmd_replies()))
+            assert not any(e.type == "USER_MSG" for e in evs)  # 全程零信封
+            # 命令交互对称入档（输入 + 应答都在背景听觉里）
+            rows = plugin._chatlog.recent(f"private_{OWNER}", 10)
+            assert any(r["sender_id"] == OWNER and "/ping hello" in r["text"] for r in rows)
+            assert any(r["sender_id"] == SELF and "pong hello" in r["text"] for r in rows)
+        finally:
+            cmd_mod._COMMANDS.pop("/ping", None)
+            cmd_mod._COMMANDS.pop("/boom", None)
+
+        # ③ 群聊 /xxx（即使是主人）：不拦截，走路由（ambient 入背景听觉）
+        n_before = len(_cmd_replies())
+        await plugin._on_event(_group_msg(text="/foo", sender=OWNER))
+        await asyncio.sleep(0.1)
+        assert len(_cmd_replies()) == n_before
+        rows = plugin._chatlog.recent("group_777", 5)
+        assert any("/foo" in r["text"] for r in rows)
+
+        # ④ 非主人私聊 /xxx：不拦截，直达信封照常进心智
+        await plugin._on_event(_priv("/stats", sender=12345))
+        await kernel.wait_idle()
+        users = [m["content"] for m in kernel._session.messages if m.get("role") == "user"]
+        assert any("/stats" in u for u in users)
+        assert len(_cmd_replies()) == n_before  # 身体没有应答
+    finally:
+        await plugin.stop()
+        await napcat.stop()

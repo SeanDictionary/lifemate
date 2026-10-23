@@ -20,6 +20,7 @@ from typing import Any
 from ...kernel.contracts import AMBIENT, ASSISTANT_MSG, DIRECT, ERROR, PLATFORM_EVENT, Envelope
 from .. import Plugin, PluginContext
 from .chatlog import ChatLog, format_ts
+from .commands import handle_command
 from .config import QQConfig
 from .connection import OneBotClient
 from .protocol import compose_envelope_text, parse_event
@@ -98,6 +99,11 @@ class QQPlugin(Plugin):
                 self._pending_friend[ev.sender_id] = data.get("flag", "")
             elif data.get("request_type") == "group":
                 self._pending_group[ev.sender_id] = data.get("flag", "")
+        # 命令面：/命令 仅主人私聊——身体直接应答，不写信封（心智零感知、
+        # 零 token）；群聊/非主人的 /xxx 不拦截，走正常信封路由
+        if ev.is_owner and ev.chat_id.startswith("private_") and ev.text.startswith("/"):
+            await handle_command(self, ev)
+            return
         text = compose_envelope_text(ev)
         # 对话延续窗口：我发言后 N 秒内的群消息升格为强刺激（仅路由，
         # 文本保持背景形态——对方不一定在对我说话，"对你说"是过度断言）
