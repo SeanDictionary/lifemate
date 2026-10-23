@@ -26,7 +26,7 @@ from typing import Any
 
 from ..utils import clock
 from .compaction import Compactor
-from .contracts import ASSISTANT_MSG, COMPACTED, DIRECT, ERROR, QUEUE_DROP, REST, SEED, SESSION_ROTATED, TOOL_CALL, TOOL_RESULT, USER_MSG, WAKE, Envelope, EventCallback, MindEvent, PluginPack, Tool
+from .contracts import AMBIENT, ASSISTANT_MSG, COMPACTED, DIRECT, ERROR, QUEUE_DROP, REST, SEED, SESSION_ROTATED, TOOL_CALL, TOOL_RESULT, USER_MSG, WAKE, Envelope, EventCallback, MindEvent, PluginPack, Tool
 from .llm import LLMClient, LLMResponse
 from .persona import Persona
 from .session import Session
@@ -37,6 +37,7 @@ log = logging.getLogger("kernel.mind")
 # 工具回执进入上下文前的截断上限（保头尾，防上下文爆炸）
 _TOOL_RESULT_MAX = 6000
 _CIRCLED = "①②③④⑤⑥⑦⑧⑨⑩"
+_WAKE_AMBIENT_KEEP = 12  # 唤醒组批里 ambient 保留条数（超出计数提示，信息在 chat_log）
 
 _NUDGE = "（本轮已连续思考多轮，未休息。）"
 
@@ -52,17 +53,19 @@ class _Waiting:
     """一次挂起的等待。
 
     reason: auto（收敛）/explicit（闹钟）/sleep（深睡）；
-    intent: 闹钟意图（wait 工具的 reason 文本，空=无未来承诺）。
+    intent: 闹钟意图（wait 工具的 reason 文本，空=无未来承诺）；
+    dnd: 自主免打扰——ambient 信封只累积不唤醒（直达/闹钟照常穿透）。
     """
 
-    __slots__ = ("future", "reason", "since", "intent", "timeout_s")
+    __slots__ = ("future", "reason", "since", "intent", "timeout_s", "dnd")
 
-    def __init__(self, future: asyncio.Future, reason: str, intent: str = "", timeout_s: float | None = None) -> None:
+    def __init__(self, future: asyncio.Future, reason: str, intent: str = "", timeout_s: float | None = None, dnd: bool = False) -> None:
         self.future = future
         self.reason = reason
         self.since = time.monotonic()
         self.intent = intent
         self.timeout_s = timeout_s
+        self.dnd = dnd
 
 
 class SelfKernel:
@@ -74,6 +77,7 @@ class SelfKernel:
         self._cfg = cfg  # 活配置：用时读取（热重载生效）
 
         self._tools: dict[str, Tool] = {}
+        self._tool_src: dict[str, str] = {}  # 工具名 → 登记方（观测展示用）
         self._plugins: dict[str, PluginPack] = {}
         self._steer_q: deque[Envelope] = deque()  # 思考中的插话队列
         self._pending: list[Envelope] = []  # 等待期间累积的事件（组批）
@@ -120,13 +124,17 @@ class SelfKernel:
         self._wake_extras.append(fn)
 
     # ── 工具/器官挂载 ───────────────────────────────────
-    def register_tool(self, tool: Tool) -> None:
-        """注册工具（重名覆盖；拔器官后同名工具自然消失）。"""
+    def register_tool(self, tool: Tool, source: str = "内核") -> None:
+        """注册工具（重名覆盖；拔器官后同名工具自然消失）。
+
+        source：登记方标识（内核/记忆/宿主/插件名）——仅观测展示用，
+        内核不解其义。"""
         self._tools[tool.name] = tool
+        self._tool_src[tool.name] = source
 
     def register_plugin(self, plugin: PluginPack) -> None:
         for t in plugin.tools:
-            self.register_tool(t)
+            self.register_tool(t, source=plugin.name)
         self._plugins[plugin.name] = plugin
         log.info("插件注册: %s（工具 %d 个）", plugin.name, len(plugin.tools))
 
@@ -153,6 +161,10 @@ class SelfKernel:
         w = self._wait
         if w is not None:
             self._pending.append(env)
+            # 自主免打扰（dnd）：ambient（群聊攒批等）只累积不唤醒——
+            # 醒不醒是心智自己的决定；直达/@/私聊/自定闹钟/平台事件照常穿透
+            if w.dnd and env.kind == AMBIENT:
+                return
             if not w.future.done():
                 w.future.set_result(None)
             return
@@ -258,10 +270,10 @@ class SelfKernel:
                 self._deliver(Envelope(text=_NUDGE, kind="system", delivery="nudge"))
 
     # ── 等待与唤醒 ──────────────────────────────────────
-    async def _do_wait(self, timeout_s: float | None, reason: str, intent: str = "") -> str:
+    async def _do_wait(self, timeout_s: float | None, reason: str, intent: str = "", dnd: bool = False) -> str:
         """挂起等待。返回唤醒信封（组批事件 + 差值 + 附加事实）。"""
         fut: asyncio.Future = asyncio.get_event_loop().create_future()
-        self._wait = _Waiting(fut, reason, intent, timeout_s)
+        self._wait = _Waiting(fut, reason, intent, timeout_s, dnd)
         expired = False
         try:
             if timeout_s is None:
@@ -281,6 +293,14 @@ class SelfKernel:
     def _compose_wake(self, superseded_alarm: str | None = None) -> str:
         """组装唤醒信封：时间差值 + 期间事件组批 + 附加事实。"""
         events, self._pending = self._pending, []
+        # DND 累积截断：ambient 只保留最近 N 条，更早的计数提示
+        # （信息已入背景听觉，read_chat_log 可看——不丢，只去噪）
+        ambient_idx = [i for i, e in enumerate(events) if e.kind == AMBIENT]
+        dropped = 0
+        if len(ambient_idx) > _WAKE_AMBIENT_KEEP:
+            drop = set(ambient_idx[:-_WAKE_AMBIENT_KEEP])
+            dropped = len(drop)
+            events = [e for i, e in enumerate(events) if i not in drop]
         now = clock.hm(time.time(), self._cfg.timezone)
         mins = max(0.0, (time.time() - self._last_activity) / 60)
         head = f"（你从等待中醒来。现在 {now}，距你上次活动约 {mins:.0f} 分钟。"
@@ -291,6 +311,8 @@ class SelfKernel:
                 mark = _CIRCLED[i] if i < len(_CIRCLED) else f"({i + 1})"
                 text = env.text if len(env.text) <= 800 else env.text[:800] + "…"
                 lines.append(f"{mark} [{tag}] {text}" if tag else f"{mark} {text}")
+            if dropped:
+                lines.append(f"（另有 {dropped} 条群消息未列出——已入背景听觉，read_chat_log 可看。）")
             if superseded_alarm:
                 lines.append(f"（你之前定的闹钟「{superseded_alarm}」已被这次唤醒取代——还要等的话重新定。）")
             body = "\n".join(lines) + "）"
@@ -419,10 +441,10 @@ class SelfKernel:
         now = clock.now(self._cfg.timezone).strftime("%Y-%m-%d %H:%M")
         self._deliver(Envelope(text=f"（轮换完成。现在是 {now}。）\n\n{seed}", kind=SEED, delivery="seed"))
 
-    async def rest(self, timeout_s: float | None) -> str:
-        """公开的休息原语（deep_sleep 等宿主工具使用）。"""
-        self._emit(REST, rid=self._rid, reason="sleep", timeout_s=timeout_s)
-        wake = await self._do_wait(timeout_s, "sleep")
+    async def rest(self, timeout_s: float | None, dnd: bool = False) -> str:
+        """公开的休息原语（deep_sleep 等宿主工具使用）。dnd=免打扰。"""
+        self._emit(REST, rid=self._rid, reason="sleep", timeout_s=timeout_s, dnd=dnd)
+        wake = await self._do_wait(timeout_s, "sleep", dnd=dnd)
         self._new_rid()
         self._emit(WAKE, rid=self._rid, trigger="sleep")
         return wake
@@ -488,6 +510,20 @@ class SelfKernel:
 
     def tool_names(self) -> list[str]:
         return sorted(self._tools)
+
+    def tools_detail(self) -> list[dict[str, Any]]:
+        """全部工具的详细信息（/api/tools 观测面板用）。"""
+        out = []
+        for name in sorted(self._tools):
+            t = self._tools[name]
+            out.append({
+                "name": name,
+                "description": t.schema.get("description", ""),
+                "inputSchema": t.schema.get("inputSchema", {}),
+                "interruptible": bool(t.interruptible),
+                "source": self._tool_src.get(name, "内核"),
+            })
+        return out
 
     async def wait_idle(self) -> None:
         """等到静止：循环结束，或真正挂在未决的等待上。"""

@@ -5,7 +5,7 @@ import asyncio
 from conftest import FakeLLM, make_config, make_persona, make_session, text_reply, tool_reply
 
 from lifemate.kernel.compaction import Compactor
-from lifemate.kernel.contracts import DIRECT, QUEUE_DROP, REST, WAKE, Envelope, LLMResponse, Tool
+from lifemate.kernel.contracts import AMBIENT, DIRECT, QUEUE_DROP, REST, WAKE, Envelope, LLMResponse, Tool
 from lifemate.kernel.mind import SelfKernel
 from lifemate.kernel.persona import Persona
 from lifemate.kernel.session import Session
@@ -475,3 +475,75 @@ async def test_live_crashed_event_carries_traceback(tmp_path):
         await asyncio.sleep(0.02)
     errors = [d for t, d in evs if t == ERROR]
     assert any(d.get("error") == "live_crashed" and "循环里炸了" in d.get("detail", {}).get("traceback", "") for d in errors)
+
+
+# ── 自主免打扰（DND）：wake_on="direct" ────────────────
+
+async def test_dnd_ambient_accumulates_direct_penetrates(tmp_path):
+    """DND：ambient 只累积不唤醒；直达穿透；自然醒后组批可见。"""
+    llm = FakeLLM([
+        tool_reply("wait", args='{"timeout_s": 0.3, "reason": "睡长觉", "wake_on": "direct"}', cid="c1"),
+        text_reply("醒了"),
+    ])
+    k = make_kernel(tmp_path, llm)
+    evs = events_of(k)
+    k.notify(Envelope(text="先睡一觉"))
+    await wait_event(evs, REST, reason="explicit:睡长觉")
+    # DND 期间：ambient 不唤醒
+    for i in range(3):
+        k.notify(Envelope(text=f"群聊水话{i}", kind=AMBIENT, origin="qq"))
+        await asyncio.sleep(0.05)
+    assert k._wait is not None and not k._wait.future.done()  # 还在睡
+    # 直达穿透
+    k.notify(Envelope(text="@你 有事", kind=DIRECT, origin="qq"))
+    await k.wait_idle()
+    tool_msgs = [m["content"] for m in k._session.messages if m.get("role") == "tool"]
+    assert any("@你 有事" in x for x in tool_msgs)
+    assert any("群聊水话" in x for x in tool_msgs)
+
+
+async def test_dnd_reminder_kind_penetrates(tmp_path):
+    """自定闹钟（REMINDER）在 DND 下照常穿透——自己的承诺不静音。"""
+    from lifemate.kernel.contracts import REMINDER
+
+    llm = FakeLLM([
+        tool_reply("wait", args='{"timeout_s": 60, "reason": "睡到七点", "wake_on": "direct"}', cid="c1"),
+        text_reply("七点了"),
+    ])
+    k = make_kernel(tmp_path, llm)
+    evs = events_of(k)
+    k.notify(Envelope(text="睡了"))
+    await wait_event(evs, REST, reason="explicit:睡到七点")
+    k.notify(Envelope(text="（你自己定的提醒到点了）", kind=REMINDER, origin="host"))
+    await k.wait_idle()
+    tool_msgs = [m["content"] for m in k._session.messages if m.get("role") == "tool"]
+    assert any("提醒到点" in x for x in tool_msgs)  # 穿透并出现在唤醒组批
+
+
+async def test_dnd_wake_batch_ambient_capped(tmp_path):
+    """DND 累积超限：ambient 截断到最近 12 条 + 计数提示。"""
+    llm = FakeLLM([
+        tool_reply("wait", args='{"timeout_s": 0.3, "reason": "长觉", "wake_on": "direct"}', cid="c1"),
+        text_reply("醒"),
+    ])
+    k = make_kernel(tmp_path, llm)
+    evs = events_of(k)
+    k.notify(Envelope(text="睡"))
+    await wait_event(evs, REST, reason="explicit:长觉")
+    for i in range(30):
+        k.notify(Envelope(text=f"水话{i}", kind=AMBIENT, origin="qq"))
+    # 闹钟自然醒（0.3s 超时）→ 组批（轮询到周期完成）
+    async def _batch_ready():
+        msgs = [m["content"] for m in k._session.messages if m.get("role") == "tool"]
+        return any("群消息未列出" in x for x in msgs)
+
+    async def _poll():
+        while not await _batch_ready():
+            await asyncio.sleep(0.02)
+
+    await asyncio.wait_for(_poll(), timeout=10)
+    tool_msgs = [m["content"] for m in k._session.messages if m.get("role") == "tool"]
+    batch = [t for t in tool_msgs if "期间收到" in t or "群消息未列出" in t]
+    assert any("另有 18 条群消息未列出" in t for t in batch)
+    assert any("水话29" in t for t in batch)  # 保留最近的
+    assert all("水话0\n" not in t and "水话11" not in t for t in batch)  # 早期的被截

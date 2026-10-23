@@ -29,11 +29,12 @@ def make_wait_tool(kernel: SelfKernel) -> Tool:
     async def _fn(args: dict) -> str:
         timeout = args.get("timeout_s")
         reason = str(args.get("reason") or "")
+        dnd = str(args.get("wake_on") or "any").strip().lower() == "direct"
         t: float | None = None
         if timeout is not None:
             t = max(float(timeout), 1.0)  # 最短 1 秒
-        kernel._emit(REST, rid=kernel._rid, reason=f"explicit{':' + reason if reason else ''}", timeout_s=t)
-        wake = await kernel._do_wait(t, "explicit", intent=reason)
+        kernel._emit(REST, rid=kernel._rid, reason=f"explicit{':' + reason if reason else ''}", timeout_s=t, dnd=dnd)
+        wake = await kernel._do_wait(t, "explicit", intent=reason, dnd=dnd)
         # 唤醒作为工具结果返回：同回合无缝延续（自己定闹钟自己醒）
         kernel._new_rid()
         kernel._emit(WAKE, rid=kernel._rid, trigger="explicit_wait")
@@ -48,6 +49,7 @@ def make_wait_tool(kernel: SelfKernel) -> Tool:
                 "properties": {
                     "timeout_s": {"type": "number", "description": "多少秒后醒来（闹钟）"},
                     "reason": {"type": "string", "description": "在等什么/到点做什么"},
+                    "wake_on": {"type": "string", "enum": ["any", "direct"], "description": "any=任何事件部唤醒（默认）；direct=只被直达消息（@/私聊/叫名/回复）和自己定的闹钟唤醒，群聊水话静默累积、醒来一起看——挂长觉用它"},
                 },
             },
         },
@@ -91,7 +93,7 @@ def make_deep_sleep_tool(kernel: SelfKernel, store: Store) -> Tool:
         todo = "；".join(r["intent"][:40] for r in pend) or "无"
         seed = "（深睡结束，会话已轮换。上一会话留下的信：\n" + letter + f"\n\n待办提醒：{todo}）"
         kernel.swap_session(seed)
-        return await kernel.rest(hours * 3600)
+        return await kernel.rest(hours * 3600, dnd=True)  # 整觉默认免打扰：只被直达/闹钟唤醒
 
     return Tool(
         schema={
