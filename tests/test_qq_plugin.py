@@ -724,6 +724,40 @@ async def test_command_framework(tmp_path):
         await napcat.stop()
 
 
+async def test_command_reload(tmp_path):
+    """/reload：无变化回执；改盘后重载列出变化键，需重启项标注。"""
+    import json as _json
+    from pathlib import Path
+
+    def _priv(text):
+        return {"post_type": "message", "message_type": "private", "user_id": OWNER, "message": [{"type": "text", "data": {"text": text}}], "message_id": 778, "sender": {"nickname": "SeanDictionary"}}
+
+    def _replies():
+        return [str(r["params"]["message"]) for r in napcat.received if r["action"] == "send_private_msg"]
+
+    napcat, plugin, kernel, _ = await _ambient_harness(tmp_path, extra_cfg={"owner_uin": OWNER, "send_min_interval_s": 0})
+    try:
+        assert await _wait_for(lambda: plugin._client.connected)
+        # ① 无变化
+        await plugin._on_event(_priv("/reload"))
+        assert await _wait_for(lambda: _replies() and "配置无变化" in _replies()[-1])
+        # ② 改盘：一个普通键 + 一个需重启键
+        cf = Path(plugin._cfg.data_dir) / "config.json"
+        data = _json.loads(cf.read_text(encoding="utf-8"))
+        data["max_turns"] = 99
+        data["server_port"] = 8311
+        cf.write_text(_json.dumps(data, ensure_ascii=False, indent=2), encoding="utf-8")
+        await plugin._on_event(_priv("/reload"))
+        assert await _wait_for(lambda: _replies() and "已重载" in _replies()[-1])
+        last = _replies()[-1]
+        assert "max_turns" in last and "server_port" in last
+        assert "需重启" in last and "server_port" in last.split("需重启")[-1]
+        assert plugin._cfg.max_turns == 99  # 活引用原地更新
+    finally:
+        await plugin.stop()
+        await napcat.stop()
+
+
 async def test_status_command(tmp_path):
     """/status：面板 API 字段齐全时完整输出；面板未运行时降级本地字段不失败。"""
     from lifemate.plugins.qq import commands as cmd_mod

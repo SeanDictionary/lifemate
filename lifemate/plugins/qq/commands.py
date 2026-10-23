@@ -184,6 +184,27 @@ async def _history(p: QQPlugin, ev: ParsedEvent, arg: str) -> str:
     return f"最近 {len(rows)} 条活动：\n" + "\n".join(_fmt_record(r, tz) for r in rows)
 
 
+@_register_command
+async def _reload(p: QQPlugin, ev: ParsedEvent, arg: str) -> str:
+    """/reload：重读 config.json（与控制台 /reload 同义）——原地热更新，
+    全部活引用即时生效；应答列出本次变化的键，标注需重启才生效的项。"""
+    try:
+        changed = p._cfg.reload()
+    except Exception:  # noqa: BLE001
+        log.exception("配置重载失败")
+        return "配置重载出错（已记日志）"
+    if not changed:
+        return "配置无变化（config.json 未改动）"
+    fields = p._cfg.schema_dict()["fields"]
+    restart_keys = [k for k in changed if k != "plugins" and fields.get(k, {}).get("restart")]
+    lines = [f"已重载，变化 {len(changed)} 键：{'、'.join(changed)}"]
+    if "plugins" in changed:
+        lines.append("插件配置已更新（部分配置需重启进程生效）")
+    if restart_keys:
+        lines.append(f"部分配置需重启生效：{'、'.join(restart_keys)}")
+    return "\n".join(lines)
+
+
 async def handle_command(p: QQPlugin, ev: ParsedEvent) -> None:
     """命令分发（调用方已保证：主人私聊 + / 开头）。永不抛错。"""
     cmd, _, arg = ev.text.strip().partition(" ")

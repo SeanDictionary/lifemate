@@ -19,6 +19,7 @@ import base64
 import hashlib
 import ipaddress
 import json
+import logging
 import socket
 import urllib.parse
 import urllib.request
@@ -32,6 +33,8 @@ if TYPE_CHECKING:
     from ..memory.store import Store
     from .mind import SelfKernel
     from .persona import Persona
+
+log = logging.getLogger("kernel.tools")
 
 
 def make_wait_tool(kernel: SelfKernel) -> Tool:
@@ -159,9 +162,26 @@ def _sniff_image(data: bytes) -> str:
     return ""
 
 
-def _assert_public_http(url: str) -> None:
+def _parse_allow_cidrs(raw: str) -> list:
+    """逗号分隔 CIDR → 网段列表（坏条目告警跳过——配置是主人手改的，不炸调用）。"""
+    nets = []
+    for part in str(raw or "").split(","):
+        part = part.strip()
+        if not part:
+            continue
+        try:
+            nets.append(ipaddress.ip_network(part, strict=False))
+        except ValueError:
+            log.warning("image_fetch_allow_cidrs 含无法解析的网段（已跳过）：%s", part)
+    return nets
+
+
+def _assert_public_http(url: str, allow_networks: list = ()) -> None:
     """防 SSRF：只允许公网 http(s) 目标（内网/回环/链路本地一律拒绝）。
 
+    豁免网段优先于私网判定：本机代理 TUN/fake-ip（如 Clash 默认
+    198.18.0.0/16）会把域名解析成保留段 IP，真实目的地由代理解析——
+    豁免是显式信任，仅对所列网段生效，其余私网照拒。
     注：解析后连接存在 DNS 重绑定窗口，对当前威胁模型（取图工具）
     可接受；将来接入不可信输入再收紧（解析即连接固定 IP）。
     """
@@ -178,6 +198,8 @@ def _assert_public_http(url: str) -> None:
         raise _Reject(f"主机解析失败：{e}") from e
     for info in infos:
         ip = ipaddress.ip_address(info[4][0])
+        if any(ip in net for net in allow_networks):
+            continue
         if ip.is_private or ip.is_loopback or ip.is_link_local or ip.is_reserved or ip.is_multicast or ip.is_unspecified:
             raise _Reject(f"拒绝访问非公网地址：{host}")
 
@@ -195,7 +217,7 @@ def _http_get_image(url: str, max_bytes: int) -> tuple[bytes, str]:
     return data, ctype
 
 
-def _resolve_image(image: str, max_bytes: int) -> tuple[bytes, str]:
+def _resolve_image(image: str, max_bytes: int, allow_networks: list = ()) -> tuple[bytes, str]:
     """四形态归一：URL / data:URI / base64:// / 本地路径 → (字节, 媒体类型)。
 
     广泛适用性：任何器官将来都可以用任一形态喂图（web 插件的网页图、
@@ -205,7 +227,7 @@ def _resolve_image(image: str, max_bytes: int) -> tuple[bytes, str]:
     s = image.strip()
     declared = ""
     if s.startswith(("http://", "https://")):
-        _assert_public_http(s)
+        _assert_public_http(s, allow_networks)
         data, declared = _http_get_image(s, max_bytes)
     elif s.startswith("data:"):
         try:
@@ -257,8 +279,9 @@ def make_look_image_tool(llm, store: Store, cfg) -> Tool:
         if not image:
             return _err_receipt("需要 image（图片 URL / data:URI / base64:// / 本地路径）")
         max_bytes = int(float(cfg.image_max_mb) * 1_048_576)
+        allow = _parse_allow_cidrs(cfg.ssrf_exclude_ips)  # 用时读：热重载即时生效
         try:
-            data, media = await asyncio.to_thread(_resolve_image, image, max_bytes)
+            data, media = await asyncio.to_thread(_resolve_image, image, max_bytes, allow)
         except _Reject as e:
             return _err_receipt(str(e))
         h = hashlib.sha256(data).hexdigest()

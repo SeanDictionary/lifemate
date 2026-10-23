@@ -68,11 +68,11 @@ _JSON_FIELDS: dict[str, Setting] = {
     "llm_base_url": Setting("", description="LLM API 基础地址（OpenAI 兼容）", group="模型"),
     "llm_api_key": Setting("", description="LLM API 密钥", secret=True, group="模型"),
     "llm_model": Setting("", description="模型名", group="模型"),
+    "llm_vision_model": Setting("", description="看图模型名（未配置=看图能力关闭：look_image 会直接回执告知心智，让其转告主人）", group="模型"),
     "llm_max_retries": Setting(3, description="瞬态错误重试次数", group="模型"),
     "llm_retry_backoff_s": Setting(2.0, description="重试退避基数（指数：2/4/8s）", group="模型"),
     "llm_fail_alert_streak": Setting(5, description="连续失败告警阈值（回调触发）", group="模型"),
     "llm_refuse_receipts": Setting(3, description="结果性失败（永久错误/输出被拒）回执进上下文的连续次数上限：超过后不再重复回执，改退避重试", group="模型"),
-    "llm_vision_model": Setting("", description="看图模型名（未配置=看图能力关闭：look_image 会直接回执告知心智，让其转告主人）", group="模型"),
     # 内核
     "timezone": Setting("", description="主体时区（IANA 名如 Asia/Shanghai；空=本机时区）。昼夜/作息/社交时间感的事实源，换机器不换人生", group="内核"),
     "max_turns": Setting(24, description="单个唤醒周期内最大模型轮数（超过强制休息）", group="内核"),
@@ -80,6 +80,7 @@ _JSON_FIELDS: dict[str, Setting] = {
     "tool_timeout_s": Setting(120.0, description="单工具执行超时秒（wait 除外）", group="内核"),
     "compact_threshold_tokens": Setting(24_000, description="超过触发压缩（估算 token）", group="内核"),
     "keep_recent_tokens": Setting(8_000, description="压缩保留最近消息的估算 token", group="内核"),
+    "ssrf_exclude_ips": Setting("", description="SSRF排除Fake IP网段", group="内核"),
     # 路径（相对宿主 CWD）
     "soul_dir": Setting("soul", description="人格目录（相对宿主 CWD）", group="路径"),
     "skills_dir": Setting("skills", description="技能目录（相对宿主 CWD）", group="路径"),

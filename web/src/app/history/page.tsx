@@ -147,7 +147,7 @@ export default function HistoryPage() {
 
       <Card>
         <CardContent className="p-0">
-          <ScrollArea className="h-[calc(100vh-15rem)]">
+          <ScrollArea className="h-[calc(100vh-11rem)]">
             <div className="space-y-2 p-4">
               {history.isLoading && (
                 <div className="space-y-2">
