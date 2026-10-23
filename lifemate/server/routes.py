@@ -11,7 +11,7 @@ from ..kernel.contracts import DIRECT, Envelope
 from ..kernel.persona import Persona
 from ..utils.config import _ENV_SEED
 from .history import available_dates, read_day, today, usage_of_day
-from .http import Route
+from .http import _MIME, Route, json_resp, resp_bytes
 
 
 def _int_q(val: str | None, default: int, lo: int, hi: int) -> int:
@@ -74,16 +74,13 @@ def build_core_routes(srv) -> list[Route]:
 
     async def skills(req, p):
         items = _persona().skills_catalog()
-        return {"ok": True, "skills": [
-            {"name": s["name"], "description": s["description"], "source": s["source"]}
-            for s in items]}
+        return {"ok": True, "skills": [{"name": s["name"], "description": s["description"], "source": s["source"]} for s in items]}
 
     async def skill_detail(req, p):
         name = p.get("name", "")
         for s in _persona().skills_catalog():
             if s["name"] == name:
-                return {"ok": True, "name": name, "content": s["content"],
-                        "source": s["source"]}
+                return {"ok": True, "name": name, "content": s["content"], "source": s["source"]}
         return {"ok": False, "error": f"skill 不存在: {name}"}
 
     # ── 工具清单 ────────────────────────────────────
@@ -92,10 +89,7 @@ def build_core_routes(srv) -> list[Route]:
         detail = getattr(kernel, "tools_detail", None)
         if callable(detail):
             return {"ok": True, "tools": detail()}
-        return {"ok": True, "tools": [
-            {"name": n, "description": "", "inputSchema": {},
-             "interruptible": False, "source": "内核"}
-            for n in kernel.tool_names()]}
+        return {"ok": True, "tools": [{"name": n, "description": "", "inputSchema": {}, "interruptible": False, "source": "内核"} for n in kernel.tool_names()]}
 
     # ── 配置（读 / 改存 / 重载 / 说明书） ───────────
     async def config_get(req, p):
@@ -127,7 +121,27 @@ def build_core_routes(srv) -> list[Route]:
             return {"ok": True, "rows": store.pending_needs(n=n)}
         if table == "reminders":
             return {"ok": True, "rows": store.pending_reminders(n=n)}
-        return {"ok": False, "error": "table ∈ episodes/curiosity/needs/reminders"}
+        if table == "images":
+            return {"ok": True, "rows": store.recent_images(n=n)}
+        return {"ok": False, "error": "table ∈ episodes/curiosity/needs/reminders/images"}
+
+    async def memory_image(req, p):
+        """看过的原图（字节直出，img 标签直接可用；token 走查询参数）。"""
+        import re as _re
+
+        h = p.get("hash", "")
+        if not _re.fullmatch(r"[0-9a-f]{64}", h):
+            return json_resp({"ok": False, "error": "bad hash"}, 400)
+        row = store.find_image(h)
+        if row is None:
+            return json_resp({"ok": False, "error": "not found"}, 404)
+        name = Path(row["path"]).name  # 防穿越：只取文件名
+        f = (Path(cfg.data_dir) / "images" / name).resolve()
+        if not f.is_file():
+            return json_resp({"ok": False, "error": "file gone"}, 404)
+        ctype = _MIME.get(f.suffix.lower(), "application/octet-stream")
+        # 内容寻址（hash 即文件名）：可长缓存
+        return resp_bytes(200, ctype, f.read_bytes(), {"Cache-Control": "private, max-age=86400"})
 
     return [
         Route("GET", "/api/status", status),
@@ -142,6 +156,7 @@ def build_core_routes(srv) -> list[Route]:
         Route("POST", "/api/config", config_post),
         Route("POST", "/api/config/reload", config_reload),
         Route("GET", "/api/memory/{table}", memory),
+        Route("GET", "/api/memory/image/{hash}", memory_image),
         Route("GET", "/api/tools", tools),
         Route("GET", "/api/skills", skills),
         Route("GET", "/api/skills/{name}", skill_detail),

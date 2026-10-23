@@ -217,6 +217,11 @@ class Store:
     def forget_image(self, h: str) -> None:
         self._exec("DELETE FROM images WHERE hash = ?", (h,))
 
+    def recent_images(self, n: int = 50) -> list[dict[str, Any]]:
+        """最近看过的图（面板/记忆浏览用，按最后查看时间倒序）。"""
+        rows = self._exec("SELECT hash, size, first_seen, last_seen, hit_count, description FROM images ORDER BY last_seen DESC LIMIT ?", (n,)).fetchall()
+        return [dict(r) for r in rows]
+
     # ── 观测辅助 ────────────────────────────────────────
     def stats(self) -> dict[str, Any]:
         out: dict[str, Any] = {}

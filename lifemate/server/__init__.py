@@ -200,7 +200,9 @@ class Server:
                         log.exception("API 异常：%s %s", req.method, req.path)
                         writer.write(json_resp({"ok": False, "error": "internal error"}, 500))
                     else:
-                        writer.write(json_resp(out))
+                        # 处理器可直接返回完整响应字节（如图片等非 JSON 资源），
+                        # 否则统一 JSON 序列化
+                        writer.write(bytes(out) if isinstance(out, (bytes, bytearray)) else json_resp(out))
                     await writer.drain()
                     return
             writer.write(json_resp({"ok": False, "error": "not found"}, 404))

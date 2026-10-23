@@ -6,6 +6,7 @@
 from __future__ import annotations
 
 import asyncio
+import hashlib
 import json
 import sys
 import time
@@ -281,6 +282,35 @@ async def test_memory_endpoints(env):
     assert data["ok"] and data["rows"][0]["summary"] == "测试事件"
     _, data = await _jget(port, "/api/memory/reminders")
     assert data["ok"] and data["rows"][0]["intent"] == "下午提醒"
+
+
+async def test_memory_images_list_and_blob(env):
+    """图片 Tab 数据链：列表 + 原图字节直出（非 JSON 响应）。"""
+    port, _, store, cfg, tmp = env
+    img_dir = Path(cfg.data_dir) / "images"
+    img_dir.mkdir(parents=True, exist_ok=True)
+    png = b"\x89PNG\r\n\x1a\n" + b"\x00" * 16
+    h = hashlib.sha256(png).hexdigest()
+    (img_dir / f"{h}.png").write_bytes(png)
+    store.record_image(h, f"{h}.png", len(png), "一只猫")
+    # 列表
+    _, data = await _jget(port, "/api/memory/images")
+    assert data["ok"] and data["rows"][0]["hash"] == h and data["rows"][0]["description"] == "一只猫"
+    # 原图：状态码 200 + Content-Type + 原始字节
+    reader, writer = await asyncio.open_connection("127.0.0.1", port)
+    writer.write(f"GET /api/memory/image/{h} HTTP/1.1\r\nHost: t\r\nConnection: close\r\n\r\n".encode())
+    await writer.drain()
+    raw = await reader.read(-1)
+    writer.close()
+    head_b, _, body_b = raw.partition(b"\r\n\r\n")
+    assert b" 200 " in head_b.split(b"\r\n")[0]
+    assert b"image/png" in head_b and b"max-age" in head_b
+    assert body_b == png
+    # 坏 hash / 不存在
+    status, body = await _req(port, "GET", f"/api/memory/image/{'a' * 64}")
+    assert status == 404
+    status, body = await _req(port, "GET", "/api/memory/image/not-a-hash")
+    assert status == 400
 
 
 # ── 插件面板挂载 ───────────────────────────────────────

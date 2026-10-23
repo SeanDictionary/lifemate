@@ -337,6 +337,10 @@ env 仅部署种子）；热重载靠字段原地更新——新组件必须持�
   （content blocks，llm_vision_model 必填才启用，复用重试/告警）；
   host 维护任务加图片保留期清理（按最后查看时间淘汰）；
   看/不看由心智自决（行动是拉的，工具自描述）
+- **图片档案 API（2026-10-23）**：/api/memory/images 列表
+  （recent_images，按最后查看时间倒序）+/api/memory/image/{hash} 原图
+  字节直出（hash 严格 64hex 校验+文件名防穿越+内容寻址长缓存；
+  dispatch 支持处理器返回原始响应字节——非 JSON 资源通用能力）
 - **待开发**：attention（门控升格）→ sandbox → webui → video
 
 ## 验证方式
