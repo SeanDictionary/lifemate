@@ -15,7 +15,7 @@ import { ScrollArea } from "@/components/ui/scroll-area";
 
 function Stat({ label, value, mono = true }: { label: string; value: string; mono?: boolean }) {
   return (
-    <Card className="pt-0 pb-0">
+    <Card className="py-0">
       <CardContent className="p-4">
         <div className="text-xs text-muted-foreground">{label}</div>
         <div className={`mt-0.5 truncate text-sm font-medium ${mono ? "font-mono" : ""}`} title={value}>

@@ -58,7 +58,7 @@ export function QQPanel() {
       <h1 className="text-lg font-semibold">QQ</h1>
 
       {/* 连接状态 */}
-      <Card className="pt-0 pb-0">
+      <Card className="py-0">
         <CardContent className="flex flex-wrap items-center gap-x-6 gap-y-2 p-5 text-sm">
           <div className="flex items-center gap-2">
             <span
@@ -124,14 +124,16 @@ export function QQPanel() {
           <CardHeader className="flex-row items-center justify-between pb-2">
             <CardTitle className="text-sm">
               {chat ? chatLabel(chat) : "选择左侧会话查看记录"}
+              <Button
+                className="text-muted-foreground"
+                variant="ghost" size="sm"
+                onClick={() => log.refetch()}
+                disabled={!chat}
+              >
+                刷新
+              </Button>
             </CardTitle>
-            <Button
-              variant="ghost" size="sm"
-              onClick={() => log.refetch()}
-              disabled={!chat}
-            >
-              刷新
-            </Button>
+
           </CardHeader>
           <CardContent className="p-0">
             <ScrollArea className="h-[calc(100vh-20rem)]">
@@ -147,24 +149,15 @@ export function QQPanel() {
                       key={i}
                       className={`group/msg relative flex flex-col ${self ? "items-end" : "items-start"}`}
                     >
-                      {showName ? (
+                      {showName && (
                         /* 名字行：grid 同格叠放（宽度取两者较宽者），hover 交叉淡切为时间 */
-                        <div className="mb-0.5 grid text-[11px] font-medium text-muted-foreground">
-                          <span className="[grid-area:1/1] transition-opacity duration-200 group-hover/msg:opacity-0">{name}</span>
+                        <div className="mb-0.5 grid text-[11px] font-medium text-muted-foreground px-1">
+                          <span className={`[grid-area:1/1] transition-opacity duration-200 group-hover/msg:opacity-0 ${self ? "text-right" : "text-left"}`}>{name}</span>
                           <span className="[grid-area:1/1] font-mono opacity-0 transition-opacity duration-200 group-hover/msg:opacity-100">{fmtTime(r.ts)}</span>
-                        </div>
-                      ) : (
-                        /* 连续消息无名字行：时间 hover 时浮在气泡侧边（不挤布局） */
-                        <div
-                          className={`absolute top-1/2 -translate-y-1/2 font-mono text-[10px] text-muted-foreground opacity-0 transition-opacity duration-200 group-hover/msg:opacity-100 ${
-                            self ? "right-full mr-2" : "left-full ml-2"
-                          }`}
-                        >
-                          {fmtTime(r.ts)}
                         </div>
                       )}
                       <div
-                        className={`max-w-[75%] rounded-xl px-5 py-1.5 text-sm leading-relaxed ${
+                        className={`max-w-[75%] rounded-xl px-3 py-1.5 text-sm leading-relaxed ${
                           self ? "bg-primary text-primary-foreground" : "bg-muted"
                         }`}
                       >
