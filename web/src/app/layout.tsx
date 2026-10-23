@@ -15,8 +15,8 @@ const geistMono = Geist_Mono({
 });
 
 export const metadata: Metadata = {
-  title: "lifemate · 观测台",
-  description: "器官化数字生命运行时的观测与对话面板",
+  title: "lifemate · 面板",
+  description: "lifemate 后台控制管理面板",
 };
 
 export default function RootLayout({ children }: LayoutProps<"/">) {

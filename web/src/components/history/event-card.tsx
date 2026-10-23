@@ -152,18 +152,18 @@ export function EventCard({
   return (
     <div className={`animate-in fade-in slide-in-from-top-2 duration-300 rounded-lg border px-3 py-2 text-sm ${style}`}>
       <div className="flex items-center gap-2 text-[11px] text-muted-foreground">
+        <span className="font-mono">{fmtTime(model.ts)}</span>
         <span className="text-sm leading-none">{model.emoji}</span>
         <span>{model.label}</span>
         {model.rid && (
           <button
-            className="rounded border px-1.5 py-px font-mono hover:bg-foreground/10"
+            className="ml-auto rounded border px-1.5 py-px font-mono hover:bg-foreground/10"
             title="按此周期过滤（链路回放）"
             onClick={() => onRid?.(model.rid!)}
           >
             {model.rid}
           </button>
         )}
-        <span className="ml-auto font-mono">{fmtTime(model.ts)}</span>
       </div>
       {model.body && (
         <div

@@ -15,10 +15,10 @@ import { ScrollArea } from "@/components/ui/scroll-area";
 
 function Stat({ label, value, mono = true }: { label: string; value: string; mono?: boolean }) {
   return (
-    <Card>
+    <Card className="pt-0 pb-0">
       <CardContent className="p-4">
         <div className="text-xs text-muted-foreground">{label}</div>
-        <div className={`mt-1 truncate text-sm font-medium ${mono ? "font-mono" : ""}`} title={value}>
+        <div className={`mt-0.5 truncate text-sm font-medium ${mono ? "font-mono" : ""}`} title={value}>
           {value}
         </div>
       </CardContent>
@@ -64,7 +64,7 @@ export default function OverviewPage() {
     <div className="space-y-6">
       {/* 生命状态区 */}
       <Card>
-        <CardContent className="flex items-center gap-6 p-6">
+        <CardContent className="flex items-center gap-6 pl-6 pr-6 pt-4 pb-4">
           <Orb size={72} />
           <div className="min-w-0">
             <div className="flex items-center gap-3">
@@ -96,7 +96,7 @@ export default function OverviewPage() {
       {/* 最近动态（SSE 实时推送 + 30s 对账，最新在上） */}
       <Card>
         <CardContent className="p-0">
-          <div className="flex items-center gap-2 px-4 pt-4 pb-2 text-sm font-medium">
+          <div className="flex items-center gap-2 px-4 pb-4 text-sm font-medium">
             最近动态
             <span className="text-[11px] font-normal text-muted-foreground">
               {feed
@@ -106,7 +106,7 @@ export default function OverviewPage() {
                 : "加载中…"}
             </span>
           </div>
-          <ScrollArea className="h-96">
+          <ScrollArea className="h-[calc(100vh-24rem)] min-h-64">
             <div className="space-y-2 px-4 pb-4">
               {cards.length === 0 && (
                 <div className="py-12 text-center text-sm text-muted-foreground">
