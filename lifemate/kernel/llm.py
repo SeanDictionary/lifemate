@@ -149,10 +149,32 @@ class OpenAILLM:
     ) -> LLMResponse:
         return await chat_with_retry(lambda: self._raw_chat(messages, tools), max_retries=self._cfg.llm_max_retries, backoff_s=self._cfg.llm_retry_backoff_s, fail_streak=self._fail_streak)
 
+    async def vision(self, text: str, image_b64: str, media_type: str = "image/jpeg") -> LLMResponse:
+        """看图（多模态感知）：文本提问 + 图像 base64 → 回答。
+
+        要求 llm_vision_model 已配置（未配置直抛明确错误——look_image
+        在入口已门控，此处是兑底防线）；纯感知调用不带工具面（不是思考轮）。
+        供 look_image 工具使用，思维循环本身不调。
+        """
+        model = str(self._cfg.llm_vision_model or "").strip()
+        if not model:
+            raise ValueError("llm_vision_model 未配置（看图能力关闭）")
+        messages = [
+            {
+                "role": "user",
+                "content": [
+                    {"type": "text", "text": text},
+                    {"type": "image_url", "image_url": {"url": f"data:{media_type};base64,{image_b64}"}},
+                ],
+            }
+        ]
+        return await chat_with_retry(lambda: self._raw_chat(messages, None, model=model), max_retries=self._cfg.llm_max_retries, backoff_s=self._cfg.llm_retry_backoff_s, fail_streak=self._fail_streak)
+
     async def _raw_chat(
         self,
         messages: list[dict[str, Any]],
         tools: list[ToolSchema] | None = None,
+        model: str | None = None,
     ) -> LLMResponse:
         kwargs: dict[str, Any] = {}
         if tools:
@@ -170,7 +192,7 @@ class OpenAILLM:
                 for t in tools
             ]
         t0 = time.monotonic()
-        resp = await self._get_client().chat.completions.create(model=self._cfg.llm_model, messages=messages, **kwargs)
+        resp = await self._get_client().chat.completions.create(model=model or self._cfg.llm_model, messages=messages, **kwargs)
         if not getattr(resp, "choices", None):
             # 网关 200+脏响应体（实测：new-api 中转把上游错误包成字符串体，
             # SDK 解析成 str）——按瞬态错误重试，不让它击穿思维循环

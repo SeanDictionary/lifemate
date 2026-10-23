@@ -42,7 +42,8 @@ lifemate/
 ├── kernel/            # 内核（认知自我，必须实现）
 │   ├── contracts.py   #   契约：信封/事件/器官包/工具形状/MindKernel（纯协议零实现）
 │   ├── mind.py        #   思维循环：信封队列(prompt/steer/follow_up)+工具分发+轮换
-│   ├── llm.py         #   模型调用唯一入口（OpenAI 兼容；活配置，签名变更热重建）
+│   ├── llm.py         #   模型调用唯一入口（OpenAI 兼容；活配置，签名变更热重建；
+│   │                  #   vision 多模态入口供 look_image）
 │   ├── session.py     #   工作记忆：消息列表 + JSONL 持久化 + 轮换
 │   ├── compaction.py  #   上下文压缩（会话内兜底，阈值活配置）
 │   ├── persona.py     #   人格装配：identity + 内置指引 + skills 索引，每轮重建

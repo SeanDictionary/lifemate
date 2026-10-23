@@ -72,6 +72,7 @@ _JSON_FIELDS: dict[str, Setting] = {
     "llm_retry_backoff_s": Setting(2.0, description="重试退避基数（指数：2/4/8s）", group="模型"),
     "llm_fail_alert_streak": Setting(5, description="连续失败告警阈值（回调触发）", group="模型"),
     "llm_refuse_receipts": Setting(3, description="结果性失败（永久错误/输出被拒）回执进上下文的连续次数上限：超过后不再重复回执，改退避重试", group="模型"),
+    "llm_vision_model": Setting("", description="看图模型名（未配置=看图能力关闭：look_image 会直接回执告知心智，让其转告主人）", group="模型"),
     # 内核
     "timezone": Setting("", description="主体时区（IANA 名如 Asia/Shanghai；空=本机时区）。昼夜/作息/社交时间感的事实源，换机器不换人生", group="内核"),
     "max_turns": Setting(24, description="单个唤醒周期内最大模型轮数（超过强制休息）", group="内核"),
