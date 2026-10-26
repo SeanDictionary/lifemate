@@ -17,6 +17,7 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+import re
 import time
 import traceback
 import uuid
@@ -27,7 +28,7 @@ from typing import Any
 from ..utils import clock
 from .compaction import Compactor
 from .contracts import AMBIENT, ASSISTANT_MSG, COMPACTED, DIRECT, ERROR, QUEUE_DROP, REST, SEED, SESSION_ROTATED, TOOL_CALL, TOOL_RESULT, USER_MSG, WAKE, Envelope, EventCallback, MindEvent, PluginPack, Tool
-from .llm import LLMClient, LLMResponse, is_retryable
+from .llm import ContentFiltered, LLMClient, LLMResponse, is_retryable
 from .persona import Persona
 from .session import Session
 from .tools import make_wait_tool
@@ -40,6 +41,24 @@ _CIRCLED = "①②③④⑤⑥⑦⑧⑨⑩"
 _WAKE_AMBIENT_KEEP = 12  # 唤醒组批里 ambient 保留条数（超出计数提示，信息在 chat_log）
 
 _NUDGE = "（你已连续思考多轮——身体提醒：可以考虑休息了。继续还是休息由你决定。）"
+
+# 消息文本里的来源前缀（信封组装时写入，如"[群聊·441342877]"/
+# "[私聊·主人]"）——墓碑回执用它列涉事来源
+_SOURCE_TAG = re.compile(r"^\[([^\]]{1,40})\]")
+
+
+def _sources_of(messages: list[dict[str, Any]]) -> str:
+    """从被移除的消息里提取涉事来源（去重，最多列 3 个）。"""
+    seen: list[str] = []
+    for m in messages:
+        if m.get("role") != "user":
+            continue
+        match = _SOURCE_TAG.match(str(m.get("content") or ""))
+        if match and match.group(1) not in seen:
+            seen.append(match.group(1))
+        if len(seen) >= 3:
+            break
+    return "、".join(seen) if seen else "本轮新入内容"
 
 
 def _cap(text: str, n: int = _TOOL_RESULT_MAX) -> str:
@@ -94,6 +113,8 @@ class SelfKernel:
         self._current_tool_interruptible = False
         self._interrupted: Envelope | None = None
         self._pending_rotation: str | None = None  # 待执行的转身（deep_sleep 登记，周期边界兑现）
+        self._ok_len = len(self._session.messages)  # 内容过滤检查点：最后一次成功请求的会话长度（毒物必在其后）
+        self._cf_stage = 0  # 内容过滤逃生梯：0=净 1=已墓碑回滚 2=已深度告警（成功即归零）
         self._last_activity = time.time()  # 墙钟：唤醒差值
         self._last_activity_mono = time.monotonic()  # 单调钟：卡死检测
 
@@ -264,8 +285,13 @@ class SelfKernel:
                 self.swap_session(seed)
                 turns = 0  # 新周期重新计轮
             await self._maybe_compact()
+            req_len = len(self._session.messages)  # 本次请求的会话长度（成功即成为过滤检查点）
             try:
                 resp = await self._llm.chat(self._build_messages(), tools=self._tool_schemas() or None)
+            except ContentFiltered as e:
+                # 内容过滤：专属逃生梯（回滚→告警→转身），不走通用拒绝路径
+                self._escape_content_filter(e)
+                continue
             except Exception as e:  # noqa: BLE001
                 if is_retryable(e):
                     # 瞬态故障（网络波动/限流/5xx）：静默重试——过程信息
@@ -283,6 +309,8 @@ class SelfKernel:
                 continue
             self._llm_fail_streak = 0
             self._last_prompt_tokens = resp.prompt_tokens
+            self._ok_len = req_len  # 本次请求通过了审查：其会话长度即过滤检查点
+            self._cf_stage = 0  # 内容过滤逃生梯归零（成功即自愈）
             self._touch()
             self._record_assistant(resp)
             turns += 1
@@ -496,6 +524,47 @@ class SelfKernel:
             self._current_tool_interruptible = False
 
     # ── 会话原语 ────────────────────────────────────────
+    def _escape_content_filter(self, err: Exception) -> None:
+        """内容过滤逃生梯（机制保命，处置归心智）：
+
+        一档 墓碑回滚——移除最后一次成功之后进入工作记忆的内容（毒物
+          必在检查点之后：此前的上下文刚被证明能过）；移除可见，墓碑
+          即回执。多渠道网关的花心拦截代价：新入内容可能被误滚一次
+          （档案未丢，墓碑说明原委）——简洁优先，不为省它加一层重试。
+        二档 深度告警——回滚无效或无可回滚：毒在更早历史（如带毒启动、
+          压缩摘要携带），无法定位；告知心智，若再拒将强制转身。
+        三档 紧急转身——系统代笔换干净会话（复用 deep_sleep 的周期边界
+          轮换通道）；档案/记忆/身份完好，read_chat_log 读回有风险。
+        """
+        cur = len(self._session.messages)
+        if self._cf_stage == 0 and self._ok_len < cur:
+            dropped = self._session.messages[self._ok_len :]
+            sources = _sources_of(dropped)
+            n = len(dropped)
+            tombstone = f"（系统回执：最近 {n} 条内容（来自 {sources}）触发上游内容过滤且重试均被拒，已移出工作记忆。原始记录在档案与背景听觉中未丢；read_chat_log 读回这些内容可能再次触发过滤。）"
+            self._session.truncate(self._ok_len, {"role": "user", "content": tombstone, "ts": round(time.time(), 3)})
+            self._cf_stage = 1
+            log.warning("内容过滤持续拦截：墓碑回滚（移除 %d 条，涉事 %s）", n, sources)
+            self._emit(ERROR, error="llm_content_filtered", detail={"action": "rollback", "dropped_count": n, "sources": sources, "error": str(err)[:200]})
+        elif self._cf_stage < 2:
+            self._cf_stage = 2
+            log.warning("内容过滤仍在拦截（回滚无效或无可回滚）：毒在更早上下文，下次再拒将强制转身")
+            self._emit(ERROR, error="llm_content_filtered", detail={"action": "warn", "error": str(err)[:200]})
+            self._deliver(Envelope(text="（系统回执：上游内容过滤仍在拦截——触发内容在更早的上下文里，无法定位移除。若下一次思考仍被拒，将强制转身（轮换新会话）；你的记忆档案与背景听觉完好，身份不变。可以的话主动找主人说明情况。）", kind="system", origin="host", delivery="receipt"))
+        else:
+            self._cf_stage = 0
+            log.error("内容过滤三连拒：紧急转身（系统代笔）")
+            self._emit(ERROR, error="llm_content_filtered", detail={"action": "rotate", "error": str(err)[:200]})
+            self.request_rotation("（紧急转身：上一会话上下文持续被上游内容过滤拦截，无法通过审查，已由身体代为轮换。你的记忆档案（记忆工具可查）、背景听觉、重建包都完好，身份不变。read_chat_log 读回此前内容可能再次触发过滤，需要时谨慎。）")
+
+    def request_rotation(self, seed: str) -> None:
+        """登记转身（deep_sleep 用）：本回合工具批次结束后轮换新会话。
+
+        不在工具内直接轮换——工具回执要落在旧会话（否则新会话里出现
+        无主 tool 消息）；轮换在 _think 周期边界兑现，旧回合干净收尾。
+        """
+        self._pending_rotation = seed
+
     def swap_session(self, seed: str) -> None:
         """睡眠中转身：换新会话并播种（运行不中断；deep_sleep 调用）。"""
         old_id = self._session.session_id
@@ -505,14 +574,9 @@ class SelfKernel:
         self._emit(WAKE, rid=self._rid, trigger="rebirth")
         now = clock.now(self._cfg.timezone).strftime("%Y-%m-%d %H:%M")
         self._deliver(Envelope(text=f"（轮换完成。现在是 {now}。）\n\n{seed}", kind=SEED, delivery="seed"))
-
-    def request_rotation(self, seed: str) -> None:
-        """登记转身（deep_sleep 用）：本回合工具批次结束后轮换新会话。
-
-        不在工具内直接轮换——工具回执要落在旧会话（否则新会话里出现
-        无主 tool 消息）；轮换在 _think 周期边界兑现，旧回合干净收尾。
-        """
-        self._pending_rotation = seed
+        # 新会话新检查点：过滤逃生梯归零（转身后从干净上下文重新计）
+        self._ok_len = len(self._session.messages)
+        self._cf_stage = 0
 
     async def abort(self) -> None:
         """中止（停机用）：取消永续循环，插话丢弃并存证。"""

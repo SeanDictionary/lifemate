@@ -32,6 +32,8 @@ class FakeLLM:
         if not self.script:
             return LLMResponse(content="（脚本耗尽）")
         resp = self.script.pop(0)
+        if isinstance(resp, BaseException):
+            raise resp  # 脚本项可以是异常（模拟网关/过滤错误）
         if tools is None and resp.tool_calls:
             # 无工具调用面时模拟真实模型：只剩文本
             return LLMResponse(content=resp.content or "（收束）")

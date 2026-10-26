@@ -40,6 +40,48 @@ class BadGatewayBody(Exception):
     按瞬态错误处理：退避重试而非击穿思维循环。"""
 
 
+class ContentFiltered(Exception):
+    """上游内容过滤拦截（请求内容未通过审查，非网关故障）。
+
+    不重试：重试同样的内容大概率同样被拦（多渠道网关下或有随机性，
+    但那是网关侧应修的问题）；直接上抛，由思维层墓碑机制解阻塞。"""
+
+
+# 上游内容过滤标记（各家实测汇总，小写子串匹配）：命中即 ContentFiltered。
+# 保守白名单制——只列有把握的结果性标记，其余脏体照旧按瞬态重试
+_CONTENT_FILTER_MARKERS = (
+    "content_filter",  # OpenAI/Azure 官方 code
+    "content filter",
+    "content_filter_error",  # Azure
+    "content management policy",  # Azure 措辞
+    "content policy",  # Anthropic 措辞
+    "sensitive content",  # 网关中转实测（new-api 脏体）
+    "data_inspection_failed",  # 阿里 DashScope
+    "inappropriate content",  # DashScope message
+    "content exists risk",  # DeepSeek 官方
+)
+
+
+def _match_content_filter(text: str) -> bool:
+    t = (text or "").lower()
+    return any(m in t for m in _CONTENT_FILTER_MARKERS)
+
+
+def _extract_err_message(body: str) -> str:
+    """从脏体里尽可能抽出 error.message（网关中转常为 SSE data: 前缀包 JSON）。"""
+    s = body.strip()
+    if s.startswith("data:"):
+        s = s[5:].strip()
+    try:
+        obj = json.loads(s)
+        msg = obj.get("error", {}).get("message") if isinstance(obj, dict) else None
+        if msg:
+            return str(msg)
+    except ValueError:
+        pass
+    return body[:200]
+
+
 def is_retryable(exc: BaseException) -> bool:
     """瞬态错误判定：连接/超时/限流/5xx 可重试；鉴权/参数/上下文溢出直抛。"""
     try:
@@ -75,7 +117,15 @@ async def chat_with_retry(
                 fail_streak.reset()
             return resp
         except Exception as e:  # noqa: BLE001
+            # SDK 层 4xx（如 DeepSeek 的 Content Exists Risk）同样归入内容过滤：
+            # 与脏体形态统一分类，避免同一问题两种链路
+            if not isinstance(e, ContentFiltered) and not is_retryable(e) and _match_content_filter(str(e)):
+                e = ContentFiltered(str(e))
             last = e
+            if isinstance(e, ContentFiltered):
+                # 内容过滤：不重试不计数（不是网关健康问题），
+                # 直接交思维层墓碑机制解阻塞
+                raise
             if not is_retryable(e) or attempt >= max_retries:
                 if fail_streak is not None:
                     fail_streak.record(str(e))
@@ -195,8 +245,12 @@ class OpenAILLM:
         resp = await self._get_client().chat.completions.create(model=model or self._cfg.llm_model, messages=messages, **kwargs)
         if not getattr(resp, "choices", None):
             # 网关 200+脏响应体（实测：new-api 中转把上游错误包成字符串体，
-            # SDK 解析成 str）——按瞬态错误重试，不让它击穿思维循环
-            raise BadGatewayBody(f"网关返回非标准响应体：{str(resp)[:120]}")
+            # SDK 解析成 str）。先看内容：命中过滤标记是结果性错误；
+            # 其余按瞬态错误重试，不让它击穿思维循环
+            body = str(resp)
+            if _match_content_filter(body):
+                raise ContentFiltered(f"上游内容过滤：{_extract_err_message(body)}")
+            raise BadGatewayBody(f"网关返回非标准响应体：{body[:120]}")
         choice = resp.choices[0]
         msg = choice.message
         thinking, content = _extract_thinking(msg)

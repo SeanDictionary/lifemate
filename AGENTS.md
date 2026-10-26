@@ -409,6 +409,22 @@ env 仅部署种子）；热重载靠字段原地更新——新组件必须持�
   "为什么不理我"即 26s 冻结体感）；命令分支改 create_task 分发
   （同 _alert_owner 模式），新增走真实 WS 收包路径的回归测试
   test_command_via_ws_receive_loop（旧代码必挂：32s 超时；新代码 0.5s）
+- **内容过滤防阻塞链路（2026-10-26）**：修 10-23 实测的"敏感内容
+  被误判瞬态、静默重试 86 分钟"（退避滚到 128s、心智无感、档案与
+  429 混同）——参考 pi 的错误二分法与"失败响应不进模型投影"原则：
+  ① llm 层分类：脏体/SDK 4xx 命中过滤标记白名单（各家实测措辞：
+  content_filter/sensitive content/data_inspection_failed/
+  content exists risk 等）→ ContentFiltered（结果性）；不重试
+  （同样内容重试同样被拦），零等待直接上抛；
+  ② 思维层三级逃生梯（检查点=最后一次成功请求的会话长度）：
+  墓碑回滚（检查点后内容移出工作记忆，墓碑即回执，涉事来源列出，
+  observe 档案保全）→ 深度告警（回滚无效=毒在更早历史，告知再拒
+  将转身）→ 紧急转身（系统代笔 seed，复用 deep_sleep 周期边界
+  轮换通道）；成功即归零；防会话永久卡死（DeepSeek 会话毒化实证）；
+  花心多渠道网关的代价：单次随机拒绝也会误滚一次新入内容
+  （简洁优先，不为省它加重试层）
+  ③ session 新增 truncate 原语（截断+墓碑，原子重写，抽出 _rewrite）；
+  观测事件 llm_content_filtered 单列（带 action/来源）
 - **待开发**：attention（门控升格）→ sandbox → webui → video
 
 ## 验证方式

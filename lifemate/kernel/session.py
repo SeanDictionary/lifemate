@@ -77,6 +77,19 @@ class Session:
         self.summary = summary
         self.span = span
         self.messages = kept
+        self._rewrite()
+
+    def truncate(self, keep: int, tombstone: dict[str, Any]) -> None:
+        """截断回滚：保留前 keep 条，追加墓碑消息，整体重写文件。
+
+        内容过滤逃生用：被移除内容的原始记录在 observe 档案（黑匣子），
+        工作记忆里只留墓碑说明（移除可见，不静默消失）。
+        """
+        self.messages = self.messages[:keep] + [tombstone]
+        self._rewrite()
+
+    def _rewrite(self) -> None:
+        """按当前 messages/summary 整体重写会话文件（原子替换）。"""
         lines = [
             {
                 "type": HEADER_TYPE,
@@ -84,9 +97,10 @@ class Session:
                 "session_id": self.session_id,
                 "created": self.created,
             },
-            {"type": SUMMARY_TYPE, "content": summary, "span": span},
         ]
-        for m in kept:
+        if self.summary:
+            lines.append({"type": SUMMARY_TYPE, "content": self.summary, "span": self.span})
+        for m in self.messages:
             lines.append({"type": MSG_TYPE, "msg": m})
         tmp = self.file.with_suffix(".jsonl.tmp")
         tmp.write_text("".join(json.dumps(x, ensure_ascii=False) + "\n" for x in lines), encoding="utf-8")
