@@ -50,7 +50,8 @@ lifemate/
 │   ├── tools.py       #   内核工具：wait（思维生理）/read_skill/deep_sleep
 │   │                  #   （转身：写信+登记轮换，不管睡）/look_image
 │   │                  #   （看图：四形态输入归一+hash 去重+原图归档）
-│   │                  #   /web_search（检索）/web_fetch（读页）——工具
+│   │                  #   /web_search（检索）/web_fetch（读页）/recall
+│   │                  #   （档案回查：三级保真+seq/rid 句柄）——工具
 │   │                  #   语义层，网络基建在 web.py
 │   ├── web.py         #   网络访问共用层：SSRF 防护+受限 HTTP 取回+
 │   │                  #   文本解码（charset 探测/gb18030 兑底）+HTML→
@@ -66,6 +67,9 @@ lifemate/
 │   │                  #   + mtime 热重载（原地更新，引用即热生效）+ 密钥掩码
 │   ├── log.py         #   全局日志：.log 轮转存储 + 未捕获异常兑底
 │   ├── recorder.py    #   观测记录器：项目级日志基础设施（黑匣子，常开不可拆）
+│   │                  #   + 读取侧（read_day/search_archive/row_digest
+│   │                  #   单行摘要公共语言：server 面板/replay/qq 命令/
+│   │                  #   recall 共用，布局属主不各抄解析）
 │   └── instance.py    #   单实例锁：OS 文件锁，防双开损坏数据
 ├── replay.py          # 回放查看器：python -m lifemate.replay（翻档案）
 ├── server/            # 网络服务层（宿主侧，与 host 对等）：API+SSE+静态托管
@@ -494,6 +498,23 @@ env 仅部署种子）；热重载靠字段原地更新——新组件必须持�
  （recent_episodes 主动翻+latest_rebuild_packet 读完整信——
  原来只讲记不讲想）；④exploring 补「看图」节（何时看/问句
  语义/同图只识别一次）。skills/ 目录仍空（第三方留位）
+- **档案回查 recall 上线（2026-10-26）**：心智可翻自己的全部历史（输入/
+  思考/发言/工具回执/休息唤醒）——抹平“主人能看它、它不能看自己”的
+  不对称，档案对心智无禁区（与 replay 看到的对等）。主人三轮设计打磨
+  定型：①任意访问而非只看尾部——q 关键词搜全档案（跨日档新→旧）、
+  date+offset 翻任意窗口、rid 链路、跨天穿透；②三级保真而非逐字段
+  预截——概览一行一条（截短+句柄）→ rid 链路详情（预算内逐字，
+  超出标 seq 指路）→ date+seq 单行全文（宽预算），每行 [时间 #seq·
+  rid6] 句柄（同 read_chat_log 的 message_id 模式）；③预算是会话
+  经济学不是访问控制（recall_tail_max=100/recall_detail_max_chars=
+  6000/recall_row_max_chars=12000 三键入白名单）。配套：读取侧
+  （read_day/search_archive/row_digest 单行摘要公共语言）下沉
+  utils/recorder（布局属主，server 面板与 qq /history 改为共用，
+  删双份解析）；memory-keeping 回忆节补纪律句（档案是档案记忆
+  是记忆——查档案是回查事实，档案不替你判断什么重要）；防注入
+  声明前置（档案含外部内容）。7 项单测 + 真实 e2e 档案冒烟通过；
+  反刍风险暂不加机制，上线后盯 observe 里 recall 调用模式再收紧
+
 - **待开发**：attention（门控升格）→ sandbox → webui → video
 
 ### 待处理项（主人已知）

@@ -24,6 +24,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 from ...utils import clock
+from ...utils.recorder import row_digest
 from .chatlog import format_ts
 from .protocol import ParsedEvent
 
@@ -107,42 +108,13 @@ async def _status(p: QQPlugin, ev: ParsedEvent, arg: str) -> str:
 
 
 # ── /history：心智最近活动（observe 档案尾部） ──────────
-def _oneline(s: str, n: int) -> str:
-    s = s.replace("\n", " ").strip()
-    return s[:n] + "…" if len(s) > n else s
 
 
 def _fmt_record(r: dict, tz: str) -> str:
-    """档案记录 → 一行摘要（时间 + 图标 + 事实头）。"""
+    """档案记录 → 一行摘要（时间头 + 共享单行渲染）。"""
     ts = r.get("ts") or 0
     head = f"[{format_ts(ts, tz_name=tz) if ts else '?'}] "
-    typ, role = r.get("type"), r.get("role")
-    if typ == "msg":
-        if role == "assistant":
-            tcs = r.get("tool_calls") or []
-            if tcs:
-                calls = ", ".join(f"{tc.get('name', '?')}({_oneline(str(tc.get('arguments', '')), 30)})" for tc in tcs[:3])
-                extra = f" …共{len(tcs)}个" if len(tcs) > 3 else ""
-                body = f"🔧 {calls}{extra}"
-            else:
-                body = "💬 " + _oneline(r.get("content") or "", 60)
-        elif role == "user":
-            body = "📨 " + _oneline(r.get("content") or "", 60)
-        elif role == "tool":
-            body = f"📥 {r.get('name', '?')} {'✓' if r.get('ok') else '✗'} " + _oneline(str(r.get("content") or ""), 40)
-        else:
-            body = f"{role} " + _oneline(str(r.get("content") or ""), 40)
-    elif typ == "rest":
-        body = f"🌙 休息 {_oneline(str(r.get('reason', '')), 40)}"
-    elif typ == "wake":
-        body = f"☀️ 唤醒 {r.get('trigger', '')}"
-    elif typ == "error":
-        body = f"✗ {r.get('error', '')}"
-    elif typ == "compact":
-        body = f"🗜️ 压缩 丢{r.get('dropped', 0)} 保{r.get('kept', 0)}"
-    else:
-        body = f"· {typ}"
-    return head + body
+    return head + row_digest(r)
 
 
 def _observe_tail(p: QQPlugin, n: int) -> list[dict] | None:

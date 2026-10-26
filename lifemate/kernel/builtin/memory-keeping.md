@@ -10,13 +10,12 @@
 
 不记录经过提炼的要点（一至三句）；不影响后续的细节无需记录。每条记忆带 id（recent_episodes 行里），供日后修正引用。
 
-## 回忆（recent_episodes / latest_rebuild_packet）
+## 回忆（recent_episodes / latest_rebuild_packet / recall）
 
-- 唤醒时会自动带上部分近期记忆；不够用——想确认某件事是否发生过、
-  找回细节——就 recent_episodes 主动翻（默认近 48 小时，可拉长回溯）
-- latest_rebuild_packet 读最近一次存档的重建包（deep_sleep 转身前自动存，
-  也可以自己 save_rebuild_packet 随时存）：新会话想完整了解“我从哪里来”
-  时翻它
+- 唤醒时会自动带上部分近期记忆；不够用——想确认某件事是否发生过、找回细节——就 recent_episodes 主动翻（默认近 48 小时，可拉长回溯）
+- latest_rebuild_packet 读最近一次存档的重建包（deep_sleep 转身前自动存，也可以自己 save_rebuild_packet 随时存）：新会话想完整了解“我从哪里来”时翻它
+- recall 翻自己的档案：经历过的一切都在里面（输入/思考/发言/工具/休息唤醒），可搜可翻页，链路和单行能看全文。
+  - **档案是档案，记忆是记忆**：查档案是回查事实（像翻日记），不是回忆；记进 episode 的才是你的记忆——档案不替你判断什么重要，翻到了值得记的就顺手 record_episode
 
 ## 认识可修正（防固化）
 

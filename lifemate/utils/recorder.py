@@ -128,3 +128,111 @@ class Recorder:
         elif ev.type == ERROR:
             self._write("error", rid=rid, where=d.get("error", ""), error=str(d)[:500])
         # TOOL_CALL 事件不落行：执行语义已并入 TOOL_RESULT 行
+
+
+# ── 读取侧（查看器共用：server 面板 / replay / recall 工具）─────────
+# 布局属主在此，读取方不各抄一份解析（坏行跳过：半写状态不炸查看器）。
+
+
+def available_dates(observe_dir: Path | str) -> list[str]:
+    """有档案的日期列表（升序，YYYY-MM-DD）。"""
+    d = Path(observe_dir)
+    if not d.exists():
+        return []
+    return sorted(f.stem for f in d.glob("*.jsonl"))
+
+
+def read_day(observe_dir: Path | str, date: str, rid: str = "", limit: int = 500, offset: int = 0, tail: int = 0) -> dict[str, Any] | None:
+    """读一天档案（可按 rid 前缀过滤、分页或取尾部 N 条）。无档案 → None。
+
+    tail>0 时从尾部翻页：取过滤后的倒数第 offset+1..offset+tail 条
+    （offset=0 即最后 N 条；历史页倒序展示用，新记录到达时窗口滑动）。
+    """
+    path = Path(observe_dir) / f"{date}.jsonl"
+    if not path.exists():
+        return None
+    rows: list[dict[str, Any]] = []
+    try:
+        raw_lines = path.read_text(encoding="utf-8").splitlines()
+    except OSError:
+        return None
+    for raw in raw_lines:
+        try:
+            rec = json.loads(raw)
+        except ValueError:
+            continue  # 坏行跳过（半写状态）
+        if rid and not str(rec.get("rid") or "").startswith(rid):
+            continue
+        rows.append(rec)
+    if tail:
+        end = max(0, len(rows) - offset)
+        start = max(0, end - tail)
+        return {"total": len(rows), "rows": rows[start:end]}
+    return {"total": len(rows), "rows": rows[offset : offset + limit]}
+
+
+def search_archive(observe_dir: Path | str, q: str, max_hits: int = 100) -> list[dict[str, Any]]:
+    """全档案关键词搜索：新→旧扫日档，行内大小写不敏感包含匹配。
+
+    返回命中行（新→旧序），每行附 date 溯源；够 max_hits 即停。
+    """
+    hits: list[dict[str, Any]] = []
+    needle = q.lower()
+    for date in reversed(available_dates(observe_dir)):
+        path = Path(observe_dir) / f"{date}.jsonl"
+        try:
+            raw_lines = path.read_text(encoding="utf-8").splitlines()
+        except OSError:
+            continue
+        day_rows: list[dict[str, Any]] = []
+        for raw in raw_lines:
+            try:
+                rec = json.loads(raw)
+            except ValueError:
+                continue
+            if needle in raw.lower():
+                day_rows.append(rec)
+        for rec in reversed(day_rows):  # 天内也是新→旧
+            hits.append({"date": date, "row": rec})
+            if len(hits) >= max_hits:
+                return hits
+    return hits
+
+
+def _oneline(s, n: int) -> str:
+    """空白归一 + 截短（单行摘要用）。"""
+    s = " ".join(str(s or "").split())
+    return s[:n] + "…" if len(s) > n else s
+
+
+def row_digest(row: dict[str, Any]) -> str:
+    """档案行 → 单行摘要（图标 + 事实头，不含时间——时间标注由调用方拼）。
+
+    单行摘要的公共语言（qq /history、内核 recall 共用）；富视图
+    （思考全文/用量/链路分组）各自实现（replay 开发者视图等）。
+    """
+    typ, role = row.get("type"), row.get("role")
+    if typ == "msg":
+        if role == "assistant":
+            tcs = row.get("tool_calls") or []
+            if tcs:
+                calls = ", ".join(f"{tc.get('name', '?')}({_oneline(str(tc.get('arguments', '')), 30)})" for tc in tcs[:3])
+                extra = f" …共{len(tcs)}个" if len(tcs) > 3 else ""
+                return f"🔧 {calls}{extra}"
+            return "💬 " + _oneline(row.get("content"), 60)
+        if role == "user":
+            return "📨 " + _oneline(row.get("content"), 60)
+        if role == "tool":
+            return f"📥 {row.get('name', '?')} {'✓' if row.get('ok') else '✗'} " + _oneline(str(row.get("content")), 40)
+        return f"{role} " + _oneline(row.get("content"), 40)
+    if typ == "rest":
+        return f"🌙 休息 {_oneline(row.get('reason'), 40)}"
+    if typ == "wake":
+        return f"☀️ 唤醒 {row.get('trigger', '')}"
+    if typ == "error":
+        return "✗ " + _oneline(row.get("error"), 60)
+    if typ == "compact":
+        return f"🗜️ 压缩 丢{row.get('dropped', 0)} 保{row.get('kept', 0)}"
+    if typ == "rotate":
+        return "🔄 会话轮换"
+    return f"· {typ}"

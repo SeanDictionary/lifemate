@@ -1,6 +1,7 @@
 """observe 档案读取 + LLM 用量聚合（只读，坏行跳过）。
 
 档案布局（recorder 契约）：{data_dir}/observe/YYYY-MM-DD.jsonl，一行一记录。
+日档解析在 utils/recorder（布局属主，读取方不各抄一份）。
 """
 
 from __future__ import annotations
@@ -10,40 +11,7 @@ import time
 from pathlib import Path
 from typing import Any
 
-
-def available_dates(observe_dir: Path) -> list[str]:
-    if not observe_dir.exists():
-        return []
-    return sorted(f.stem for f in observe_dir.glob("*.jsonl"))
-
-
-def read_day(observe_dir: Path, date: str, rid: str = "", limit: int = 500, offset: int = 0, tail: int = 0) -> dict[str, Any] | None:
-    """读一天档案（可按 rid 过滤、分页或取尾部 N 条）。无档案 → None。
-
-    tail>0 时从尾部翻页：取过滤后的倒数第 offset+1..offset+tail 条
-    （offset=0 即最后 N 条；历史页倒序展示用，新记录到达时窗口滑动）。
-    """
-    path = observe_dir / f"{date}.jsonl"
-    if not path.exists():
-        return None
-    rows: list[dict[str, Any]] = []
-    try:
-        raw_lines = path.read_text(encoding="utf-8").splitlines()
-    except OSError:
-        return None
-    for raw in raw_lines:
-        try:
-            rec = json.loads(raw)
-        except ValueError:
-            continue  # 坏行跳过（半写状态）
-        if rid and rec.get("rid") != rid:
-            continue
-        rows.append(rec)
-    if tail:
-        end = max(0, len(rows) - offset)
-        start = max(0, end - tail)
-        return {"total": len(rows), "rows": rows[start:end]}
-    return {"total": len(rows), "rows": rows[offset : offset + limit]}
+from ..utils.recorder import available_dates, read_day  # noqa: F401 重导出：routes 经此引用
 
 
 def usage_of_day(observe_dir: Path, date: str) -> dict[str, Any]:
