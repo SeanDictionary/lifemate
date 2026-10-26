@@ -485,6 +485,15 @@ env 仅部署种子）；热重载靠字段原地更新——新组件必须持�
   ——主动闭环成立；②web_fetch 真实出网成功（标题+正文提取，
   人设语气回复）。搜索链路待主人配 key 后即通
 
+- **知情层全面审查与补齐（2026-10-26）**：42 工具×指引覆盖矩阵审查
+ 揭出四缺口全修——①新增 builtin reply-channels.md（信封来源决定
+ 回复出口：终端=直接文本输出/网页=webui_send/QQ=qq 工具；e2e
+ 实测证据：心智对 [终端·主人] 信封纠结一轮才猜对出口）；
+ ②qq SKILL 过时句修正（“无搜索工具时如实说不知道”→web_search
+ 查证，与 exploring 互链）；③memory-keeping 补「回忆」节
+ （recent_episodes 主动翻+latest_rebuild_packet 读完整信——
+ 原来只讲记不讲想）；④exploring 补「看图」节（何时看/问句
+ 语义/同图只识别一次）。skills/ 目录仍空（第三方留位）
 - **待开发**：attention（门控升格）→ sandbox → webui → video
 
 ### 待处理项（主人已知）
