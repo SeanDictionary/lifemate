@@ -724,6 +724,37 @@ async def test_command_framework(tmp_path):
         await napcat.stop()
 
 
+async def test_command_via_ws_receive_loop(tmp_path):
+    """真实收包路径：命令经 WS 事件进来（非直调 _on_event），应答要经
+    同一 WS 拿 echo——内联 await 会把收包循环堵死（消息送达但超时假报
+    失败、应答不入档、期间事件积压）；任务分发后 echo 正常结算。
+    """
+    napcat, plugin, kernel, _ = await _ambient_harness(tmp_path, extra_cfg={"owner_uin": OWNER, "send_min_interval_s": 0})
+    try:
+        assert await _wait_for(lambda: plugin._client.connected)
+
+        def _priv(text):
+            return {"post_type": "message", "message_type": "private", "user_id": OWNER, "message": [{"type": "text", "data": {"text": text}}], "message_id": 888, "sender": {"nickname": "SeanDictionary"}}
+
+        # 走真实 WS：FakeNapCat 服务端推送命令事件 → _serve → 命令应答
+        await napcat.push(_priv("/status"))
+
+        def _replies():
+            return [str(r["params"]["message"]) for r in napcat.received if r["action"] == "send_private_msg"]
+
+        # 应答经 echo 结算送达（旧代码此处会堵 30s 超时→测试失败）
+        assert await _wait_for(lambda: _replies() and "运行" in _replies()[-1] or any("找不到" in x for x in _replies()))
+        # echo 正常结算 → 应答入背景听觉（心智翻档能看全）
+        assert await _wait_for(lambda: any(r["sender_id"] == SELF for r in plugin._chatlog.recent(f"private_{OWNER}", 10)))
+        # 收包循环未被占用：紧跟的私聊事件照常路由（不冻结）
+        await napcat.push(_priv("你好呀"))
+        assert await _wait_for(lambda: any("你好呀" in m.get("content", "") for m in kernel._session.messages if m.get("role") == "user"))
+        await kernel.wait_idle()
+    finally:
+        await plugin.stop()
+        await napcat.stop()
+
+
 async def test_command_reload(tmp_path):
     """/reload：无变化回执；改盘后重载列出变化键，需重启项标注。"""
     import json as _json

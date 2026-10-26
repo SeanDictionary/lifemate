@@ -100,9 +100,12 @@ class QQPlugin(Plugin):
             elif data.get("request_type") == "group":
                 self._pending_group[ev.sender_id] = data.get("flag", "")
         # 命令面：/命令 仅主人私聊——身体直接应答，不写信封（心智零感知、
-        # 零 token）；群聊/非主人的 /xxx 不拦截，走正常信封路由
+        # 零 token）；群聊/非主人的 /xxx 不拦截，走正常信封路由。
+        # 任务分发（同 _alert_owner 模式）：命令应答要等 echo，而 echo 只能
+        # 由收包循环结算——内联 await 会把 _serve 堵死 30s（消息实际已送达
+        # 但超时假报失败、应答不入档、期间全部事件积压）
         if ev.is_owner and ev.chat_id.startswith("private_") and ev.text.startswith("/"):
-            await handle_command(self, ev)
+            asyncio.get_running_loop().create_task(handle_command(self, ev))
             return
         text = compose_envelope_text(ev)
         # 对话延续窗口：我发言后 N 秒内的群消息升格为强刺激（仅路由，
