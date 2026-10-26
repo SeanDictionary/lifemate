@@ -427,6 +427,7 @@ env 仅部署种子）；热重载靠字段原地更新——新组件必须持�
   观测事件 llm_content_filtered 单列（带 action/来源）
 - **看图问答缓存补齐（2026-10-26）**：修面板 27/36 张图“（未描述）”——原设计“带问题的特定问答不缓存描述”遇上“心智 31/41 次带问题看图”的现实，大量图只有档案无描述（缓存空转，重看仍要 vision）。改为：带问题且该图尚无描述时，问答结果存为首个描述（已有通用描述不覆盖——细节问答≠图的解释，只刷新计数）；工具描述与回执 note 同步。另确认 2 张大 gif 走 120s 工具超时留空行（未处理，心智可重看）
 - **引用回复/读合并转发封装（2026-10-26）**：兑现心智自己提的需求（needs #1，主人指令确认）——qq 插件新增两个基础工具：reply_to(message_id, text)（get_msg 自动定位会话，回复必去那条消息所在处，不会回错群；回自己的私聊消息定位不到对方时明确回执引导 send_message）、read_forward(message_id)（get_msg 解引用转发 resid → get_forward_msg → 渲染，心智不再手搓 CQ/数组）。配套：protocol 新增 render_segments/render_forward/forward_id_of 纯函数（兼容 OneBot node 段与 NapCat 铺开形态，图片带 URL 供 look_image）；chatlog 抽出共用渲染 render_log_lines——read_chat_log 与攒批唤醒所有消息带 message_id 句柄（原来别人的消息无句柄，引用回复根本无从定位）；SKILL.md 工具速查/操作序列同步
+- **兴趣通道内容层扩展（2026-10-26）**：主人定方向——好奇通道借用接口扩成“兴趣/爱好/好奇”共用（表名/工具名/接口不变，语义扩展）：add/list/resolve_curiosity 描述改写（想到就记：想弄明白的问题、喜欢或想尝试的东西、想聊下去的话题；resolve=弄明白或告一段落）；memory-keeping「兴趣与需求」节、rest-rhythm 睡前自省措辞同步；面板 Tab「好奇」→「兴趣」。动机缺口（零主动写入）主人自留后续解决，机制层不动
 - **待开发**：attention（门控升格）→ sandbox → webui → video
 
 ## 验证方式

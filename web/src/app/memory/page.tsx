@@ -17,7 +17,7 @@ import { Button } from "@/components/ui/button";
 
 const TABS = [
   { key: "episodes", label: "记忆" },
-  { key: "curiosity", label: "好奇" },
+  { key: "curiosity", label: "兴趣" },
   { key: "needs", label: "需求" },
   { key: "reminders", label: "提醒" },
   { key: "images", label: "图片" },

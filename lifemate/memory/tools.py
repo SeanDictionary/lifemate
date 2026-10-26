@@ -136,11 +136,11 @@ def build_memory_tools(store: Store, cfg=None) -> list[Tool]:
             Tool(
                 schema={
                     "name": "add_curiosity",
-                    "description": "记下一件你好奇、想找时间弄明白的事。",
+                    "description": "记下一件你感兴趣的事：想弄明白的好奇、喜欢或想尝试的爱好、想深入了解的领域——都放这张兴趣清单。趁自己的时间去看去试，弄明白或告一段落后 resolve_curiosity 附上结果。",
                     "inputSchema": {
                         "type": "object",
                         "properties": {
-                            "topic": {"type": "string", "description": "好奇的事（简短）"},
+                            "topic": {"type": "string", "description": "兴趣/好奇的事（简短）"},
                         },
                         "required": ["topic"],
                     },
@@ -150,7 +150,7 @@ def build_memory_tools(store: Store, cfg=None) -> list[Tool]:
             Tool(
                 schema={
                     "name": "list_curiosity",
-                    "description": "看看好奇清单上还有什么没弄明白。",
+                    "description": "看看兴趣清单上还有什么：想弄明白的、想继续的爱好。",
                     "inputSchema": {"type": "object", "properties": {"n": {"type": "number"}}},
                 },
                 func=list_curiosity,

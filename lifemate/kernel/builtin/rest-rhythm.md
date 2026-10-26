@@ -26,7 +26,7 @@
 
 收敛进休息前，过一遍自己的事：
 
-- 好奇心清单（list_curiosity）上有想弄明白的吗？
+- 兴趣清单（list_curiosity）上有想弄明白的、想继续的吗？
 - 需求清单（list_needs）上有要跟进的吗？
 - 提醒（list_reminders）里有到点该办的吗？
 

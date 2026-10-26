@@ -120,7 +120,7 @@ class Store:
             rows = self._exec("SELECT ts, source, kind, summary FROM episodes WHERE ts > ? ORDER BY ts DESC LIMIT ?", (cutoff, n)).fetchall()
         return [dict(r) for r in rows]
 
-    # ── 好奇队列 curiosity ───────────────────────────────
+    # ── 兴趣清单 curiosity（好奇/爱好/想深入了解，共用通道） ──
     def add_curiosity(self, topic: str, source: str = "") -> bool:
         """7 天内同话题去重。"""
         topic = topic.strip()[:120]
