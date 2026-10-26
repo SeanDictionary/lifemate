@@ -398,6 +398,9 @@ env 仅部署种子）；热重载靠字段原地更新——新组件必须持�
   心智零唤醒，严格只读）；build() 新增 llm_required（看板模式
   LLM 未配置放行，热配置配好即用无需重启）；停机链路复用
   （server_stop 入档）
+- **存量修复（2026-10-26）**：test_command_framework 断言同步 93ceb3d
+  措辞变更（"没有这个命令"→"找不到"，遗留失败）；commands.py f-string
+  内转义序列改 3.11 兼容写法（ruff 零告警恢复）
 - **待开发**：attention（门控升格）→ sandbox → webui → video
 
 ## 验证方式

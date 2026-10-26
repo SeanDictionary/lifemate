@@ -677,9 +677,9 @@ async def test_command_framework(tmp_path):
 
         # ① 未知命令：拦截并提示（可用清单含已注册命令），不进心智
         await plugin._on_event(_priv("/stats"))
-        assert await _wait_for(lambda: _cmd_replies() and "没有这个命令" in _cmd_replies()[-1])
+        assert await _wait_for(lambda: _cmd_replies() and "找不到" in _cmd_replies()[-1])
         last = _cmd_replies()[-1]
-        assert "没有这个命令：/stats" in last and "/status" in last and "/history" in last
+        assert "找不到 /stats" in last and "/status" in last and "/history" in last
         assert not any(e.type == "USER_MSG" for e in evs)  # 零信封
 
         # ② 注册命令：分发 + 参数解析 + 异常回执 + 交互入档

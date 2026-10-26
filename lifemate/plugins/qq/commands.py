@@ -216,7 +216,8 @@ async def handle_command(p: QQPlugin, ev: ParsedEvent) -> None:
             log.exception("命令消息入档失败")
     fn = _COMMANDS.get(cmd)
     if fn is None:
-        await _reply(p, ev, f"找不到 {cmd}\n可用以下\n{'\n'.join(sorted(_COMMANDS)) or '（暂无）'}")
+        avail = "\n".join(sorted(_COMMANDS)) or "（暂无）"
+        await _reply(p, ev, f"找不到 {cmd}\n可用以下\n{avail}")
         return
     try:
         reply = await fn(p, ev, arg.strip())
