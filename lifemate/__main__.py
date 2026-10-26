@@ -7,6 +7,8 @@
 -v / --version：显示版本号并退出。
 -l / --log-level：设置日志等级（默认使用config设置）。
 -s / --silence：静默终端日志（输入输出照常）。
+--webui：仅启动看板（webui 服务），不启动 AI 运行时——不装载器官
+（无感知面）、不启动思维循环/基建任务；档案/记忆/配置等观测照常。
 --no-stdin：服务模式，无控制台，纯信号驱动（后台/容器/服务化）。
 """
 
@@ -32,6 +34,7 @@ ARGS = [
     {"flags": ("-v", "--version"), "params": {"action": "version", "version": __version__}},
     {"flags": ("-l", "--log-level"), "params": {"choices": ("debug", "info", "warning", "error", "critical"), "help": "Set log level (default from config)"}},
     {"flags": ("-s", "--silence"), "params": {"action": "store_true", "help": "Silence terminal logs (input/output still works)"}},
+    {"flags": ("--webui",), "params": {"action": "store_true", "help": "Dashboard only: start webui server without the AI runtime (no organs, no mind loop)"}},
     {"flags": ("--no-stdin",), "params": {"action": "store_true", "help": "Service mode: no stdin console, signal-driven only (for background/containers/services)"}},
 ]
 
@@ -66,8 +69,12 @@ def _install_signal_handlers(stop: asyncio.Event) -> None:
                 pass  # 非主线程/平台不支持时忽略
 
 
-async def _orchestrate(silence: bool, log_level: str | None, no_stdin: bool) -> None:
-    """组合根：共享准备 → 服务运行 → 统一收尾。"""
+async def _orchestrate(silence: bool, log_level: str | None, no_stdin: bool, webui: bool = False) -> None:
+    """组合根：共享准备 → 服务运行 → 统一收尾。
+
+    webui 模式：仅 server（看板），不装 host（思维循环/基建/控制台）、
+    不装插件（感知面会唤醒心智）——AI 不自主运行，纯观测。
+    """
     lock = None
     run_marker: Path | None = None
     store = recorder = None
@@ -96,7 +103,7 @@ async def _orchestrate(silence: bool, log_level: str | None, no_stdin: bool) -> 
         # 首启预设先于 build()：首启必然未配 LLM，build() 会 SystemExit，
         # 插件默认段必须已落盘（否则首启生成的 config.json 缺插件段）
         preset_plugin_defaults(cfg)
-        kernel, store, recorder = build(cfg)
+        kernel, store, recorder = build(cfg, llm_required=not webui)
         # 崩溃入档：进程级未捕获异常也进黑匣子（recorder 就位后重挂带钩版本）
         install_excepthooks(on_crash=lambda summary, tb: recorder.event("error", where="process", error=summary, traceback=tb))
         install_loop_handler(asyncio.get_event_loop(), on_crash=lambda summary, tb: recorder.event("error", where="loop", error=summary, traceback=tb))
@@ -105,18 +112,28 @@ async def _orchestrate(silence: bool, log_level: str | None, no_stdin: bool) -> 
         stop = asyncio.Event()
         _install_signal_handlers(stop)
 
-        # 插件装载（共享准备：host 与 server 都消费——boot 信封/停机 vs 面板路由）
-        plugins = await load_plugins(PluginContext(kernel=kernel, store=store, cfg=cfg, recorder=recorder, data_dir=Path(cfg.data_dir) / "plugins"))
+        # 插件装载（共享准备：host 与 server 都消费——boot 信封/停机 vs 面板路由）；
+        # 看板模式不装：插件感知面会推信封唤醒心智（AI 不启动）
+        plugins = [] if webui else await load_plugins(PluginContext(kernel=kernel, store=store, cfg=cfg, recorder=recorder, data_dir=Path(cfg.data_dir) / "plugins"))
 
-        # 服务清单：host（运行时）+ server（网络），共享同一套上下文
-        host = Host(kernel, store, recorder, cfg, stop, plugins=plugins, no_stdin=no_stdin, first_boot=first_boot, unclean_prev=unclean_prev)
-        server = Server(kernel, store, recorder, cfg, stop, plugins=plugins)
+        if webui:
+            # 看板模式：server 主导生命周期（纯信号驱动，无控制台）
+            log.info("看板模式：仅 webui 服务，AI 运行时未启动（无器官/无思维循环）")
+            server = Server(kernel, store, recorder, cfg, stop, plugins=[], dashboard=True)
+            server_task = asyncio.create_task(server.serve())
+            await server_task
+            log.info("停机①：server 已退出（看板模式）")
+            recorder.event("server_stop", reason="webui")
+        else:
+            # 服务清单：host（运行时）+ server（网络），共享同一套上下文
+            host = Host(kernel, store, recorder, cfg, stop, plugins=plugins, no_stdin=no_stdin, first_boot=first_boot, unclean_prev=unclean_prev)
+            server = Server(kernel, store, recorder, cfg, stop, plugins=plugins)
 
-        host_task = asyncio.create_task(host.run())
-        server_task = asyncio.create_task(server.serve())
-        reason = await host_task  # host 主导生命周期（console/信号决定停）
-        log.info("停机①：host 已退出（reason=%s）", reason)
-        recorder.event("host_stop", reason=reason)
+            host_task = asyncio.create_task(host.run())
+            server_task = asyncio.create_task(server.serve())
+            reason = await host_task  # host 主导生命周期（console/信号决定停）
+            log.info("停机①：host 已退出（reason=%s）", reason)
+            recorder.event("host_stop", reason=reason)
     finally:
         # ── 统一收尾：任何退出路径（正常/异常）都分步执行并留痕 ──
         # 档案与库先落地，不被网络服务收尾阻塞
@@ -156,7 +173,7 @@ def main() -> None:
     add_arguments(parser)
     args = parser.parse_args()
     try:
-        asyncio.run(_orchestrate(args.silence, args.log_level, args.no_stdin))
+        asyncio.run(_orchestrate(args.silence, args.log_level, args.no_stdin, webui=args.webui))
     except KeyboardInterrupt:
         pass
 

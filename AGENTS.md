@@ -88,7 +88,8 @@ data/                  # 运行数据（gitignore）：config.json / memory.db /
 │                      # （器官说明书随器官走；用户自加扩展放这里即生效）
 ├── console.py         # 开发控制台：stdin→/命令+调试信封（宿主对话面，非器官）
 ├── host.py            # 运行时服务：思维循环驱动+基建任务+插件装载（Host 类）
-└── __main__.py        # 入口=组合根（CLI：-v/-l/-s/--no-stdin）：共享准备+服务编排；
+└── __main__.py        # 入口=组合根（CLI：-v/-l/-s/--webui/--no-stdin）：共享准备+服务编排；
+                      #   --webui 仅看板（server 独活，无 AI 运行时）；
                       #   stdin 每行=调试信封）
 web/                  # 前端观测台（Next.js 源码，pnpm；node_modules/out 不入库）
 ├── src/app/           #   10 页面：概览/事件流/历史回放/对话/记忆(含图片 Tab)/用量/设置/插件/工具/技能
@@ -390,6 +391,13 @@ env 仅部署种子）；热重载靠字段原地更新——新组件必须持�
   死循环每轮刷新活动时间 watchdog 管不住，只能按轮数拦截；
   正常思考不受限）——max_turns 默认 24→60，在用 config.json 已同步；
   rest-rhythm.md 整觉节改"转身"、节律节同步
+- **看板模式 --webui（2026-10-26）**：入口新增启动参数——仅启动 webui 服务，
+  不启动 AI 运行时：不装 host（无思维循环/基建/控制台）、不装插件
+  （感知面会唤醒心智）；内核照常装配供 server 消费，档案/记忆/配置
+  观测照常；对话面关闭（say 明确拒绝，webui_send 工具不注册——
+  心智零唤醒，严格只读）；build() 新增 llm_required（看板模式
+  LLM 未配置放行，热配置配好即用无需重启）；停机链路复用
+  （server_stop 入档）
 - **待开发**：attention（门控升格）→ sandbox → webui → video
 
 ## 验证方式

@@ -39,13 +39,14 @@ _HEARTBEAT_S = 15.0
 class Server:
     """网络服务（生命周期：start → serve/close）。"""
 
-    def __init__(self, kernel: SelfKernel, store: Store, recorder: Recorder, cfg: Config, stop: asyncio.Event, plugins: list[Plugin] | None = None) -> None:
+    def __init__(self, kernel: SelfKernel, store: Store, recorder: Recorder, cfg: Config, stop: asyncio.Event, plugins: list[Plugin] | None = None, dashboard: bool = False) -> None:
         self.kernel = kernel
         self.store = store
         self.recorder = recorder
         self.cfg = cfg
         self.stop = stop
         self.plugins = plugins or []
+        self.dashboard = dashboard  # 看板模式：只读观测，对话面关闭（不唤醒心智）
         self.t0 = time.time()
 
         self.broadcaster = Broadcaster()
@@ -69,7 +70,8 @@ class Server:
             return None
         port = self._server.sockets[0].getsockname()[1]
         self._unsub = self.kernel.subscribe(self._on_event)
-        self.kernel.register_tool(make_webui_tool(self.chatbus), source="宿主")
+        if not self.dashboard:  # 看板模式无对话面，不提供说话出口
+            self.kernel.register_tool(make_webui_tool(self.chatbus), source="宿主")
         # 档案记录流：落档行实时分接（零 IO：broadcaster.push 只入队）
         if self.recorder is not None:
             self.recorder.tap = self.rec_broadcaster.push

@@ -51,6 +51,8 @@ def build_core_routes(srv) -> list[Route]:
 
     # ── 对话 ──────────────────────────────────────────
     async def say(req, p):
+        if srv.dashboard:
+            return {"ok": False, "error": "看板模式：AI 未运行，对话不可用（正常启动 python -m lifemate 后可对话）"}
         text = str(req.json().get("text") or "").strip()
         if not text:
             return {"ok": False, "error": "text 不能为空"}

@@ -66,10 +66,16 @@ def _boot_envelope(plugin_names: list[str], tz_name: str = "") -> str:
     return _with_now(f"（系统首次启动。已装配插件：{names}。当前可用能力以工具列表与技能索引为准，记忆为空。）", tz_name)
 
 
-def build(cfg: Config) -> tuple[SelfKernel, Store, Recorder]:
-    """装配内核 + 记忆 + 观测记录器（剥夺模式：不装载任何器官）。"""
-    if not cfg.llm_base_url or not cfg.llm_model:
+def build(cfg: Config, llm_required: bool = True) -> tuple[SelfKernel, Store, Recorder]:
+    """装配内核 + 记忆 + 观测记录器（剥夺模式：不装载任何器官）。
+
+    llm_required=False 供看板模式（--webui）：LLM 未配置也允许装配——
+    不思考但不挡观测（配置好后台随时可用，热配置无需重启）。
+    """
+    if llm_required and not (cfg.llm_base_url and cfg.llm_model):
         raise SystemExit("需要配置 llm_base_url 与 llm_model（config.json 或 env LIFEMATE_LLM_*；内核无法思考）")
+    if not (cfg.llm_base_url and cfg.llm_model):
+        log.warning("LLM 未配置（看板模式允许）——对话/思考不可用，配置后无需重启")
 
     # 观测记录器先行（黑匣子原则：任何后续装配失败也有档可查）
     recorder = Recorder(
