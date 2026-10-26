@@ -118,7 +118,7 @@ def make_deep_sleep_tool(kernel: SelfKernel, store: Store) -> Tool:
             "inputSchema": {
                 "type": "object",
                 "properties": {
-                    "letter": {"type": "string", "description": "写给下一个自己的信（我是谁/最近经历/未办/心情）"},
+                    "letter": {"type": "string", "description": "写给下一个自己的信（我是谁/最近经历/未办/兴趣清单上想继续的/对自己的新认识/心情）"},
                 },
                 "required": ["letter"],
             },

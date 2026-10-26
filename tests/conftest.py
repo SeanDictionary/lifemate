@@ -17,6 +17,7 @@ def make_config(tmp_path) -> Config:
     cfg.keep_recent_tokens = 4000
     cfg.max_turns = 5
     cfg.tool_timeout_s = 2.0
+    cfg.sleep_review_gap_s = 10**12  # 测试默认关闭睡前自省（专项测试显式开启）
     return cfg
 
 

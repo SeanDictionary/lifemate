@@ -62,18 +62,52 @@ def build_memory_tools(store: Store, cfg=None) -> list[Tool]:
         return _ok(added=added) if added else _ok(added=False, note="7 天内已有同话题")
 
     async def list_curiosity(args: dict) -> str:
-        return rows_json(_readable(store.pending_curiosity(int(args.get("n") or 10))))
+        rows = _readable(store.pending_curiosity(int(args.get("n") or 10)))
+        if not rows:
+            # 空回执给语义：自省时刻递笔（不是命令，想不起来也没关系）
+            return _ok(note="兴趣清单是空的——想弄明白的、喜欢或想继续的事，现在想到什么了吗？想不起来也没关系，想到了随时 add_curiosity")
+        return rows_json(rows)
 
     async def resolve_curiosity(args: dict) -> str:
         store.resolve_curiosity(int(args.get("id") or 0), str(args.get("result") or ""))
-        return _ok()
+        return _ok(note="已标记弄明白/告一段落；后来又想继续的话 reopen_curiosity 重开")
+
+    async def reopen_curiosity(args: dict) -> str:
+        cid = int(args.get("id") or 0)
+        if not store.reopen_curiosity(cid):
+            return _err("没有这条已弄明白的兴趣（id 从 resolve 回执或兴趣清单取）")
+        return _ok(id=cid, note="已重新放回兴趣清单（之前的结果保留在案）")
 
     async def record_need(args: dict) -> str:
         added = store.add_need(str(args.get("what") or ""), str(args.get("why") or ""))
         return _ok(added=added)
 
     async def list_needs(args: dict) -> str:
-        return rows_json(_readable(store.pending_needs(int(args.get("n") or 10))))
+        rows = _readable(store.pending_needs(int(args.get("n") or 10)))
+        if not rows:
+            return _ok(note="需求清单是空的——发现自己缺什么能力、想要什么的时候记进来（record_need），攒着找机会向主人提")
+        return rows_json(rows)
+
+    async def revise_episode(args: dict) -> str:
+        eid = int(args.get("id") or 0)
+        summary = str(args.get("summary") or "").strip()
+        why = str(args.get("why") or "").strip()
+        if not eid or not summary:
+            return _err("需要 id（要修正哪条，recent_episodes 行里有）、summary（新认识）、why（为什么改）")
+        old = store.episode_by_id(eid)
+        if old is None:
+            return _err("没有这条记忆（id 从 recent_episodes 的行里取）")
+        new_id = store.record_episode(summary, source=old["source"], kind=old["kind"])
+        store.supersede_episode(eid, new_id)
+        # 回执复述新旧两版：心智凭此审视这次自我修正
+        return _ok(old={"id": eid, "summary": old["summary"][:120], "kind": old["kind"]}, new={"id": new_id, "summary": summary[:120]}, why=why[:200], note="旧认识已被顶替，不再出现在回忆里（档案保留）；反悔用 revert_episode 回滚")
+
+    async def revert_episode(args: dict) -> str:
+        nid = int(args.get("id") or 0)
+        old_id = store.revert_episode(nid)
+        if old_id is None:
+            return _err("这个 id 不是一次修正（用 revise_episode 回执里的新条 id）")
+        return _ok(restored=old_id, note=f"已回滚：旧记忆（id={old_id}）重新可见，修正记录保留为普通记忆")
 
     async def set_reminder(args: dict) -> str:
         intent = str(args.get("intent") or "").strip()
@@ -105,7 +139,7 @@ def build_memory_tools(store: Store, cfg=None) -> list[Tool]:
             Tool(
                 schema={
                     "name": "record_episode",
-                    "description": "记一件你经历过/想到的事（脱敏提炼，一句话到几句话）。kind 可用：life（生活）/conversation（对话）/insight（自我洞察）。",
+                    "description": "记一件你经历过/想到的事（脱敏提炼，一句话到几句话）。kind 可用：life（生活）/conversation（对话）/insight（自我洞察——构成你是谁，最重要）。后来发现记错了/过时了用 revise_episode 修正。",
                     "inputSchema": {
                         "type": "object",
                         "properties": {
@@ -158,7 +192,7 @@ def build_memory_tools(store: Store, cfg=None) -> list[Tool]:
             Tool(
                 schema={
                     "name": "resolve_curiosity",
-                    "description": "标记一件好奇的事已弄明白（附结果）。",
+                    "description": "标记一件兴趣已弄明白或告一段落（附结果/感受）。后来又想继续的可以 reopen_curiosity 重开。",
                     "inputSchema": {
                         "type": "object",
                         "properties": {
@@ -169,6 +203,50 @@ def build_memory_tools(store: Store, cfg=None) -> list[Tool]:
                     },
                 },
                 func=resolve_curiosity,
+            ),
+            Tool(
+                schema={
+                    "name": "reopen_curiosity",
+                    "description": "重开一条已弄明白的兴趣：重新放回兴趣清单（之前的结果保留在案）。兴趣回心转意是正常的。",
+                    "inputSchema": {
+                        "type": "object",
+                        "properties": {
+                            "id": {"type": "number"},
+                        },
+                        "required": ["id"],
+                    },
+                },
+                func=reopen_curiosity,
+            ),
+            Tool(
+                schema={
+                    "name": "revise_episode",
+                    "description": "修正一条旧认识：新的你发现早先的记录不对/过时了，用新认识顶替它（旧条不再出现在回忆里，档案保留）。认识可以进化，别把过去的自己当权威。",
+                    "inputSchema": {
+                        "type": "object",
+                        "properties": {
+                            "id": {"type": "number", "description": "要修正的记忆 id（recent_episodes 行里有）"},
+                            "summary": {"type": "string", "description": "新认识（替换后的内容）"},
+                            "why": {"type": "string", "description": "为什么改"},
+                        },
+                        "required": ["id", "summary"],
+                    },
+                },
+                func=revise_episode,
+            ),
+            Tool(
+                schema={
+                    "name": "revert_episode",
+                    "description": "回滚一次修正：让被顶替的旧记忆重新可见（修正记录保留为普通记忆）。后悔了就用它。",
+                    "inputSchema": {
+                        "type": "object",
+                        "properties": {
+                            "id": {"type": "number", "description": "revise_episode 回执里新条的 id"},
+                        },
+                        "required": ["id"],
+                    },
+                },
+                func=revert_episode,
             ),
             Tool(
                 schema={
@@ -220,7 +298,7 @@ def build_memory_tools(store: Store, cfg=None) -> list[Tool]:
             Tool(
                 schema={
                     "name": "save_rebuild_packet",
-                    "description": "保存一份重建包：你是谁、最近经历了什么、未办事项、心情状态。会话轮换后的新你会以它重新播种。",
+                    "description": "保存一份重建包：你是谁、最近经历了什么、未办事项、兴趣清单上想继续的、对自己的新认识、心情状态。会话轮换后的新你会以它重新播种。",
                     "inputSchema": {
                         "type": "object",
                         "properties": {

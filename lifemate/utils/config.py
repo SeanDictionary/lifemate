@@ -77,6 +77,8 @@ _JSON_FIELDS: dict[str, Setting] = {
     "timezone": Setting("", description="主体时区（IANA 名如 Asia/Shanghai；空=本机时区）。昼夜/作息/社交时间感的事实源，换机器不换人生", group="内核"),
     "max_turns": Setting(60, description="单周期轮数熔断阈值（异常保护：防模型死循环无限烧 token；正常连续思考不受限，生理提醒见 turns_rest_nudge）", group="内核"),
     "turns_rest_nudge": Setting(16, description="连续轮数生理提醒阈值（周期性提醒，休息与否由心智自决）", group="内核"),
+    "sleep_review_gap_s": Setting(21600, description="睡前自省最小间隔秒（最小有效值 60）：长睡前身体例行提醒过一遍清单（兴趣/需求/提醒/自我认识），只递到眼前、做不做由心智自决", group="内核"),
+    "sleep_review_min_wait_s": Setting(3600, description="算作长睡的最短等待秒（短于它的小憩不触发睡前自省；无限等待算长睡）", group="内核"),
     "tool_timeout_s": Setting(120.0, description="单工具执行超时秒（wait 除外）", group="内核"),
     "compact_threshold_tokens": Setting(24_000, description="超过触发压缩（估算 token）", group="内核"),
     "keep_recent_tokens": Setting(8_000, description="压缩保留最近消息的估算 token", group="内核"),

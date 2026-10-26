@@ -42,6 +42,9 @@ _WAKE_AMBIENT_KEEP = 12  # 唤醒组批里 ambient 保留条数（超出计数�
 
 _NUDGE = "（你已连续思考多轮——身体提醒：可以考虑休息了。继续还是休息由你决定。）"
 
+# 睡前自省提示：长睡前的例行清单递送（时机化 rest-rhythm；判断权在心智）
+_REVIEW = "（睡前自省——现在是 {now}。身体例行提醒，不是命令：过一遍自己的事——list_curiosity 兴趣清单、list_needs 需求、list_reminders 提醒；想到想弄明白、想继续的就记下，对自己的新认识记一条 record_episode（kind=insight），发现早先的认识不对用 revise_episode 修正。料理完再 wait——这次会真的睡。）"
+
 # 消息文本里的来源前缀（信封组装时写入，如"[群聊·441342877]"/
 # "[私聊·主人]"）——墓碑回执用它列涉事来源
 _SOURCE_TAG = re.compile(r"^\[([^\]]{1,40})\]")
@@ -105,6 +108,7 @@ class SelfKernel:
         self._last_prompt_tokens = 0
         self._rid = ""  # 当前唤醒周期 id（观测归组）
         self._wait: _Waiting | None = None
+        self._last_review_ts: float = 0.0  # 上次睡前自省时刻（间隔钳制）
         self._llm_fail_streak = 0  # LLM 瞬态连续失败计数（兑底退避用，成功即清零）
         self._refuse_streak = 0  # 结果性失败连续计数（被拒/永久错误，成功即清零）
         self._last_wake_events = 0  # 最近一次组批唤醒携带的事件数（退避续跑判断用）
@@ -351,6 +355,12 @@ class SelfKernel:
     # ── 等待与唤醒 ──────────────────────────────────────
     async def _do_wait(self, timeout_s: float | None, reason: str, intent: str = "", dnd: bool = False) -> str:
         """挂起等待。返回唤醒信封（组批事件 + 差值 + 附加事实）。"""
+        # 睡前自省：长睡前身体例行提醒（满足间隔且是真睡——小憩不唠叨）。
+        # 不睡，直接返回提示：心智过完清单再 wait，这次才真睡。
+        # 判断权在心智——忽略照睡，间隔钳制保证不重复唠叨。
+        if self._review_due(timeout_s):
+            self._last_review_ts = time.time()
+            return _REVIEW.format(now=clock.hm(time.time(), self._cfg.timezone))
         fut: asyncio.Future = asyncio.get_event_loop().create_future()
         self._wait = _Waiting(fut, reason, intent, timeout_s, dnd)
         expired = False
@@ -379,6 +389,15 @@ class SelfKernel:
         # 就会被误判 think_stuck 而中止自愈）
         self._touch()
         return wake
+
+    def _review_due(self, timeout_s: float | None) -> bool:
+        """睡前自省是否到点：距上次 ≥ gap，且是长睡（无限等待或 ≥ 最短阈值）。
+
+        gap 有 60s 下限（防配置成 0 后：自省 → 收敛 → 又自省 → 死循环烧 token）。"""
+        gap = max(float(self._cfg.sleep_review_gap_s), 60.0)
+        if time.time() - self._last_review_ts < gap:
+            return False
+        return timeout_s is None or timeout_s >= self._cfg.sleep_review_min_wait_s
 
     def _compose_wake(self, alarm_note: str | None = None) -> str:
         """组装唤醒信封：时间差值 + 期间事件组批 + 附加事实。"""

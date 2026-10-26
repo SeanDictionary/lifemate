@@ -32,6 +32,7 @@ def build_bare_life(tmp_path, llm) -> tuple[SelfKernel, Store]:
     cfg = Config(data_dir=root_dir / "cfg")
     cfg.max_turns = 8
     cfg.compact_threshold_tokens = 10**9
+    cfg.sleep_review_gap_s = 10**12  # 本测试验证剥夺存活，不验证睡前自省（见 test_mind）
     kernel = SelfKernel(llm=llm, persona=persona, session=session, compactor=Compactor(llm.chat, cfg), cfg=cfg)
     for t in build_memory_tools(store):
         kernel.register_tool(t)

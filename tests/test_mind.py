@@ -664,3 +664,63 @@ async def test_dnd_wake_batch_ambient_capped(tmp_path):
     assert any("另有 18 条群消息未列出" in t for t in batch)
     assert any("水话29" in t for t in batch)  # 保留最近的
     assert all("水话0\n" not in t and "水话11" not in t for t in batch)  # 早期的被截
+
+
+# ── 睡前自省：长睡前身体例行递清单（判断权在心智） ────────
+
+
+async def test_sleep_review_before_long_wait(tmp_path):
+    """长睡前触发自省提示（不真睡）；料理完再 wait 才真睡。"""
+    llm = FakeLLM(
+        [
+            tool_reply("wait", args='{"timeout_s": 7200, "reason": "长睡"}', cid="c1"),  # 长睡 → 触发自省
+            tool_reply("wait", args='{"timeout_s": 1, "reason": "过完清单了"}', cid="c2"),  # 间隔内 → 真睡
+            text_reply("醒了"),
+        ]
+    )
+    k = make_kernel(tmp_path, llm)
+    k._cfg.sleep_review_gap_s = 3600  # 开启自省（间隔 1h）
+    evs = events_of(k)
+    k.notify(Envelope(text="困了"))
+    await wait_event(evs, REST, reason="converged")
+    tool_msgs = [m["content"] for m in k._session.messages if m.get("role") == "tool"]
+    assert "睡前自省" in tool_msgs[0] and "list_curiosity" in tool_msgs[0]
+    assert "醒来" in tool_msgs[1] and "睡前自省" not in tool_msgs[1]  # 第二次 wait 真睡了
+    assert len(llm.calls) == 3
+
+
+async def test_sleep_review_skipped_for_short_wait(tmp_path):
+    """小憩不触发自省（短于长睡阈值）。"""
+    llm = FakeLLM(
+        [
+            tool_reply("wait", args='{"timeout_s": 1, "reason": "小憩"}', cid="c1"),  # 1s < 阈值 → 直接睡
+            text_reply("醒"),
+        ]
+    )
+    k = make_kernel(tmp_path, llm)
+    k._cfg.sleep_review_gap_s = 0.0  # 即使间隔已到，小憩也不唠叨
+    evs = events_of(k)
+    k.notify(Envelope(text="眯一会"))
+    await wait_event(evs, REST, reason="converged")  # 等 1s 小睡醒后收敛休息
+    tool_msgs = [m["content"] for m in k._session.messages if m.get("role") == "tool"]
+    assert "睡前自省" not in tool_msgs[0] and "醒来" in tool_msgs[0]
+
+
+async def test_sleep_review_gap_clamps(tmp_path):
+    """间隔钳制：自省后立刻再长睡不再唠叨（真睡，可被事件唤醒）。"""
+    llm = FakeLLM(
+        [
+            tool_reply("wait", args='{"timeout_s": 7200}', cid="c1"),  # 首次 → 自省
+            tool_reply("wait", args='{"timeout_s": 7200}', cid="c2"),  # 间隔内 → 真睡挂起
+            text_reply("醒了"),
+        ]
+    )
+    k = make_kernel(tmp_path, llm)
+    k._cfg.sleep_review_gap_s = 3600
+    k.notify(Envelope(text="睡了"))
+    await asyncio.sleep(0.2)  # 第一次自省 → 第二次真睡挂起
+    k.notify(Envelope(text="（叫醒）", kind="direct"))  # 事件取代等待 → 唤醒信封
+    await k.wait_idle()
+    tool_msgs = [m["content"] for m in k._session.messages if m.get("role") == "tool"]
+    assert "睡前自省" in tool_msgs[0]
+    assert "睡前自省" not in tool_msgs[1] and ("醒来" in tool_msgs[1] or "叫醒" in tool_msgs[1])
