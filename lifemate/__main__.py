@@ -6,6 +6,8 @@
 
 -v / --version：显示版本号并退出。
 -l / --log-level：设置日志等级（默认使用config设置）。
+-p / --port：指定 webui 服务端口（默认使用 config 的 server_port；
+  经 env 种子落地——热重载不回退，同 --webui 单开看板时常用）。
 -s / --silence：静默终端日志（输入输出照常）。
 --webui：仅启动看板（webui 服务），不启动 AI 运行时——不装载器官
 （无感知面）、不启动思维循环/基建任务；档案/记忆/配置等观测照常。
@@ -33,6 +35,7 @@ log = get_logger("main")
 ARGS = [
     {"flags": ("-v", "--version"), "params": {"action": "version", "version": __version__}},
     {"flags": ("-l", "--log-level"), "params": {"choices": ("debug", "info", "warning", "error", "critical"), "help": "Set log level (default from config)"}},
+    {"flags": ("-p", "--port"), "params": {"type": int, "help": "Webui server port (default from config server_port)"}},
     {"flags": ("-s", "--silence"), "params": {"action": "store_true", "help": "Silence terminal logs (input/output still works)"}},
     {"flags": ("--webui",), "params": {"action": "store_true", "help": "Dashboard only: start webui server without the AI runtime (no organs, no mind loop)"}},
     {"flags": ("--no-stdin",), "params": {"action": "store_true", "help": "Service mode: no stdin console, signal-driven only (for background/containers/services)"}},
@@ -172,6 +175,11 @@ def main() -> None:
     parser = argparse.ArgumentParser(prog="lifemate")
     add_arguments(parser)
     args = parser.parse_args()
+    if args.port is not None and not (1 <= args.port <= 65535):
+        parser.error(f"--port 需在 1-65535 之间（收到 {args.port}）")
+    if args.port is not None:
+        # 经 env 种子通道落地：Config 装配时即生效，且热重载不会回退到 config.json 值
+        os.environ["LIFEMATE_SERVER_PORT"] = str(args.port)
     try:
         asyncio.run(_orchestrate(args.silence, args.log_level, args.no_stdin, webui=args.webui))
     except KeyboardInterrupt:

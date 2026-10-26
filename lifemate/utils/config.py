@@ -130,6 +130,7 @@ _ENV_SEED = {
     "timezone": "LIFEMATE_TIMEZONE",  # 容器默认 UTC，部署时必设
     "web_search_provider": "LIFEMATE_WEB_SEARCH_PROVIDER",
     "web_search_api_key": "LIFEMATE_WEB_SEARCH_API_KEY",
+    "server_port": "LIFEMATE_SERVER_PORT",  # CLI -p/--port 走此通道（env 显式设置时最强，热重载不回退）
 }
 
 # 密钥集合由声明派生（单一真相源）

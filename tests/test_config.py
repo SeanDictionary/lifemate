@@ -43,6 +43,16 @@ def test_env_seed_wins(tmp_path, monkeypatch):
     assert cfg.llm_model == "env-model"  # env 仍最强
 
 
+def test_server_port_env_seed_cli_channel(tmp_path, monkeypatch):
+    """CLI -p/--port 走 env 种子通道：coerce int + 热重载不回退 config 值。"""
+    monkeypatch.setenv("LIFEMATE_SERVER_PORT", "8399")
+    cfg = Config(data_dir=tmp_path)
+    assert cfg.server_port == 8399 and isinstance(cfg.server_port, int)
+    _write(cfg, server_port=8300)  # 文件里是另一端口
+    cfg.reload()
+    assert cfg.server_port == 8399  # env 仍最强（CLI 指定不被热重载回退）
+
+
 def test_type_coercion_and_unknown_key(tmp_path):
     cfg = Config(data_dir=tmp_path)
     _write(cfg, max_turns="12", config_poll_s="15", bad_key=1)
