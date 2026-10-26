@@ -10,8 +10,9 @@ from pathlib import Path
 import pytest
 from conftest import make_config
 
+from lifemate.kernel import web as kw
 from lifemate.kernel.contracts import LLMResponse
-from lifemate.kernel.tools import _assert_public_http, _parse_allow_cidrs, _resolve_image, _sniff_image, make_look_image_tool  # noqa: F401 供 SSRF 用例
+from lifemate.kernel.tools import _resolve_image, make_look_image_tool  # noqa: F401 供 SSRF 用例
 from lifemate.memory.store import Store
 
 PNG_MAGIC = b"\x89PNG\r\n\x1a\n" + b"\x00" * 64  # 可嗅探的最小 PNG 骨架
@@ -147,16 +148,16 @@ def test_allow_cidrs_fake_ip_exemption():
     """本机代理 TUN/fake-ip 豁免：Clash 默认 198.18.0.0/16 解析成保留段。"""
     # 未豁免：fake-ip 段被拒
     with pytest.raises(Exception, match="公网"):
-        _assert_public_http("http://198.18.0.5/x.png", [])
+        kw.assert_public_http("http://198.18.0.5/x.png", [])
     # 坏条目告警跳过、空条目忽略
-    nets = _parse_allow_cidrs("198.18.0.0/16, not-a-cidr,,  ")
+    nets = kw.parse_allow_cidrs("198.18.0.0/16, not-a-cidr,,  ")
     assert len(nets) == 1
     # 豁免后通过检查（纯检查零连接）
-    _assert_public_http("http://198.18.0.5/x.png", nets)
+    kw.assert_public_http("http://198.18.0.5/x.png", nets)
     # 豁免不放松其他私网
     with pytest.raises(Exception, match="公网"):
-        _assert_public_http("http://127.0.0.1/x.png", nets)
+        kw.assert_public_http("http://127.0.0.1/x.png", nets)
     with pytest.raises(Exception, match="公网"):
-        _assert_public_http("http://192.168.1.1/x.png", nets)
+        kw.assert_public_http("http://192.168.1.1/x.png", nets)
     # 空配置 → 空豁免
-    assert _parse_allow_cidrs("") == []
+    assert kw.parse_allow_cidrs("") == []

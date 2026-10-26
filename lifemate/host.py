@@ -27,7 +27,7 @@ from .kernel.llm import OpenAILLM
 from .kernel.mind import SelfKernel
 from .kernel.persona import Persona
 from .kernel.session import Session
-from .kernel.tools import make_deep_sleep_tool, make_look_image_tool, make_read_skill_tool
+from .kernel.tools import make_deep_sleep_tool, make_look_image_tool, make_read_skill_tool, make_web_fetch_tool, make_web_search_tool
 from .memory.store import Store
 from .memory.tools import build_memory_tools
 from .plugins import stop_plugins
@@ -101,6 +101,8 @@ def build(cfg: Config, llm_required: bool = True) -> tuple[SelfKernel, Store, Re
     kernel.register_tool(make_read_skill_tool(persona))
     kernel.register_tool(make_deep_sleep_tool(kernel, store))
     kernel.register_tool(make_look_image_tool(llm, store, cfg))
+    kernel.register_tool(make_web_search_tool(cfg))
+    kernel.register_tool(make_web_fetch_tool(cfg))
 
     # 唤醒附加事实（身体感受：待办提醒概览——内核不解其义，只附上）
     def _extras() -> str:

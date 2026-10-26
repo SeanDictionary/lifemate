@@ -112,6 +112,14 @@ _JSON_FIELDS: dict[str, Setting] = {
     # 图像（look_image 感知能力）
     "image_max_mb": Setting(10, description="单张图片大小上限 MB（取图/归档/看图共用）", group="图像"),
     "image_cache_retention_days": Setting(30, description="图片缓存保留天数（0=永久；按最后查看时间淘汰，描述档案随之删除）", group="图像"),
+    # 网络访问（web_search 检索 / web_fetch 读页）
+    "web_search_provider": Setting("tavily", description="网络检索服务商：tavily / bocha（空=检索能力关闭：web_search 会直接回执告知心智，让其转告主人）", group="网络访问"),
+    "web_search_api_key": Setting("", description="搜索服务 API 密钥（tavily: docs.tavily.com；bocha: open.bochaai.com）", secret=True, group="网络访问"),
+    "web_search_base_url": Setting("", description="搜索端点基础地址（空=官方端点；可指向自建反代，自动拼接各家路径）", group="网络访问"),
+    "web_search_max_results": Setting(8, description="单次检索返回来源条数上限", group="网络访问"),
+    "web_search_summary_max_chars": Setting(2048, description="单条来源摘要截断字符（截断以 … 标记）", group="网络访问"),
+    "web_fetch_max_mb": Setting(5, description="单页下载大小上限 MB（web_fetch）", group="网络访问"),
+    "web_fetch_max_chars": Setting(12000, description="单页正文保留字符上限（超出截断并以 … 标记）", group="网络访问"),
 }
 
 # env 种子：显式设置时覆盖 JSON（容器部署用）
@@ -120,6 +128,8 @@ _ENV_SEED = {
     "llm_api_key": "LIFEMATE_LLM_API_KEY",
     "llm_model": "LIFEMATE_LLM_MODEL",
     "timezone": "LIFEMATE_TIMEZONE",  # 容器默认 UTC，部署时必设
+    "web_search_provider": "LIFEMATE_WEB_SEARCH_PROVIDER",
+    "web_search_api_key": "LIFEMATE_WEB_SEARCH_API_KEY",
 }
 
 # 密钥集合由声明派生（单一真相源）

@@ -50,6 +50,13 @@ lifemate/
 │   ├── tools.py       #   内核工具：wait（思维生理）/read_skill/deep_sleep
 │   │                  #   （转身：写信+登记轮换，不管睡）/look_image
 │   │                  #   （看图：四形态输入归一+hash 去重+原图归档）
+│   │                  #   /web_search（检索）/web_fetch（读页）——工具
+│   │                  #   语义层，网络基建在 web.py
+│   ├── web.py         #   网络访问共用层：SSRF 防护+受限 HTTP 取回+
+│   │                  #   文本解码（charset 探测/gb18030 兑底）+HTML→
+│   │                  #   正文提取（stdilb，链接保留）+搜索 provider 表
+│   │                  #   （tavily/bocha）——look_image/web_search/web_fetch
+│   │                  #   共用，纯 stdlib 零 kernel 依赖
 │   └── builtin/       #   内置机制说明（代码管理，常驻装配，客观陈述）
 ├── memory/            # 记忆系统（内核②：长期记忆）
 │   ├── store.py       #   SQLite：episodes/curiosity/needs/reminders/重建包/images
@@ -431,6 +438,36 @@ env 仅部署种子）；热重载靠字段原地更新——新组件必须持�
 - **记忆主动化 + 认识修正机制（2026-10-26）**：主人指令全量落地（缺陷清单见会话审计）——① 空回执给语义：list_curiosity/list_needs 空时返回引导句而非裸 []（自省时刻递笔，唯一触碰点不再零信息）；② 睡前自省时机化：_do_wait 入口检查，长睡前（无限等待或 ≥ sleep_review_min_wait_s 默认 3600s）且距上次 ≥ sleep_review_gap_s（默认 21600s，代码层 60s 下限防配置 0 死循环）返回自省提示不真睡，料理完再 wait 才真睡——两配置键入白名单（内核组）；③ 重建包模板补兴趣与新认识（memory-keeping/deep_sleep/save_rebuild_packet 三处同步）——修轮换断链；④ 认识修正链（防固化）：episodes 新增 episode_supersedes 表（新表零迁移，存档保全）——revise_episode(id, 新认识, why) 旧认识被顶替退出回忆、revert_episode 回滚恢复；recent_episodes 行带 id 且排除被顶替条目；⑤ 兴趣重开：reopen_curiosity（resolve 的回滚，原结果留案）+ add_curiosity 去重只计 pending（弄明白过的可重捡）；⑥ record_episode 描述标 insight 最重要。测试：test_memory +4、test_mind +3（含防死循环钳制）、剥夺夹具关闭自省保持原职责
 - **面板记忆页视角修正（2026-10-26）**：主人发现需求 Tab 空——数据在但被 pending 过滤（唯一一条 need 已标 raised）。三个 Tab 统一改双视角：面板看全量（all_needs/all_reminders/all_curiosity，含已提出/已兑现/已弄明白），心智工具保持待办视角不变；前端状态徽标中文化（待提/已提出/进行中/已完成）+ repeat=none 不显 + 提醒 Tab 补 status 列，已重 build
 - **面板记忆页行详情化（2026-10-26）**：主人指令——①胶囊字数限制（16 字截断，长文本不配胶囊）；②四个文本 Tab 统一图片 Tab 形态：行内只显主字段摘要（100 字）+ 短枚举胶囊 + 时间，「>」弹窗看完整记录（全字段：why/result/来源/到点/兑现于/提出于等，时间字段人读化）；all_needs 补 raised_at；已重 build
+- **网络检索上线（2026-10-26）**：内核新增 web_search（检索是认知天赋，
+  网络只是实现细节；采集面 web_fetch 将来归沙箱插件）——参考 dsh
+  deepseek-harness 的 web_search 分层（工具层只管校验/归一/格式化，
+  provider 映射管线格式、永不碰网络的分工保留，seam/注册表整套
+  机制不引入）；单 query 回执制，返回汇总答案（部分服务商）+
+  markdown 来源列表（标题缺失用 hostname、摘要空白归一+截断…标记、
+  发布日期），URL 去重+条数上限裁剪（truncated 事实化）；防提示注入：
+  每次回执前置不可信声明+工具描述同步；门控照 look_image 先例
+  （未配置回执告知心智可转告主人，配置热重载即时生效）；provider
+  首发 tavily（含生成的 answer）+ bocha（中文覆盖好，summary 优先
+  snippet 兑底），base_url 可指自建反代；新增配置组 5 键
+  + 2 个 env 种子；HTTP 层形状校验（200+脏体拦截，过夜审计教训）
+  +内部异常兑底回执；10 项单测（零网络，urlopen 层 monkeypatch）
+- **网络访问层抽共用 + web_fetch 读页上线（2026-10-26）**：主人指令——
+  共用网络基建独立为 kernel/web.py（SSRF 防护/受限 HTTP 取回/
+  文本解码/正文提取/搜索 provider 表，纯 stdlib 零 kernel 依赖），
+  look_image 取图改走 http_get（删 _http_get_image/_assert_public_http
+  /_parse_allow_cidrs 三处私有实现，_Reject 统一为 WebReject）；
+  web_fetch 只读不存（内容进会话即工作记忆，落盘/执行归将来沙箱
+  插件）——URL → SSRF+大小上限（web_fetch_max_mb 默认 5MB）→
+  类型分流（html/文本/json 读，图片指路 look_image，其余明确不
+  支持）→ charset 探测（头声明>BOM>meta>utf-8>gb18030 兑底，中文
+  页不乱码）→ stdlib HTMLParser 正文提取（剥 script/style、块级换行、
+  <a href> 保留 markdown 形态——链接是心智继续 fetch 的路标）→
+  正文截断（web_fetch_max_chars 默认 12000，… 标记+事实化提示）→
+  回执前置不可信声明；web_search 描述同步指路 fetch（search→fetch
+  接力闭环）；配置组「网络搜索」→「网络访问」（保留主人手改的
+  默认值）；12 项单测（提取器/
+  编码/分流/截断/SSRF/大小上限，零网络）
+
 - **待开发**：attention（门控升格）→ sandbox → webui → video
 
 ### 待处理项（主人已知）
