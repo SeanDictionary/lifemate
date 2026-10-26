@@ -47,8 +47,9 @@ lifemate/
 │   ├── session.py     #   工作记忆：消息列表 + JSONL 持久化 + 轮换
 │   ├── compaction.py  #   上下文压缩（会话内兜底，阈值活配置）
 │   ├── persona.py     #   人格装配：identity + 内置指引 + skills 索引，每轮重建
-│   ├── tools.py       #   内核工具：wait（思维生理）/read_skill/deep_sleep/
-│   │                  #   look_image（看图：四形态输入归一+hash 去重+原图归档）
+│   ├── tools.py       #   内核工具：wait（思维生理）/read_skill/deep_sleep
+│   │                  #   （转身：写信+登记轮换，不管睡）/look_image
+│   │                  #   （看图：四形态输入归一+hash 去重+原图归档）
 │   └── builtin/       #   内置机制说明（代码管理，常驻装配，客观陈述）
 ├── memory/            # 记忆系统（内核②：长期记忆）
 │   ├── store.py       #   SQLite：episodes/curiosity/needs/reminders/重建包/images
@@ -376,6 +377,19 @@ env 仅部署种子）；热重载靠字段原地更新——新组件必须持�
   经思考中断恢复重处理）；审计另确认 deep_sleep 120s 工具超时使整觉
   完全失效（待改）、QQ 命令面 ~30% echo 超时沉默、敏感内容误分类瞬态
   （详细报告见 .cache/log-analysis/）
+- **deep_sleep 瘦身为纯转身 + 防不睡放宽（2026-10-26）**：审计揭出
+  deep_sleep 内部 rest(hours) 被 120s 工具超时炸掉——整觉从未生效、
+  超时回执作孤儿 tool 消息污染新会话（两次实测均如此）。重构：
+  工具只写信+存档+request_rotation（回执落旧会话），轮换移到
+  _think 周期边界兑现（循环顶检查，崩溃恢复也能续上未兑现的
+  转身；旧回合干净收尾、新会话从信开始），hours 参数移除，
+  kernel.rest() 公开休息原语移除（唯一调用者已不在）；睡觉完全
+  交新自己（wait，哲学：作息归心智）。防不睡同步放宽：nudge 改
+  周期性纯生理提醒（措辞事实化，每 turns_rest_nudge 轮一次），
+  24 轮强制休息改为 60 轮熔断（reason=breaker，异常保护：模型
+  死循环每轮刷新活动时间 watchdog 管不住，只能按轮数拦截；
+  正常思考不受限）——max_turns 默认 24→60，在用 config.json 已同步；
+  rest-rhythm.md 整觉节改"转身"、节律节同步
 - **待开发**：attention（门控升格）→ sandbox → webui → video
 
 ## 验证方式

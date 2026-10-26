@@ -75,8 +75,8 @@ _JSON_FIELDS: dict[str, Setting] = {
     "llm_refuse_receipts": Setting(3, description="结果性失败（永久错误/输出被拒）回执进上下文的连续次数上限：超过后不再重复回执，改退避重试", group="模型"),
     # 内核
     "timezone": Setting("", description="主体时区（IANA 名如 Asia/Shanghai；空=本机时区）。昼夜/作息/社交时间感的事实源，换机器不换人生", group="内核"),
-    "max_turns": Setting(24, description="单个唤醒周期内最大模型轮数（超过强制休息）", group="内核"),
-    "turns_rest_nudge": Setting(16, description="连续轮数提醒阈值（先提示后强制）", group="内核"),
+    "max_turns": Setting(60, description="单周期轮数熔断阈值（异常保护：防模型死循环无限烧 token；正常连续思考不受限，生理提醒见 turns_rest_nudge）", group="内核"),
+    "turns_rest_nudge": Setting(16, description="连续轮数生理提醒阈值（周期性提醒，休息与否由心智自决）", group="内核"),
     "tool_timeout_s": Setting(120.0, description="单工具执行超时秒（wait 除外）", group="内核"),
     "compact_threshold_tokens": Setting(24_000, description="超过触发压缩（估算 token）", group="内核"),
     "keep_recent_tokens": Setting(8_000, description="压缩保留最近消息的估算 token", group="内核"),

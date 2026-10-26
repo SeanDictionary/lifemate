@@ -252,19 +252,24 @@ async def test_wake_batches_events(tmp_path):
 # ── 防不睡：轮次超限强制休息 ────────────────────────────
 
 
-async def test_forced_rest_after_max_turns(tmp_path):
-    llm = FakeLLM([tool_reply("echo", cid=f"c{i}") for i in range(5)])  # max_turns=5
-    llm.script.append(text_reply("被强制休息后继续"))
+async def test_breaker_after_max_turns(tmp_path):
+    """熔断：正常思考只有生理提醒（不强制）；到熔断阈值才拦（异常保护）。"""
+    llm = FakeLLM([tool_reply("echo", cid=f"c{i}") for i in range(5)])  # 每轮都是工具调用
+    llm.script.append(text_reply("被熔断后继续"))
     k = make_kernel(tmp_path, llm, tools=[make_tool("echo")])
-    k._cfg.max_turns = 3
-    k._cfg.turns_rest_nudge = 2
+    k._cfg.max_turns = 4  # 熔断阈值
+    k._cfg.turns_rest_nudge = 2  # 每 2 轮生理提醒
     evs = events_of(k)
     k.notify(Envelope(text="无限循环吧"))
-    await wait_event(evs, REST, reason="forced")
-    # 强制休息是等待——敲门后继续
+    await wait_event(evs, REST, reason="breaker")
+    # 熔断前只有生理提醒，没有强制休息；提醒周期性出现
+    nudges = [m for m in k._session.messages if m.get("role") == "user" and "身体提醒" in str(m.get("content"))]
+    assert len(nudges) >= 1
+    assert not any(d.get("reason") == "forced" for t, d in evs if t == REST)
+    # 熔断也是休息——敲门后继续
     k.notify(Envelope(text="继续"))
     await k.wait_idle()
-    assert any(d.get("reason") == "forced" for t, d in evs if t == REST)
+    assert any(d.get("reason") == "breaker" for t, d in evs if t == REST)
 
 
 # ── 深睡转身：swap_session + rest ──────────────────────
@@ -322,31 +327,36 @@ async def test_swap_session_seeds_new_session(tmp_path):
     assert "现在是" in msgs[0]["content"]  # 播种带时间头（新我知道昼夜）
 
 
-async def test_deep_sleep_tool_full_cycle(tmp_path):
+async def test_deep_sleep_rotation_at_cycle_boundary(tmp_path):
+    """deep_sleep 纯转身：回执落旧会话（无孤儿 tool 消息）、周期边界轮换、
+    新会话从信开始，睡觉由新自己决定。"""
+    from lifemate.kernel.contracts import SESSION_ROTATED
     from lifemate.kernel.tools import make_deep_sleep_tool
     from lifemate.memory.store import Store
 
     llm = FakeLLM(
         [
-            tool_reply("deep_sleep", args='{"letter": "我是大肥鱼，今天过得平静", "hours": 0.001}'),
-            text_reply("醒来，读到了自己的信"),
+            tool_reply("deep_sleep", args='{"letter": "我是大肥鱼，今天过得平静"}'),
+            text_reply("读完信了，挂长觉睡到明早"),
         ]
     )
     store = Store(tmp_path / "m.db")
     k = make_kernel(tmp_path, llm)
     k.register_tool(make_deep_sleep_tool(k, store))
     old_id = k.session_id
+    evs = events_of(k)
     k.notify(Envelope(text="一天结束了"))
-    await k.wait_idle()  # deep_sleep 内部 rest(3.6s)…wait_idle 只到显式休息
-    # 等休息→唤醒（闹钟 0.001h≈3.6s 到点）
-    for _ in range(400):
-        if any(m.get("role") == "assistant" and m.get("content") == "醒来，读到了自己的信" for m in k._session.messages):
-            break
-        await asyncio.sleep(0.02)
+    await wait_event(evs, REST, reason="converged")  # 新会话读完信收敛休息
+    # 信已存档 + 会话已轮换 + 新会话从信开始
     assert "大肥鱼" in (store.latest_packet() or {}).get("content", "")
+    assert any(t == SESSION_ROTATED for t, _ in evs)
     assert k.session_id != old_id
     users = [m["content"] for m in k._session.messages if m.get("role") == "user"]
     assert any("留下的信" in u for u in users)
+    # 回执落在旧会话：新会话无孤儿 tool 消息（tool 消息必有同会话的 assistant tool_calls）
+    answered = {m.get("tool_call_id") for m in k._session.messages if m.get("role") == "tool"}
+    calls = {tc.get("id") for m in k._session.messages if m.get("role") == "assistant" for tc in m.get("tool_calls") or []}
+    assert answered <= calls
 
 
 # ── 崩溃恢复：悬空工具调用修复 ─────────────────────────

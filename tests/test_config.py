@@ -18,14 +18,14 @@ def test_creates_default_file(tmp_path):
     cfg = Config(data_dir=tmp_path / "d")
     assert cfg.path.exists()
     data = json.loads(cfg.path.read_text(encoding="utf-8"))
-    assert data["max_turns"] == 24 and "llm_api_key" in data
+    assert data["max_turns"] == 60 and "llm_api_key" in data
 
 
 def test_json_override_and_reload(tmp_path):
     cfg = Config(data_dir=tmp_path)
-    assert cfg.max_turns == 24
+    assert cfg.max_turns == 60
     _write(cfg, max_turns=8, llm_model="m2")
-    assert cfg.max_turns == 24  # 未 reload 不生效
+    assert cfg.max_turns == 60  # 未 reload 不生效
     changed = cfg.reload()
     assert set(changed) == {"max_turns", "llm_model"}
     assert cfg.max_turns == 8 and cfg.llm_model == "m2"
@@ -243,7 +243,7 @@ def test_schema_dict_projection(tmp_path):
     s = cfg.schema_dict()
     fields = s["fields"]
     assert set(fields) == set(_JSON_FIELDS)  # 主白名单全量
-    assert fields["max_turns"] == {"type": "number", "default": 24, "description": fields["max_turns"]["description"], "group": "内核"}
+    assert fields["max_turns"] == {"type": "number", "default": 60, "description": fields["max_turns"]["description"], "group": "内核"}
     assert fields["llm_api_key"]["secret"] is True
     assert fields["server_port"]["restart"] is True
     assert fields["llm_model"]["env_var"] == "LIFEMATE_LLM_MODEL"

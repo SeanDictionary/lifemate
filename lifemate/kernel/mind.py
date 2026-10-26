@@ -39,7 +39,7 @@ _TOOL_RESULT_MAX = 6000
 _CIRCLED = "①②③④⑤⑥⑦⑧⑨⑩"
 _WAKE_AMBIENT_KEEP = 12  # 唤醒组批里 ambient 保留条数（超出计数提示，信息在 chat_log）
 
-_NUDGE = "（本轮已连续思考多轮，未休息。）"
+_NUDGE = "（你已连续思考多轮——身体提醒：可以考虑休息了。继续还是休息由你决定。）"
 
 
 def _cap(text: str, n: int = _TOOL_RESULT_MAX) -> str:
@@ -93,6 +93,7 @@ class SelfKernel:
         self._current_tool: asyncio.Task | None = None
         self._current_tool_interruptible = False
         self._interrupted: Envelope | None = None
+        self._pending_rotation: str | None = None  # 待执行的转身（deep_sleep 登记，周期边界兑现）
         self._last_activity = time.time()  # 墙钟：唤醒差值
         self._last_activity_mono = time.monotonic()  # 单调钟：卡死检测
 
@@ -253,8 +254,15 @@ class SelfKernel:
     async def _think(self) -> str:
         """一个唤醒周期：思考直到休息。返回下一次唤醒的组批文本。"""
         turns = 0
-        nudged = False
         while True:
+            # 转身兑现（deep_sleep 登记）：换新会话播种——新的你从信开始，
+            # 怎么睡由它自己决定（wait）。放循环顶：崩溃恢复后续上的
+            # 周期也能完成未兑现的转身
+            if self._pending_rotation is not None:
+                seed = self._pending_rotation
+                self._pending_rotation = None
+                self.swap_session(seed)
+                turns = 0  # 新周期重新计轮
             await self._maybe_compact()
             try:
                 resp = await self._llm.chat(self._build_messages(), tools=self._tool_schemas() or None)
@@ -300,14 +308,17 @@ class SelfKernel:
                 self._emit(TOOL_RESULT, rid=self._rid, tool_call_id=tc.id, name=tc.name, ok=ok, latency_ms=latency_ms, result=result[:500])
             self._drain_steer()  # 工具批次后、下次模型调用前送达插话
 
-            # 防不睡：连续轮次超阈值先提示、再强制（睡眠剥夺→昏睡）
-            if turns >= self._cfg.max_turns:
-                log.warning("连续 %d 轮未休息，强制休息", turns)
-                self._emit(REST, rid=self._rid, reason="forced")
-                return await self._do_wait(None, "auto")
-            if turns >= self._cfg.turns_rest_nudge and not nudged:
-                nudged = True
+            # 生理提醒：连续思考久了提示休息——只是身体事实，睡不睡由她自决
+            # （周期性提醒，非一次性：长对话里身体会反复说话）
+            if turns >= self._cfg.turns_rest_nudge and turns % self._cfg.turns_rest_nudge == 0:
                 self._deliver(Envelope(text=_NUDGE, kind="system", delivery="nudge"))
+            # 熔断：异常保护而非作息管制——模型死循环会不停刷新活动时间，
+            # watchdog 管不住（每轮都有活动），只能按轮数拦；正常连续思考
+            # 远到不了这里，到了就说明出事了
+            if turns >= self._cfg.max_turns:
+                log.warning("连续 %d 轮未休息，触发熔断（异常保护）", turns)
+                self._emit(REST, rid=self._rid, reason="breaker")
+                return await self._do_wait(None, "auto")
 
     # ── 等待与唤醒 ──────────────────────────────────────
     async def _do_wait(self, timeout_s: float | None, reason: str, intent: str = "", dnd: bool = False) -> str:
@@ -495,13 +506,13 @@ class SelfKernel:
         now = clock.now(self._cfg.timezone).strftime("%Y-%m-%d %H:%M")
         self._deliver(Envelope(text=f"（轮换完成。现在是 {now}。）\n\n{seed}", kind=SEED, delivery="seed"))
 
-    async def rest(self, timeout_s: float | None, dnd: bool = False) -> str:
-        """公开的休息原语（deep_sleep 等宿主工具使用）。dnd=免打扰。"""
-        self._emit(REST, rid=self._rid, reason="sleep", timeout_s=timeout_s, dnd=dnd)
-        wake = await self._do_wait(timeout_s, "sleep", dnd=dnd)
-        self._new_rid()
-        self._emit(WAKE, rid=self._rid, trigger="sleep")
-        return wake
+    def request_rotation(self, seed: str) -> None:
+        """登记转身（deep_sleep 用）：本回合工具批次结束后轮换新会话。
+
+        不在工具内直接轮换——工具回执要落在旧会话（否则新会话里出现
+        无主 tool 消息）；轮换在 _think 周期边界兑现，旧回合干净收尾。
+        """
+        self._pending_rotation = seed
 
     async def abort(self) -> None:
         """中止（停机用）：取消永续循环，插话丢弃并存证。"""

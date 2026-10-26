@@ -1,4 +1,4 @@
-"""内核工具：思维生理（wait）+ 知情层入口（read_skill）+ 整觉（deep_sleep）+ 看图（look_image）。
+"""内核工具：思维生理（wait）+ 知情层入口（read_skill）+ 转身（deep_sleep）+ 看图（look_image）。
 
 约定：每个模块的工具住该模块的 tools.py，无例外——开发者找工具只看这里。
 
@@ -6,8 +6,8 @@
 本文件只 import kernel.contracts——不引入新的依赖方向：
 - wait 咬着思维循环的挂起/唤醒机制（_do_wait/_emit/_new_rid），
   是思考本身的生理，故由 mind 持有并注册
-- deep_sleep 横跨 kernel（轮换会话）与 store（存信）：装配在 host
-  （二者相遇处），工具定义在此
+- deep_sleep 横跨 kernel（轮换登记）与 store（存信）：装配在 host
+  （二者相遇处），工具定义在此；只管转身不管睡（睡觉是 wait 的事）
 - look_image 横跨 llm（vision 通路）与 store（感知记忆）：装配同在
   host；看懂图像是心智天赋（模态中立），采集图像归器官
 """
@@ -95,29 +95,30 @@ def make_read_skill_tool(persona: Persona) -> Tool:
 
 
 def make_deep_sleep_tool(kernel: SelfKernel, store: Store) -> Tool:
-    """整觉：写信（重建包）→ 转身（换会话播种）→ 长眠。睡眠制度。"""
+    """转身：写信（重建包）→ 存档 → 登记轮换。一天的结束用它。
+
+    只管转身不管睡：轮换在周期边界兑现（旧会话干净收尾、回执不落
+    新会话），新会话从信开始，怎么睡由下一个自己决定（wait）。
+    """
 
     async def _fn(args: dict) -> str:
         letter = str(args.get("letter") or "").strip()
         if not letter:
             return json.dumps({"ok": False, "error": "letter 不能为空（deep_sleep 保存重建包后轮换会话）"}, ensure_ascii=False)
-        hours = max(0.1, min(float(args.get("hours") or 8), 72.0))
         store.save_packet(letter)
         pend = store.pending_reminders(5)
         todo = "；".join(r["intent"][:40] for r in pend) or "无"
-        seed = "（深睡结束，会话已轮换。上一会话留下的信：\n" + letter + f"\n\n待办提醒：{todo}）"
-        kernel.swap_session(seed)
-        return await kernel.rest(hours * 3600, dnd=True)  # 整觉默认免打扰：只被直达/闹钟唤醒
+        kernel.request_rotation("（深睡结束，会话已轮换。上一会话留下的信：\n" + letter + f"\n\n待办提醒：{todo}）")
+        return json.dumps({"ok": True, "note": "信已存入重建包档案；本回合结束后转身（轮换新会话，从这封信开始）。怎么睡由下一个你决定。"}, ensure_ascii=False)
 
     return Tool(
         schema={
             "name": "deep_sleep",
-            "description": "整觉：给下一个自己写信（必填）→ 轮换新会话 → 睡指定小时。一天的结束用它；轻度小睡用 wait 即可。",
+            "description": "转身：给下一个自己写信（必填）→ 存档 → 轮换新会话，新会话从信开始。一天的结束用它；睡多久、怎么睡由下一个你自己定（wait）。轻度小睡用 wait 即可。",
             "inputSchema": {
                 "type": "object",
                 "properties": {
                     "letter": {"type": "string", "description": "写给下一个自己的信（我是谁/最近经历/未办/心情）"},
-                    "hours": {"type": "number", "description": "睡多久（小时，默认 8）"},
                 },
                 "required": ["letter"],
             },
