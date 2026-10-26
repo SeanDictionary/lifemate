@@ -1,6 +1,7 @@
 """思维循环语义测试（永续回合：唤醒/休息/插话/打断/闹钟/转身/恢复）。"""
 
 import asyncio
+import time
 
 from conftest import FakeLLM, make_config, make_persona, make_session, text_reply, tool_reply
 
@@ -113,6 +114,36 @@ async def test_event_wake_supersedes_alarm_intent(tmp_path):
     await k.wait_idle()
     tool_msgs = [m for m in k._session.messages if m.get("role") == "tool"]
     assert not any("已被这次唤醒取代" in m["content"] and "等真有话再说" in m["content"] for m in tool_msgs)
+
+
+async def test_wait_expiry_returns_intent(tmp_path):
+    """自然到期：意图在到点时还给她——"等这个是为了什么"正是最该想起的事。"""
+    llm = FakeLLM(
+        [
+            tool_reply("wait", args='{"timeout_s": 0.05, "reason": "等她回话，到点主动问一句"}', cid="c1"),
+            text_reply("醒了"),
+        ]
+    )
+    k = make_kernel(tmp_path, llm)
+    evs = events_of(k)
+    k.notify(Envelope(text="去休息"))
+    await wait_event(evs, REST, reason="explicit:等她回话，到点主动问一句")  # wait 工具已挂起
+    await wait_event(evs, REST, reason="converged")  # 到期→思考→收敛休息
+    tool_msgs = [m for m in k._session.messages if m.get("role") == "tool"]
+    assert any("到点了" in m["content"] and "等她回话" in m["content"] for m in tool_msgs)
+
+
+async def test_do_wait_touches_activity_clock(tmp_path):
+    """等待结束即刷新单调钟：长睡到期的瞬间关闭 watchdog 误报窗口。
+
+    回归：长于 max_run_s 的 wait 自然到期后、首次模型响应前，
+    heal() 曾因活动时间陈旧被误判 think_stuck 而中止自愈。
+    """
+    llm = FakeLLM([text_reply("x")])
+    k = make_kernel(tmp_path, llm)
+    k._last_activity_mono = time.monotonic() - (k._cfg.max_run_s + 100)
+    await k._do_wait(0.05, "explicit", intent="小睡")
+    assert time.monotonic() - k._last_activity_mono < 5  # 已刷新（改前仍是陈旧值）
 
 
 async def test_notify_wakes_thinks_rests(tmp_path):

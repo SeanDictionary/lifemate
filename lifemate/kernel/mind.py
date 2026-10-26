@@ -326,11 +326,22 @@ class SelfKernel:
         finally:
             w = self._wait
             self._wait = None
-        # 被事件唤醒时，未到点的闹钟意图随本次唤醒失效——还给它自决
-        superseded = None if expired or timeout_s is None or not w.intent else w.intent
-        return self._compose_wake(superseded)
+        # 闹钟意图两头都还给她：被事件取代时告知（要继续等重新定）；
+        # 自然到期时更要还——"我等这个是为了什么"正是到点最该想起的事
+        alarm = None
+        if w is not None and w.intent:
+            if expired:
+                alarm = f"（到点了——你定这个等待时说：「{w.intent}」。接下来做什么由你决定。）"
+            elif timeout_s is not None:
+                alarm = f"（你之前定的闹钟「{w.intent}」已被这次唤醒取代——还要等的话重新定。）"
+        wake = self._compose_wake(alarm)
+        # 等待结束即活动：关闭 watchdog 在"长睡醒来→首次模型响应"之间的
+        # 误报窗口（否则长于 max_run_s 的等待一到期，恰逢模型调用慢/重试
+        # 就会被误判 think_stuck 而中止自愈）
+        self._touch()
+        return wake
 
-    def _compose_wake(self, superseded_alarm: str | None = None) -> str:
+    def _compose_wake(self, alarm_note: str | None = None) -> str:
         """组装唤醒信封：时间差值 + 期间事件组批 + 附加事实。"""
         events, self._pending = self._pending, []
         self._last_wake_events = len(events)
@@ -354,11 +365,13 @@ class SelfKernel:
                 lines.append(f"{mark} [{tag}] {text}" if tag else f"{mark} {text}")
             if dropped:
                 lines.append(f"（另有 {dropped} 条群消息未列出——已入背景听觉，read_chat_log 可看。）")
-            if superseded_alarm:
-                lines.append(f"（你之前定的闹钟「{superseded_alarm}」已被这次唤醒取代——还要等的话重新定。）")
+            if alarm_note:
+                lines.append(alarm_note)
             body = "\n".join(lines) + "）"
         else:
             body = head + "没有新事件——是你设的闹钟或等待自然到期。）"
+            if alarm_note:
+                body += "\n" + alarm_note
         parts = [body]
         for fn in self._wake_extras:
             try:
