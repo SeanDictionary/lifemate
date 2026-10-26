@@ -89,11 +89,29 @@ def install_excepthooks(on_crash: Callable[[str, str], None] | None = None) -> N
 
 
 def install_loop_handler(loop: Any, on_crash: Callable[[str, str], None] | None = None) -> None:
-    """asyncio 未捕获任务异常 → 日志文件（+可选档案回调，不退出）。"""
+    """asyncio 未捕获任务异常 → 日志文件（+可选档案回调，不退出）。
+
+    Windows Proactor 已知噪音过滤：对端 RST 后传输清理回调（
+    _call_connection_lost）对已死 socket 调 shutdown 必抛
+    ConnectionResetError(10054)/ConnectionAbortedError(10053)——
+    连接本来就死了，异常发生在收尸过程，降级 debug 不入档
+    （错误通道只为真实故障留者，过夜审计不为网络日常费眼）。
+    """
     crash = logging.getLogger("lifemate.crash")
+
+    def _benign_transport_reset(context: dict) -> bool:
+        msg = str(context.get("message") or "")
+        exc = context.get("exception")
+        return (
+            "_call_connection_lost" in msg
+            and isinstance(exc, (ConnectionResetError, ConnectionAbortedError, BrokenPipeError))
+        )
 
     def _handler(loop: Any, context: dict) -> None:
         exc = context.get("exception")
+        if _benign_transport_reset(context):
+            crash.debug("对端重置连接（Windows Proactor 清理噪音，无害）：%s", exc)
+            return
         crash.error("asyncio 未捕获：%s %s", context.get("message"), exc, exc_info=exc is not None and exc or None)
         if on_crash is not None:
             try:

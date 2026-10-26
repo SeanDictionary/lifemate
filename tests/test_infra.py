@@ -287,3 +287,28 @@ def test_crash_hooks_report_to_archive():
         assert got and "任务异常" in got[0][0] and "RuntimeError" in got[0][1]
     finally:
         loop.close()
+
+
+def test_loop_handler_filters_proactor_reset_noise():
+    """Windows Proactor 清理噪音（对端 RST 后 _call_connection_lost
+    抛 ConnectionResetError）降级 debug：不入错误档案，真实异常照入。"""
+    import asyncio
+
+    from lifemate.utils.log import install_loop_handler
+
+    got: list[tuple[str, str]] = []
+    loop = asyncio.new_event_loop()
+    try:
+        install_loop_handler(loop, on_crash=lambda s, tb: got.append((s, tb)))
+        try:
+            raise ConnectionResetError(10054, "远程主机强迫关闭了一个现有的连接。")
+        except ConnectionResetError as e:
+            loop.call_exception_handler({"message": "Exception in callback _ProactorBasePipeTransport._call_connection_lost()", "exception": e})
+        assert got == []  # 噪音不入档
+        try:
+            raise ConnectionResetError("真实错误")
+        except ConnectionResetError as e:
+            loop.call_exception_handler({"message": "任务异常", "exception": e})
+        assert got and "真实错误" in got[0][0]  # 非 _call_connection_lost 场景照常入档
+    finally:
+        loop.close()
