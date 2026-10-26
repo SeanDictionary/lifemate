@@ -83,9 +83,23 @@ async def test_look_image_question_reruns_vision(tmp_path):
     assert r["ok"] is True
     assert len(llm.vision_calls) == 2
     assert "几个字" in llm.vision_calls[1][0]
-    # 带问题的回答不覆盖通用描述
+    # 已有通用描述：细节问答不覆盖
     row = store.find_image(__import__("hashlib").sha256(PNG_MAGIC).hexdigest())
     assert row["description"].startswith("一张测试图")
+
+
+async def test_look_image_question_seeds_description(tmp_path):
+    """带问题看新图：问答本身就是解释——存为首个描述，之后重看走缓存零 vision。"""
+    _, store, llm, tool = _setup(tmp_path)
+    p = _write_png(tmp_path / "a.png")
+    r = await _call(tool, image=str(p), question="这是什么梗？")
+    assert r["ok"] is True and "梗" in llm.vision_calls[0][0]
+    h = __import__("hashlib").sha256(PNG_MAGIC).hexdigest()
+    assert "测试图" in store.find_image(h)["description"]
+    # 再不带问题看：缓存命中，不再调 vision
+    r2 = await _call(tool, image=str(p))
+    assert r2["ok"] is True and "看过" in r2["note"]
+    assert len(llm.vision_calls) == 1
 
 
 async def test_look_image_input_forms(tmp_path):

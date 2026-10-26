@@ -311,11 +311,14 @@ def make_look_image_tool(llm, store: Store, cfg) -> Tool:
         answer = (resp.content or "").strip()[:_DESC_MAX]
         if not answer:
             return _err_receipt("看图失败：模型未返回内容")
-        if question:
-            store.touch_image(h)  # 带问题的回答不覆盖通用描述（特定问答不缓存）
+        if question and row and row["description"]:
+            store.touch_image(h)  # 已有通用描述：细节问答不覆盖（问的是细节，不是图的解释），只刷新计数
         else:
+            # 无问题=通用描述；带问题但该图还没有描述：问答本身就是解释，存为首个描述
+            # （缓存的意义是免于重复 vision——不留空等一次“无问题”的观看）
             store.record_image(h, fname, len(data), answer)
-        return _ok_receipt(detail=answer, hash=h, note="已归档原图与描述：同图再看（不问新问题）直接回缓存")
+        note = "已回答；这张图已有通用描述，未覆盖" if question and row and row["description"] else "已归档原图与描述：同图再看（不问新问题）直接回缓存"
+        return _ok_receipt(detail=answer, hash=h, note=note)
 
     return Tool(
         schema={
@@ -325,7 +328,7 @@ def make_look_image_tool(llm, store: Store, cfg) -> Tool:
                 "type": "object",
                 "properties": {
                     "image": {"type": "string", "description": "图片：URL / data:URI / base64:// 前缀 / 本地路径"},
-                    "question": {"type": "string", "description": "想问这张图什么（不填=通用描述）"},
+                    "question": {"type": "string", "description": "想问这张图什么（不填=通用描述；该图还没有描述时，问答结果会存为它的首个描述）"},
                 },
                 "required": ["image"],
             },
