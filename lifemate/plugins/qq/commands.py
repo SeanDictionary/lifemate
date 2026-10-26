@@ -184,6 +184,7 @@ async def _history(p: QQPlugin, ev: ParsedEvent, arg: str) -> str:
     return f"最近 {len(rows)} 条活动：\n" + "\n".join(_fmt_record(r, tz) for r in rows)
 
 
+# ── /reload：重启配置 ──────────────
 @_register_command
 async def _reload(p: QQPlugin, ev: ParsedEvent, arg: str) -> str:
     """/reload：重读 config.json（与控制台 /reload 同义）——原地热更新，
@@ -203,6 +204,21 @@ async def _reload(p: QQPlugin, ev: ParsedEvent, arg: str) -> str:
     if restart_keys:
         lines.append(f"部分配置需重启生效：{'、'.join(restart_keys)}")
     return "\n".join(lines)
+
+
+# ── /ping：测试响应时间 ──────────────
+@_register_command
+async def _ping(p: QQPlugin, ev: ParsedEvent, arg: str) -> str:
+    """/ping：测试机器人响应时间。"""
+    return "pong"
+
+
+# ── /help：列出可用命令清单 ──────────────
+@_register_command
+async def _help(p: QQPlugin, ev: ParsedEvent, arg: str) -> str:
+    """/help：列出可用命令清单。"""
+    avail = "\n".join(sorted(_COMMANDS)) or "（暂无）"
+    return f"可用命令清单：\n{avail}"
 
 
 async def handle_command(p: QQPlugin, ev: ParsedEvent) -> None:
