@@ -1,5 +1,5 @@
 "use client";
-/** 记忆浏览器：记忆 / 兴趣 / 需求 / 提醒 / 图片（只读；面板看全量，含已提出/已兑现/已弄明白） */
+/** 记忆浏览器：记忆 / 兴趣 / 需求 / 提醒 / 图片（只读；行摘要 + 点击看完整记录） */
 import { useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { ChevronRight } from "lucide-react";
@@ -23,14 +23,34 @@ const TABS = [
   { key: "images", label: "图片" },
 ] as const;
 
-const FIELDS: Record<string, string[]> = {
-  episodes: ["summary", "source", "ts"],
-  curiosity: ["topic", "status", "result", "ts"],
-  needs: ["what", "why", "status", "ts"],
-  reminders: ["intent", "status", "due_at", "repeat", "ts"],
-};
+/** 行摘要：主字段截断上限 */
+const BRIEF_MAX = 100;
+/** 胶囊字数上限（长文本不配胶囊——进详情弹窗） */
+const BADGE_MAX = 16;
 
-/** 状态中文化（面板看全量后徽标要能读：待提/已提出/进行中/已完成） */
+/** 每表的主字段（行摘要文本）与胶囊字段（短枚举），其余字段进详情弹窗 */
+const PRIMARY: Record<string, string> = {
+  episodes: "summary",
+  curiosity: "topic",
+  needs: "what",
+  reminders: "intent",
+};
+const BADGES: Record<string, string[]> = {
+  episodes: ["kind"],
+  curiosity: ["status"],
+  needs: ["status"],
+  reminders: ["status", "repeat"],
+};
+/** 详情弹窗字段（显示名 → 字段名），按表排序 */
+const DETAILS: Record<string, [string, string][]> = {
+  episodes: [["类型", "kind"], ["来源", "source"], ["记录于", "ts"]],
+  curiosity: [["状态", "status"], ["结果", "result"], ["来源", "source"], ["记录于", "ts"]],
+  needs: [["状态", "status"], ["为什么", "why"], ["提出于", "raised_at"], ["记录于", "ts"]],
+  reminders: [["状态", "status"], ["重复", "repeat"], ["到点", "due_at"], ["兑现于", "done_at"], ["记录于", "ts"]],
+};
+const TIME_FIELDS = new Set(["ts", "due_at", "done_at", "raised_at"]);
+
+/** 状态中文化（徽标可读） */
 const STATUS_LABEL: Record<string, string> = {
   filed: "待提",
   raised: "已提出",
@@ -38,10 +58,100 @@ const STATUS_LABEL: Record<string, string> = {
   done: "已完成",
 };
 
+function brief(v: unknown, max: number = BRIEF_MAX): string {
+  const s = String(v ?? "");
+  return s.length > max ? s.slice(0, max) + "…" : s;
+}
+
+function badgeText(v: unknown): string {
+  return brief(STATUS_LABEL[String(v)] ?? String(v), BADGE_MAX);
+}
+
 function fmtSize(n: number): string {
   if (n >= 1_048_576) return `${(n / 1_048_576).toFixed(1)}MB`;
   if (n >= 1024) return `${(n / 1024).toFixed(0)}KB`;
   return `${n}B`;
+}
+
+/** 记录详情弹窗（图片弹窗同款遮罩模式）：完整主文 + 全字段 */
+function RecordModal({ table, r, onClose }: { table: string; r: Record<string, unknown>; onClose: () => void }) {
+  const primary = String(r[PRIMARY[table]] ?? "") || "（无内容）";
+  return (
+    <div
+      className="fixed inset-0 z-50 grid place-items-center bg-background/80 p-4 backdrop-blur-sm"
+      onClick={onClose}
+    >
+      <div
+        className="flex max-h-[85vh] w-[52rem] max-w-full flex-col rounded-xl border bg-card shadow-lg"
+        onClick={(e) => e.stopPropagation()}
+      >
+        <div className="flex items-center gap-3 border-b px-5 py-3">
+          <span className="min-w-0 flex-1 truncate text-sm font-semibold">
+            {brief(primary, 60)}
+          </span>
+          <Button variant="ghost" size="sm" className="h-7 px-2" onClick={onClose}>
+            <FontAwesomeIcon icon={faXmark} />
+          </Button>
+        </div>
+        <div className="min-h-0 flex-1 overflow-y-auto">
+          <div className="space-y-4 px-5 py-4">
+            <div className="whitespace-pre-wrap break-words text-sm leading-relaxed">{primary}</div>
+            <div className="space-y-2 border-t pt-3">
+              {DETAILS[table].map(([label, key]) => {
+                const v = r[key];
+                if (v === undefined || v === null || v === "" || (key === "repeat" && v === "none")) return null;
+                return (
+                  <div key={key} className="flex gap-3 text-sm">
+                    <span className="shrink-0 text-muted-foreground">{label}</span>
+                    <span className="min-w-0 break-all">
+                      {TIME_FIELDS.has(key) ? (
+                        <span className="font-mono text-xs text-muted-foreground">{fmtDate(Number(v))}</span>
+                      ) : key === "status" ? (
+                        <Badge variant="outline" className="text-[11px]">{STATUS_LABEL[String(v)] ?? String(v)}</Badge>
+                      ) : (
+                        String(v)
+                      )}
+                    </span>
+                  </div>
+                );
+              })}
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+/** 通用记录行：主字段截断 + 短枚举胶囊 + 时间 + 「>」弹窗看全文 */
+function Row({ table, r }: { table: string; r: Record<string, unknown> }) {
+  const [open, setOpen] = useState(false);
+  const primary = String(r[PRIMARY[table]] ?? "") || "（无内容）";
+  return (
+    <div className="px-4 py-2.5 text-sm">
+      <div className="flex flex-wrap items-center gap-2">
+        <span className="min-w-0 flex-1 break-all">{brief(primary)}</span>
+        {(BADGES[table] ?? []).map((f) => {
+          const v = r[f];
+          if (v === undefined || v === null || v === "" || (f === "repeat" && v === "none")) return null;
+          return (
+            <Badge key={f} variant="outline" className="text-[11px]">{badgeText(v)}</Badge>
+          );
+        })}
+        <span className="font-mono text-xs text-muted-foreground">{fmtDate(Number(r.ts ?? 0))}</span>
+        <Button
+          variant="ghost"
+          size="icon"
+          className="size-6"
+          aria-label="查看完整记录"
+          onClick={() => setOpen(true)}
+        >
+          <ChevronRight className="size-4 text-muted-foreground" />
+        </Button>
+      </div>
+      {open && <RecordModal table={table} r={r} onClose={() => setOpen(false)} />}
+    </div>
+  );
 }
 
 function Rows({ table }: { table: string }) {
@@ -65,29 +175,7 @@ function Rows({ table }: { table: string }) {
   return (
     <div className="divide-y">
       {data.rows.map((r, i) => (
-        <div key={i} className="flex flex-wrap items-baseline gap-2 px-4 py-2.5 text-sm">
-          {FIELDS[table].map((f) => {
-            const v = r[f];
-            if (v === undefined || v === null || v === "") return null;
-            if (f === "repeat" && v === "none") return null; // 不重复的提醒不显 repeat 徽标
-            const isTs = f === "ts" || f === "due_at";
-            if (isTs)
-              return (
-                <span key={f} className="ml-auto font-mono text-xs text-muted-foreground">
-                  {fmtDate(Number(v))}
-                </span>
-              );
-            const primary = f === "summary" || f === "topic" || f === "what" || f === "intent";
-            if (primary)
-              return (
-                <span key={f} className="min-w-0 flex-1 break-all">{String(v)}</span>
-              );
-            const label = f === "status" ? (STATUS_LABEL[String(v)] ?? String(v)) : String(v);
-            return (
-              <Badge key={f} variant="outline" className="text-[11px]">{label}</Badge>
-            );
-          })}
-        </div>
+        <Row key={String(r.id ?? r.hash ?? i)} table={table} r={r} />
       ))}
     </div>
   );
@@ -157,12 +245,12 @@ function ImageRow({ r }: { r: Record<string, unknown> }) {
   const hit = Number(r.hit_count ?? 0);
   const size = Number(r.size ?? 0);
   const lastSeen = Number(r.last_seen ?? 0);
-  const brief = desc.length > 100 ? desc.slice(0, 100) + "…" : desc;
+  const briefDesc = desc.length > 100 ? desc.slice(0, 100) + "…" : desc;
 
   return (
     <div className="px-4 py-2.5 text-sm">
       <div className="flex flex-wrap items-center gap-2">
-        <span className="min-w-0 flex-1 break-all">{brief || "（未描述）"}</span>
+        <span className="min-w-0 flex-1 break-all">{briefDesc || "（未描述）"}</span>
         {hit > 0 && <Badge variant="outline" className="text-[11px]">看过{hit}次</Badge>}
         <Badge variant="outline" className="text-[11px]">{fmtSize(size)}</Badge>
         <span className="font-mono text-xs text-muted-foreground">{fmtDate(lastSeen)}</span>

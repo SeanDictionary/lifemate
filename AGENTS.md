@@ -430,7 +430,14 @@ env 仅部署种子）；热重载靠字段原地更新——新组件必须持�
 - **兴趣通道内容层扩展（2026-10-26）**：主人定方向——好奇通道借用接口扩成“兴趣/爱好/好奇”共用（表名/工具名/接口不变，语义扩展）：add/list/resolve_curiosity 描述改写（想到就记：想弄明白的问题、喜欢或想尝试的东西、想聊下去的话题；resolve=弄明白或告一段落）；memory-keeping「兴趣与需求」节、rest-rhythm 睡前自省措辞同步；面板 Tab「好奇」→「兴趣」。动机缺口（零主动写入）主人自留后续解决，机制层不动
 - **记忆主动化 + 认识修正机制（2026-10-26）**：主人指令全量落地（缺陷清单见会话审计）——① 空回执给语义：list_curiosity/list_needs 空时返回引导句而非裸 []（自省时刻递笔，唯一触碰点不再零信息）；② 睡前自省时机化：_do_wait 入口检查，长睡前（无限等待或 ≥ sleep_review_min_wait_s 默认 3600s）且距上次 ≥ sleep_review_gap_s（默认 21600s，代码层 60s 下限防配置 0 死循环）返回自省提示不真睡，料理完再 wait 才真睡——两配置键入白名单（内核组）；③ 重建包模板补兴趣与新认识（memory-keeping/deep_sleep/save_rebuild_packet 三处同步）——修轮换断链；④ 认识修正链（防固化）：episodes 新增 episode_supersedes 表（新表零迁移，存档保全）——revise_episode(id, 新认识, why) 旧认识被顶替退出回忆、revert_episode 回滚恢复；recent_episodes 行带 id 且排除被顶替条目；⑤ 兴趣重开：reopen_curiosity（resolve 的回滚，原结果留案）+ add_curiosity 去重只计 pending（弄明白过的可重捡）；⑥ record_episode 描述标 insight 最重要。测试：test_memory +4、test_mind +3（含防死循环钳制）、剥夺夹具关闭自省保持原职责
 - **面板记忆页视角修正（2026-10-26）**：主人发现需求 Tab 空——数据在但被 pending 过滤（唯一一条 need 已标 raised）。三个 Tab 统一改双视角：面板看全量（all_needs/all_reminders/all_curiosity，含已提出/已兑现/已弄明白），心智工具保持待办视角不变；前端状态徽标中文化（待提/已提出/进行中/已完成）+ repeat=none 不显 + 提醒 Tab 补 status 列，已重 build
+- **面板记忆页行详情化（2026-10-26）**：主人指令——①胶囊字数限制（16 字截断，长文本不配胶囊）；②四个文本 Tab 统一图片 Tab 形态：行内只显主字段摘要（100 字）+ 短枚举胶囊 + 时间，「>」弹窗看完整记录（全字段：why/result/来源/到点/兑现于/提出于等，时间字段人读化）；all_needs 补 raised_at；已重 build
 - **待开发**：attention（门控升格）→ sandbox → webui → video
+
+### 待处理项（主人已知）
+
+- 好奇/需求主动写入已上机制（空回执引导+睡前自省+模板传承）；**冷启动需主人一句话**（“把你感兴趣的东西记进兴趣清单”）；验收标准：一周后清单非空且自维护，否则判定模型上限换模型
+- 2 张大 gif 的 vision 调用超 120s 工具超时留空描述行（可重看补描述，未特殊处理）
+- 人格回流中档（轮换播种自动附近期 insight 摘要）待第一批见效后评估；重档（它写的 identity 增补文件）远期
 
 ## 验证方式
 
