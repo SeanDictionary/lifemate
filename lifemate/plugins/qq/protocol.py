@@ -6,6 +6,7 @@ OneBot 事件 JSON → ParsedEvent（信封素材），由插件层组装成 Env
 
 from __future__ import annotations
 
+import re
 from dataclasses import dataclass, field
 
 
@@ -141,6 +142,74 @@ def parse_event(event: dict, self_id: int = 0, owner_uin: int = 0, reply_lookup=
         return None
 
     return None
+
+
+def render_segments(segments: list) -> str:
+    """消息段数组 → 可读文本（信封同款标注；合并转发节点渲染用）。
+
+    与 _parse_message 的段处理同构但独立——那边要同时收集 at_me/图片等
+    路由素材，这里只求可读；图片带 URL（look_image 可直接用）。"""
+    texts: list[str] = []
+    for seg in segments or []:
+        if not isinstance(seg, dict):
+            continue
+        stype = seg.get("type")
+        data = seg.get("data") or {}
+        if stype == "text":
+            texts.append(str(data.get("text") or ""))
+        elif stype == "image":
+            url = data.get("url") or data.get("file") or ""
+            texts.append(f"[图片 {url}]" if url else "[图片]")
+        elif stype == "at":
+            texts.append(f"@{data.get('qq')}")
+        elif stype == "reply":
+            texts.append(f"[回复{data.get('id')}]")
+        elif stype == "face":
+            texts.append(f"[表情{data.get('id')}]")
+        elif stype == "record":
+            texts.append("[语音]")
+        elif stype == "video":
+            texts.append("[视频]")
+        elif stype == "forward":
+            texts.append("[合并转发]")
+        elif stype in ("json", "xml"):
+            texts.append(f"[{stype}卡片]")
+        elif stype == "poke":
+            texts.append("[戳一戳]")
+    return "".join(texts).strip()
+
+
+def render_forward(data: dict) -> list[str]:
+    """get_forward_msg 响应 → 可读行列表（发话人: 内容）。
+
+    兼容两种形态：OneBot 标准（message 数组为 node 段，内容在 data.content）
+    与 NapCat（直接铺开的消息对象，sender + message/content）。嵌套的
+    合并转发只标注不再展开（qq_api 逃生口仍在）。"""
+    nodes = data.get("message") or data.get("messages") or []
+    lines: list[str] = []
+    for n in nodes:
+        if not isinstance(n, dict):
+            continue
+        if n.get("type") == "node":
+            d = n.get("data") or {}
+            name = str(d.get("nickname") or d.get("user_id") or "?")
+            content = d.get("content")
+        else:
+            sender = n.get("sender") or {}
+            name = str(sender.get("card") or sender.get("nickname") or sender.get("user_id") or "?")
+            content = n.get("message") if isinstance(n.get("message"), list) else n.get("content")
+        text = content if isinstance(content, str) else render_segments(content or [])
+        lines.append(f"{name}: {text}" if text else f"{name}: （空）")
+    return lines
+
+
+def forward_id_of(msg: dict) -> str:
+    """get_msg 响应 → 合并转发 ID（数组段优先，raw_message 的 CQ 码兜底）。"""
+    for seg in msg.get("message") or []:
+        if isinstance(seg, dict) and seg.get("type") == "forward":
+            return str((seg.get("data") or {}).get("id") or "")
+    m = re.search(r"\[CQ:forward,id=([^\],]+)", str(msg.get("raw_message") or ""))
+    return m.group(1) if m else ""
 
 
 def compose_envelope_text(ev: ParsedEvent) -> str:

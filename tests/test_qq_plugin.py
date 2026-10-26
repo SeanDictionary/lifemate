@@ -896,3 +896,145 @@ async def test_history_command(tmp_path):
     finally:
         await plugin.stop()
         await napcat.stop()
+
+
+# ── 引用回复 / 读合并转发（工具层 + 纯函数） ─────────────
+
+
+class _StubClient:
+    """按 action 应答的假 OneBot 客户端（工具层单测，不起 WS）。"""
+
+    def __init__(self, responses: dict):
+        self.responses = responses
+        self.calls: list[tuple[str, dict]] = []
+
+    async def call(self, action, params=None):
+        self.calls.append((action, params or {}))
+        r = self.responses.get(action)
+        if isinstance(r, Exception):
+            raise r
+        return r if r is not None else {}
+
+
+def _plugin_with_stub(tmp_path, responses):
+    from lifemate.plugins.qq import QQConfig, QQPlugin
+    from lifemate.plugins.qq.chatlog import ChatLog
+    from lifemate.plugins.qq.tools import build_tools
+    from lifemate.utils.config import Config
+
+    cfg = Config(data_dir=tmp_path / "cfg")
+    cfg.plugins = {"qq": {"enabled": True, "ws_url": "ws://stub", "bot_uin": SELF, "owner_uin": OWNER, "send_min_interval_s": 0.0, "send_max_per_min": 99}}
+    p = QQPlugin(QQConfig(cfg), cfg, tmp_path / "pd")
+    p._client = _StubClient(responses)
+    p._chatlog = ChatLog(tmp_path / "pd")
+    tools = {t.schema["name"]: t for t in build_tools(p)}
+    return p, p._client, tools
+
+
+async def test_reply_to_group_message(tmp_path):
+    """引用回复群消息：自动定位会话 + reply 段 + 出站入档带句柄。"""
+    p, stub, tools = _plugin_with_stub(
+        tmp_path,
+        {
+            "get_msg": {"group_id": 777, "sender": {"user_id": 12345, "nickname": "张三"}, "message": [{"type": "text", "data": {"text": "原话"}}]},
+            "send_group_msg": {"message_id": 4242},
+        },
+    )
+    r = json.loads(await tools["reply_to"].func({"message_id": 555, "text": "收到"}))
+    assert r["ok"] is True
+    assert r["data"]["message_id"] == 4242 and r["data"]["reply_to"] == 555 and r["data"]["target"] == "group_777"
+    send = next(c for c in stub.calls if c[0] == "send_group_msg")[1]
+    assert send["group_id"] == 777
+    assert send["message"][0] == {"type": "reply", "data": {"id": 555}}
+    assert send["message"][1] == {"type": "text", "data": {"text": "收到"}}
+    # 出站入背景听觉（带撤回句柄）
+    assert any(row["message_id"] == 4242 and row["sender_id"] == SELF for row in p._chatlog.recent("group_777", 5))
+
+
+async def test_reply_to_private_message(tmp_path):
+    _, stub, tools = _plugin_with_stub(
+        tmp_path,
+        {
+            "get_msg": {"group_id": 0, "sender": {"user_id": 888, "nickname": "李四"}},
+            "send_private_msg": {"message_id": 77},
+        },
+    )
+    r = json.loads(await tools["reply_to"].func({"message_id": 31, "text": "嗯嗯"}))
+    assert r["ok"] is True and r["data"]["target"] == "private_888"
+    send = next(c for c in stub.calls if c[0] == "send_private_msg")[1]
+    assert send["user_id"] == 888 and send["message"][0] == {"type": "reply", "data": {"id": 31}}
+
+
+async def test_reply_to_own_private_message_unlocatable(tmp_path):
+    """回自己发的私聊消息：定位不到对方，明确回执引导用 send_message。"""
+    _, _, tools = _plugin_with_stub(tmp_path, {"get_msg": {"group_id": 0, "sender": {"user_id": SELF}}})
+    r = json.loads(await tools["reply_to"].func({"message_id": 5, "text": "咦"}))
+    assert r["ok"] is False and "send_message" in r["error"]
+
+
+async def test_read_forward(tmp_path):
+    """读合并转发：自动解引用转发 ID，节点渲染成可读行。"""
+    _, stub, tools = _plugin_with_stub(
+        tmp_path,
+        {
+            "get_msg": {"message": [{"type": "forward", "data": {"id": "resid42"}}]},
+            "get_forward_msg": {
+                "messages": [
+                    {"sender": {"nickname": "甲"}, "content": [{"type": "text", "data": {"text": "看这个"}}]},
+                    {"sender": {"card": "乙"}, "content": [{"type": "image", "data": {"url": "http://x/1.jpg"}}, {"type": "text", "data": {"text": "哈哈"}}]},
+                ]
+            },
+        },
+    )
+    r = json.loads(await tools["read_forward"].func({"message_id": 555}))
+    assert r["ok"] is True and r["data"]["count"] == 2
+    log = r["data"]["log"]
+    assert "甲: 看这个" in log and "乙: [图片 http://x/1.jpg]哈哈" in log
+    assert ("get_forward_msg", {"id": "resid42"}) in stub.calls
+
+
+async def test_read_forward_not_forward(tmp_path):
+    _, _, tools = _plugin_with_stub(tmp_path, {"get_msg": {"message": [{"type": "text", "data": {"text": "普通消息"}}]}})
+    r = json.loads(await tools["read_forward"].func({"message_id": 555}))
+    assert r["ok"] is False and "不包含合并转发" in r["error"]
+
+
+async def test_read_chat_log_shows_message_id_handles(tmp_path):
+    """chat_log 渲染：所有消息带 message_id 句柄（reply_to/read_forward 的凭据）。"""
+    p, _, tools = _plugin_with_stub(tmp_path, {})
+    p._chatlog.append("group_777", 12345, "张三", "今天天气不错", 111)
+    p._chatlog.append("group_777", SELF, "我", "收到", 222)
+    out = json.loads(await tools["read_chat_log"].func({"target_type": "group", "target_id": 777}))
+    assert "张三: 今天天气不错（message_id=111）" in out["log"]
+    assert "我: 收到（message_id=222）" in out["log"]
+
+
+def test_forward_id_of():
+    from lifemate.plugins.qq.protocol import forward_id_of
+
+    assert forward_id_of({"message": [{"type": "forward", "data": {"id": "seg9"}}]}) == "seg9"
+    assert forward_id_of({"raw_message": "看[CQ:forward,id=abc123]这个"}) == "abc123"
+    assert forward_id_of({"raw_message": "无转发"}) == ""
+
+
+def test_render_forward_node_format():
+    from lifemate.plugins.qq.protocol import render_forward
+
+    data = {"message": [{"type": "node", "data": {"user_id": 1, "nickname": "丙", "content": [{"type": "text", "data": {"text": "标准形态"}}]}}]}
+    assert render_forward(data) == ["丙: 标准形态"]
+    # 空节点也有行（转发里常见空消息）
+    assert render_forward({"messages": [{"sender": {"nickname": "丁"}, "content": []}]}) == ["丁: （空）"]
+
+
+def test_render_segments_labels():
+    from lifemate.plugins.qq.protocol import render_segments
+
+    segs = [
+        {"type": "text", "data": {"text": "a"}},
+        {"type": "at", "data": {"qq": "123"}},
+        {"type": "reply", "data": {"id": 9}},
+        {"type": "face", "data": {"id": 5}},
+        {"type": "record", "data": {}},
+        {"type": "forward", "data": {"id": "x"}},
+    ]
+    assert render_segments(segs) == "a@123[回复9][表情5][语音][合并转发]"

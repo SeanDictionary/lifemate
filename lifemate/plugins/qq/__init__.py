@@ -4,7 +4,7 @@
 
 - 感知面：正向 WS 连 NapCat；事件→信封；强刺激 notify 直达，
   弱刺激（普通群消息）进背景听觉（chat_log），心智自主查看
-- 表达面：17 个工具（发消息/媒体/撤回/审批/群管/世界查询/状态/原始 API）
+- 表达面：22 个工具（发消息/媒体/撤回/回复/转发解读/审批/群管/世界查询/状态/原始 API）
 - 出站回执制：永不抛错，{ok, error, detail} 由心智自决
 - 风控物理钳制：最小发送间隔 + 每分钟上限（账号生存约束，非行为治理）
 """
@@ -19,7 +19,7 @@ from typing import Any
 
 from ...kernel.contracts import AMBIENT, ASSISTANT_MSG, DIRECT, ERROR, PLATFORM_EVENT, Envelope
 from .. import Plugin, PluginContext
-from .chatlog import ChatLog, format_ts
+from .chatlog import ChatLog, render_log_lines
 from .commands import handle_command
 from .config import QQConfig
 from .connection import OneBotClient
@@ -30,9 +30,9 @@ log = logging.getLogger("plugins.qq")
 
 TOOLS_SPEC = """工具集：
 send_message / send_image / recall_message / get_message_detail /
-read_chat_log / approve_friend_request / handle_group_request /
-get_friends / get_groups / get_group_members / get_group_info /
-poke / send_like / set_group_card / leave_group /
+read_forward / reply_to / read_chat_log / approve_friend_request /
+handle_group_request / get_friends / get_groups / get_group_members /
+get_group_info / poke / send_like / set_group_card / leave_group /
 mute_member / kick_member / set_qq_status / set_profile / qq_api"""
 
 # 身体告警界限（硬编码——心智求助不了时的条件反射，非行为参数）：
@@ -233,14 +233,7 @@ class QQPlugin(Plugin):
         rows = self._chatlog.recent(chat_id, 12)
         self._chatlog.mark_read(chat_id)
         self._last_ambient_wake[chat_id] = now
-        bot = self._conf.bot_uin
-        lines = []
-        for r in rows:
-            stamp = format_ts(r["ts"], tz_name=self._cfg.timezone)
-            if bot and r["sender_id"] == bot:
-                lines.append(f"[{stamp}] 我: {r['text']}（message_id={r['message_id']}）")
-            else:
-                lines.append(f"[{stamp}] {r['sender_name']}: {r['text']}")
+        lines = render_log_lines(rows, bot_uin=self._conf.bot_uin, tz_name=self._cfg.timezone)
         where = chat_id.replace("group_", "群 ").replace("private_", "私聊 ")
         self._kernel.notify(Envelope(text=f"（{where}你不在时聊了 {unread} 条：\n" + "\n".join(lines) + "）", kind=AMBIENT, source=chat_id, origin="qq"))
 

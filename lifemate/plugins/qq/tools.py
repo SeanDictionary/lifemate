@@ -11,7 +11,8 @@ import json
 from typing import TYPE_CHECKING
 
 from ...kernel.contracts import Tool
-from .chatlog import format_ts
+from .chatlog import format_ts, render_log_lines
+from .protocol import forward_id_of, render_forward
 
 if TYPE_CHECKING:
     from . import QQPlugin
@@ -93,6 +94,54 @@ def build_tools(p: QQPlugin) -> list[Tool]:
 
         return await p._receipt(_do)
 
+    async def read_forward(args: dict) -> str:
+        mid = int(args.get("message_id") or 0)
+        if not mid:
+            return _err("需要 message_id（那条 [合并转发] 消息的 ID，read_chat_log 里有句柄）")
+
+        async def _do():
+            # 先取该消息解出合并转发 ID（resid），再取内容——心智不再手搓 CQ
+            msg = await p._call("get_msg", {"message_id": mid})
+            fwd = forward_id_of(msg)
+            if not fwd:
+                raise ValueError("这条消息不包含合并转发")
+            data = await p._call("get_forward_msg", {"id": fwd})
+            lines = render_forward(data)
+            if not lines:
+                raise ValueError("合并转发内容为空（可能已过期或被撤回）")
+            return {"count": len(lines), "log": "\n".join(lines)}
+
+        return await p._receipt(_do, message_id=mid)
+
+    async def reply_to(args: dict) -> str:
+        mid = int(args.get("message_id") or 0)
+        text = str(args.get("text") or "").strip()
+        if not mid or not text:
+            return _err("需要 message_id（回复哪条消息）、text")
+        blocked = p._throttle()
+        if blocked:
+            return _err(blocked)
+
+        async def _do():
+            # 反查那条消息定位会话：回复去它所在的地方，不会回错群
+            origin = await p._call("get_msg", {"message_id": mid})
+            gid = int(origin.get("group_id") or 0)
+            if gid:
+                action, base, chat_id = "send_group_msg", {"group_id": gid}, f"group_{gid}"
+            else:
+                uid = int((origin.get("sender") or {}).get("user_id") or 0)
+                if not uid or uid == int(p._conf.bot_uin or 0):
+                    raise ValueError("定位不到会话（自己发的私聊消息查不到对方）；私聊直接用 send_message")
+                action, base, chat_id = "send_private_msg", {"user_id": uid}, f"private_{uid}"
+            base["message"] = [{"type": "reply", "data": {"id": mid}}, {"type": "text", "data": {"text": text}}]
+            data = await p._call(action, base)
+            new_mid = int(data.get("message_id") or 0)
+            p._log_sent(chat_id, text, new_mid)
+            # 回执复述动作事实（行动后审视的凭据）
+            return {"message_id": new_mid, "text": text, "reply_to": mid, "target": chat_id}
+
+        return await p._receipt(_do)
+
     # ── 背景听觉 ──────────────────────────────────────
     async def read_chat_log(args: dict) -> str:
         target_type = str(args.get("target_type") or "group")
@@ -105,16 +154,8 @@ def build_tools(p: QQPlugin) -> list[Tool]:
         p._chatlog.mark_read(chat_id)
         if not rows:
             return _err("该会话暂无记录")
-        bot = p._conf.bot_uin
-        tz = p._cfg.timezone
-        lines = []
-        for r in rows:
-            stamp = format_ts(r["ts"], tz_name=tz)
-            # 自己的出站带撤回句柄；别人的不带（减少噪声）
-            if bot and r["sender_id"] == bot:
-                lines.append(f"[{stamp}] 我: {r['text']}（message_id={r['message_id']}）")
-            else:
-                lines.append(f"[{stamp}] {r['sender_name']}: {r['text']}")
+        # 每条带 message_id 句柄：reply_to（引用回复）/read_forward（读合并转发）的定位凭据
+        lines = render_log_lines(rows, bot_uin=p._conf.bot_uin, tz_name=p._cfg.timezone)
         return json.dumps({"ok": True, "count": len(rows), "log": "\n".join(lines)}, ensure_ascii=False)
 
     # ── 审批 ──────────────────────────────────────────
@@ -263,6 +304,8 @@ def build_tools(p: QQPlugin) -> list[Tool]:
             Tool(schema={"name": "send_image", "description": "发图片。file 支持 URL/本地路径/base64:// 前缀。", "inputSchema": {"type": "object", "properties": {"target_type": {"type": "string"}, "target_id": {"type": "number"}, "file": {"type": "string"}, "caption": {"type": "string"}}}, "required": ["target_type", "target_id", "file"]}, func=send_image, interruptible=True),
             Tool(schema={"name": "recall_message", "description": "撤回自己刚发的消息。", "inputSchema": {"type": "object", "properties": {"message_id": {"type": "number"}}, "required": ["message_id"]}}, func=recall_message),
             Tool(schema={"name": "get_message_detail", "description": "查一条消息的详情（谁发的/内容/时间）。", "inputSchema": {"type": "object", "properties": {"message_id": {"type": "number"}}, "required": ["message_id"]}}, func=get_message_detail),
+            Tool(schema={"name": "read_forward", "description": "读一条合并转发消息的完整内容（信封里显示 [合并转发] 的那种）。message_id 从 read_chat_log 的句柄获取；内部自动解引用转发 ID。", "inputSchema": {"type": "object", "properties": {"message_id": {"type": "number", "description": "那条 [合并转发] 消息的 message_id"}}, "required": ["message_id"]}}, func=read_forward),
+            Tool(schema={"name": "reply_to", "description": "引用回复：回复指定消息并附上你的文本（对方会看到引用）。自动发到那条消息所在的会话，不会回错地方；message_id 从 read_chat_log 的句柄获取。", "inputSchema": {"type": "object", "properties": {"message_id": {"type": "number", "description": "要回复哪条消息"}, "text": {"type": "string", "description": "回复内容"}}, "required": ["message_id", "text"]}}, func=reply_to, interruptible=True),
             Tool(schema={"name": "read_chat_log", "description": "看某个会话最近的聊天记录（背景听觉：你没注意时群里的对话都记着）。每条带时间标注，注意区分刚发的和早前的消息。看完自动算已读。", "inputSchema": {"type": "object", "properties": {"target_type": {"type": "string"}, "target_id": {"type": "number"}, "n": {"type": "number"}}, "required": ["target_type", "target_id"]}}, func=read_chat_log, interruptible=True),
             Tool(schema={"name": "approve_friend_request", "description": "处理好友申请（approve=true 同意）。", "inputSchema": {"type": "object", "properties": {"user_id": {"type": "number"}, "approve": {"type": "boolean"}}, "required": ["user_id"]}}, func=approve_friend_request),
             Tool(schema={"name": "handle_group_request", "description": "处理加群申请/邀请。", "inputSchema": {"type": "object", "properties": {"user_id": {"type": "number"}, "approve": {"type": "boolean"}}, "required": ["user_id"]}}, func=handle_group_request),

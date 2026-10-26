@@ -33,6 +33,23 @@ CREATE INDEX IF NOT EXISTS idx_chat_ts ON chat_log (chat_id, ts);
 """
 
 
+def render_log_lines(rows: list[dict], bot_uin: int = 0, tz_name: str = "") -> list[str]:
+    """chat_log 行 → 带时间标注的可读行（read_chat_log 与攒批唤醒共用）。
+
+    每条带 message_id 句柄——引用回复（reply_to）与读合并转发
+    （read_forward）都以它定位消息；自己的出站显示为“我”。"""
+    out: list[str] = []
+    for r in rows:
+        stamp = format_ts(r["ts"], tz_name=tz_name)
+        mid = int(r.get("message_id") or 0)
+        handle = f"（message_id={mid}）" if mid else ""
+        if bot_uin and r["sender_id"] == bot_uin:
+            out.append(f"[{stamp}] 我: {r['text']}{handle}")
+        else:
+            out.append(f"[{stamp}] {r['sender_name']}: {r['text']}{handle}")
+    return out
+
+
 def _day_of(ts: float, tz_name: str = "") -> str:
     return clock.datetime_at(ts, tz_name).strftime("%Y-%m-%d")
 
