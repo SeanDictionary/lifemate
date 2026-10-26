@@ -1,5 +1,5 @@
 "use client";
-/** 记忆浏览器：记忆 / 好奇 / 需求 / 提醒 / 图片（只读） */
+/** 记忆浏览器：记忆 / 兴趣 / 需求 / 提醒 / 图片（只读；面板看全量，含已提出/已兑现/已弄明白） */
 import { useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { ChevronRight } from "lucide-react";
@@ -27,7 +27,15 @@ const FIELDS: Record<string, string[]> = {
   episodes: ["summary", "source", "ts"],
   curiosity: ["topic", "status", "result", "ts"],
   needs: ["what", "why", "status", "ts"],
-  reminders: ["intent", "due_at", "repeat", "ts"],
+  reminders: ["intent", "status", "due_at", "repeat", "ts"],
+};
+
+/** 状态中文化（面板看全量后徽标要能读：待提/已提出/进行中/已完成） */
+const STATUS_LABEL: Record<string, string> = {
+  filed: "待提",
+  raised: "已提出",
+  pending: "进行中",
+  done: "已完成",
 };
 
 function fmtSize(n: number): string {
@@ -61,6 +69,7 @@ function Rows({ table }: { table: string }) {
           {FIELDS[table].map((f) => {
             const v = r[f];
             if (v === undefined || v === null || v === "") return null;
+            if (f === "repeat" && v === "none") return null; // 不重复的提醒不显 repeat 徽标
             const isTs = f === "ts" || f === "due_at";
             if (isTs)
               return (
@@ -69,10 +78,13 @@ function Rows({ table }: { table: string }) {
                 </span>
               );
             const primary = f === "summary" || f === "topic" || f === "what" || f === "intent";
-            return primary ? (
-              <span key={f} className="min-w-0 flex-1 break-all">{String(v)}</span>
-            ) : (
-              <Badge key={f} variant="outline" className="text-[11px]">{String(v)}</Badge>
+            if (primary)
+              return (
+                <span key={f} className="min-w-0 flex-1 break-all">{String(v)}</span>
+              );
+            const label = f === "status" ? (STATUS_LABEL[String(v)] ?? String(v)) : String(v);
+            return (
+              <Badge key={f} variant="outline" className="text-[11px]">{label}</Badge>
             );
           })}
         </div>

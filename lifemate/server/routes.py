@@ -119,11 +119,11 @@ def build_core_routes(srv) -> list[Route]:
         if table == "episodes":
             return {"ok": True, "rows": store.recent_episodes(n=n)}
         if table == "curiosity":
-            return {"ok": True, "rows": store.pending_curiosity(n=n)}
+            return {"ok": True, "rows": store.all_curiosity(n=n)}  # 面板看全量（含已弄明白）；心智工具仍只看清单
         if table == "needs":
-            return {"ok": True, "rows": store.pending_needs(n=n)}
+            return {"ok": True, "rows": store.all_needs(n=n)}  # 面板看全量（含已提出）；心智工具仍只看待办
         if table == "reminders":
-            return {"ok": True, "rows": store.pending_reminders(n=n)}
+            return {"ok": True, "rows": store.all_reminders(n=n)}  # 面板看全量（含已兑现）；心智/轮询器仍只看待办
         if table == "images":
             return {"ok": True, "rows": store.recent_images(n=n)}
         return {"ok": False, "error": "table ∈ episodes/curiosity/needs/reminders/images"}
