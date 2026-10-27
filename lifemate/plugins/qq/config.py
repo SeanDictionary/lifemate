@@ -27,6 +27,7 @@ class QQConfig(PluginConfig):
     envelope_context_n = Field(4, description="跨会话切换时信封附带的该会话最近消息条数（0=关）")
     send_min_interval_s = Field(1.0, description="发送最小间隔秒（风控钳制）")
     send_max_per_min = Field(20, description="每分钟发送上限（风控钳制）")
+    send_image_max_mb = Field(15.0, description="本地图片转 base64 发送的大小上限 MB（超出回执报错，防巨文件撑爆 WS 帧）")
 
 
 CONFIG = QQConfig  # 装载器约定：首启预设写盘（enabled=false）

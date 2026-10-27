@@ -3,6 +3,7 @@
 import asyncio
 import json
 import time
+from pathlib import Path
 
 from lifemate.plugins.qq.protocol import compose_envelope_text, parse_event
 
@@ -1038,3 +1039,182 @@ def test_render_segments_labels():
         {"type": "forward", "data": {"id": "x"}},
     ]
     assert render_segments(segs) == "a@123[回复9][表情5][语音][合并转发]"
+
+
+def test_resolve_media_path_candidates(tmp_path):
+    """相对路径解析：URL 直通 / data_dir 候选 / 缺失原样放行。"""
+    from lifemate.plugins.qq.tools import _resolve_media_path
+
+    class _Cfg:
+        data_dir = str(tmp_path / "data")
+
+    (tmp_path / "data" / "images").mkdir(parents=True)
+    img = tmp_path / "data" / "images" / "abc.png"
+    img.write_bytes(b"\x89PNG")
+    (tmp_path / "data" / "top.png").write_bytes(b"x")
+
+    # URL / base64 / data: 直通
+    for u in ("https://x/y.png", "base64://abcd", "data:image/png;base64,xx", "HTTP://X/Y.PNG"):
+        assert _resolve_media_path(u, _Cfg) == u
+    # 绝对路径原样
+    assert _resolve_media_path(str(img), _Cfg) == str(img)
+    # 相对路径（find_image 回执形态）→ {data_dir}/images/文件名，绝对化
+    assert _resolve_media_path("abc.png", _Cfg) == str(img.resolve())
+    assert _resolve_media_path("images/abc.png", _Cfg) == str(img.resolve())
+    # {data_dir}/file 候选
+    assert _resolve_media_path("top.png", _Cfg) == str((tmp_path / "data" / "top.png").resolve())
+    # 都不在：原样放行（对端报错，回执制兜底）
+    assert _resolve_media_path("nope/missing.png", _Cfg) == "nope/missing.png"
+
+
+async def test_send_image_relative_path_goes_base64(tmp_path):
+    """send_image 本地文件（含相对路径）出站前转 base64://：不依赖 NapCat 同机。"""
+    from conftest import FakeLLM, make_persona, make_session
+
+    from lifemate.kernel.compaction import Compactor
+    from lifemate.kernel.mind import SelfKernel
+    from lifemate.plugins.qq import QQConfig, QQPlugin, build_tools
+    from lifemate.utils.config import Config
+
+    napcat = FakeNapCat()
+    url = await napcat.start()
+    cfg = Config(data_dir=tmp_path / "cfg")
+    cfg.plugins = {"qq": {"enabled": True, "ws_url": url, "bot_uin": SELF, "owner_uin": OWNER, "send_min_interval_s": 0.0}}
+    plugin = QQPlugin(QQConfig(cfg), cfg, tmp_path / "plugindata" / "qq")
+    plugin.tools = build_tools(plugin)
+
+    llm = FakeLLM([])
+    kernel = SelfKernel(llm=llm, persona=make_persona(tmp_path), session=make_session(tmp_path), compactor=Compactor(llm.chat, cfg), cfg=cfg)
+    kernel.register_plugin(plugin)
+
+    import types
+
+    await plugin.start(types.SimpleNamespace(kernel=kernel))
+    try:
+        assert await _wait_for(lambda: plugin._client.connected)
+        # 归档一张图（find_image 回执给的就是这种相对形态）
+        img_dir = tmp_path / "cfg" / "images"
+        img_dir.mkdir(parents=True)
+        png = b"\x89PNG\r\n\x1a\n" + b"\x00" * 64
+        (img_dir / "abc.png").write_bytes(png)
+        tools = {t.name: t for t in plugin.tools}
+        r = json.loads(await tools["send_image"].func({"target_type": "private", "target_id": OWNER, "file": "images/abc.png"}))
+        assert r["ok"] is True
+        sent = [m for m in napcat.received if m.get("action") == "send_private_msg"]
+        f = sent[-1]["params"]["message"][0]["data"]["file"]
+        assert f.startswith("base64://")
+        import base64 as b64mod
+
+        assert b64mod.b64decode(f[len("base64://") :]) == png
+    finally:
+        await plugin.stop()
+        await napcat.stop()
+
+
+async def test_send_image_local_over_cap_rejected(tmp_path):
+    """本地文件超 send_image_max_mb：回执报错，不出站。"""
+    from conftest import FakeLLM, make_persona, make_session
+
+    from lifemate.kernel.compaction import Compactor
+    from lifemate.kernel.mind import SelfKernel
+    from lifemate.plugins.qq import QQConfig, QQPlugin, build_tools
+    from lifemate.utils.config import Config
+
+    napcat = FakeNapCat()
+    url = await napcat.start()
+    cfg = Config(data_dir=tmp_path / "cfg")
+    cfg.plugins = {"qq": {"enabled": True, "ws_url": url, "bot_uin": SELF, "owner_uin": OWNER, "send_min_interval_s": 0.0, "send_image_max_mb": 0.001}}
+    plugin = QQPlugin(QQConfig(cfg), cfg, tmp_path / "plugindata" / "qq")
+    plugin.tools = build_tools(plugin)
+
+    llm = FakeLLM([])
+    kernel = SelfKernel(llm=llm, persona=make_persona(tmp_path), session=make_session(tmp_path), compactor=Compactor(llm.chat, cfg), cfg=cfg)
+    kernel.register_plugin(plugin)
+
+    import types
+
+    await plugin.start(types.SimpleNamespace(kernel=kernel))
+    try:
+        assert await _wait_for(lambda: plugin._client.connected)
+        big = tmp_path / "big.png"
+        big.write_bytes(b"x" * 2048)  # 2KB > 0.001MB 上限
+        tools = {t.name: t for t in plugin.tools}
+        r = json.loads(await tools["send_image"].func({"target_type": "private", "target_id": OWNER, "file": str(big)}))
+        assert r["ok"] is False and "太大" in r["error"]
+        assert not [m for m in napcat.received if m.get("action") == "send_private_msg"]
+    finally:
+        await plugin.stop()
+        await napcat.stop()
+
+
+async def test_meme_flow_look_find_send(tmp_path, monkeypatch):
+    """表情包全链路（三工具联合）：look_image 归档 → find_image 找图（相对路径）→ send_image 发出（base64）。
+
+    data_dir 用相对路径（生产形态：config 默认相对目录），验证 find_image 回执的
+    相对路径能被 send_image 正确读出。"""
+    from conftest import FakeLLM, make_persona, make_session
+    from test_look_image import PNG_MAGIC, FakeVisionLLM
+
+    from lifemate.kernel.compaction import Compactor
+    from lifemate.kernel.mind import SelfKernel
+    from lifemate.kernel.tools import make_look_image_tool
+    from lifemate.memory.store import Store
+    from lifemate.memory.tools import build_memory_tools
+    from lifemate.plugins.qq import QQConfig, QQPlugin, build_tools
+    from lifemate.utils.config import Config
+
+    monkeypatch.chdir(tmp_path)  # 进程 cwd = tmp_path，相对 data_dir 落在这
+    napcat = FakeNapCat()
+    url = await napcat.start()
+
+    cfg = Config(data_dir=Path("data"))  # 相对路径——生产形态
+    cfg.llm_vision_model = "fake-vision"
+    cfg.plugins = {"qq": {"enabled": True, "ws_url": url, "bot_uin": SELF, "owner_uin": OWNER, "send_min_interval_s": 0.0}}
+
+    store = Store(Path("data") / "memory.db")  # host 装配形态：look_image 与 find_image 共库
+    vision_llm = FakeVisionLLM()
+    look = make_look_image_tool(vision_llm, store, cfg)
+    mem_tools = {t.name: t for t in build_memory_tools(store, cfg)}
+
+    plugin = QQPlugin(QQConfig(cfg), cfg, tmp_path / "plugindata" / "qq")
+    plugin.tools = build_tools(plugin)
+    llm = FakeLLM([])
+    kernel = SelfKernel(llm=llm, persona=make_persona(tmp_path), session=make_session(tmp_path), compactor=Compactor(llm.chat, cfg), cfg=cfg)
+    kernel.register_plugin(plugin)
+
+    import types
+
+    await plugin.start(types.SimpleNamespace(kernel=kernel))
+    try:
+        assert await _wait_for(lambda: plugin._client.connected)
+        # ① 看图：归档 + 存描述（vision 真实调一次）
+        src = tmp_path / "meme.png"
+        src.write_bytes(PNG_MAGIC)
+        r = json.loads(await look.func({"image": str(src), "question": "这是什么梗"}))
+        assert r["ok"] is True and len(vision_llm.vision_calls) == 1
+
+        # ② 找图：按描述关键词命中，file 是相对路径（生产形态下确实相对）
+        r = json.loads(await mem_tools["find_image"].func({"query": "测试图"}))
+        assert r["ok"] and len(r["content"]) == 1
+        row = r["content"][0]
+        f = row["file"]
+        assert not Path(f).is_absolute() and "images" in f
+
+        # ③ 发图：QQ 侧把相对路径读出、转 base64 出站
+        qq_tools = {t.name: t for t in plugin.tools}
+        r = json.loads(await qq_tools["send_image"].func({"target_type": "private", "target_id": OWNER, "file": f, "caption": "表情包"}))
+        assert r["ok"] is True
+        sent = [m for m in napcat.received if m.get("action") == "send_private_msg"]
+        segs = sent[-1]["params"]["message"]
+        assert segs[0]["data"]["file"].startswith("base64://")
+        import base64 as b64mod
+
+        assert b64mod.b64decode(segs[0]["data"]["file"][len("base64://") :]) == PNG_MAGIC
+        assert segs[1]["data"]["text"] == "表情包"
+
+        # ④ 全链路零重复识别：重发同图不再调 vision
+        r = json.loads(await qq_tools["send_image"].func({"target_type": "private", "target_id": OWNER, "file": f}))
+        assert r["ok"] is True and len(vision_llm.vision_calls) == 1
+    finally:
+        await plugin.stop()
+        await napcat.stop()

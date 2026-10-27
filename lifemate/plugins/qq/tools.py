@@ -7,7 +7,11 @@
 
 from __future__ import annotations
 
+import asyncio
+import base64
 import json
+import re
+from pathlib import Path
 from typing import TYPE_CHECKING
 
 from ...kernel.contracts import Tool
@@ -24,6 +28,28 @@ def _ok(**kw) -> str:
 
 def _err(msg: str, **kw) -> str:
     return json.dumps({"ok": False, "error": msg, **kw}, ensure_ascii=False)
+
+
+_URLISH_RE = re.compile(r"^(https?://|base64://|data:|file://)", re.I)
+
+
+def _resolve_media_path(file: str, cfg) -> str:
+    """相对路径 → 绝对路径（发媒体前的适配）。
+
+    NapCat 按它自己的 cwd 解析相对路径（多半对不上），出站前钉死绝对位。
+    候选依次取第一个存在的：原样（本进程 cwd）→ {data_dir}/file →
+    {data_dir}/images/文件名（find_image 回执给的就是这种）。都不在就
+    原样放行，让对端报错、回执制兑底。URL/base64/data: 直通。"""
+    if _URLISH_RE.match(file):
+        return file
+    p = Path(file)
+    if p.is_absolute():
+        return str(p)
+    data_dir = Path(getattr(cfg, "data_dir", "") or ".")
+    for cand in (p, data_dir / file, data_dir / "images" / p.name):
+        if cand.is_file():
+            return str(cand.resolve())
+    return file
 
 
 def build_tools(p: QQPlugin) -> list[Tool]:
@@ -54,10 +80,20 @@ def build_tools(p: QQPlugin) -> list[Tool]:
     async def send_image(args: dict) -> str:
         target_type = str(args.get("target_type") or "private")
         target_id = int(args.get("target_id") or 0)
-        file = str(args.get("file") or "").strip()  # URL / 本地路径 / base64://
+        file = _resolve_media_path(str(args.get("file") or "").strip(), p._cfg)  # 相对路径先解析
         caption = str(args.get("caption") or "")
         if not target_id or not file:
             return _err("需要 target_type、target_id、file（图片 URL 或路径）")
+        # 本地文件 → base64:// 直嘂字节：不依赖 NapCat 与本进程同机/同 cwd
+        # （URL/base64/data: 直通，NapCat 自己取）；超上限回执报错不硬发
+        if not _URLISH_RE.match(file):
+            pth = Path(file)
+            if pth.is_file():
+                data = await asyncio.to_thread(pth.read_bytes)
+                max_mb = float(p._conf.send_image_max_mb)
+                if len(data) > max_mb * 1_048_576:
+                    return _err(f"图片太大（{len(data) / 1_048_576:.1f}MB > 上限 {max_mb:g}MB）：换个小的，或转告主人调 send_image_max_mb")
+                file = "base64://" + base64.b64encode(data).decode("ascii")
         blocked = p._throttle()
         if blocked:
             return _err(blocked)
@@ -301,7 +337,7 @@ def build_tools(p: QQPlugin) -> list[Tool]:
     tools.extend(
         [
             Tool(schema={"name": "send_message", "description": "发 QQ 消息（文本）。target_type=group/private，target_id 是群号或 QQ 号；回复时用信封里的来源。", "inputSchema": {"type": "object", "properties": {"target_type": {"type": "string"}, "target_id": {"type": "number"}, "text": {"type": "string"}}, "required": ["target_type", "target_id", "text"]}}, func=send_message, interruptible=True),
-            Tool(schema={"name": "send_image", "description": "发图片。file 支持 URL/本地路径/base64:// 前缀。", "inputSchema": {"type": "object", "properties": {"target_type": {"type": "string"}, "target_id": {"type": "number"}, "file": {"type": "string"}, "caption": {"type": "string"}}}, "required": ["target_type", "target_id", "file"]}, func=send_image, interruptible=True),
+            Tool(schema={"name": "send_image", "description": "发图片。file 支持 URL/本地路径/base64:// 前缀；本地文件（含 find_image 回执里的相对路径）会自动读出并转 base64:// 发送，不要求 NapCat 同机。", "inputSchema": {"type": "object", "properties": {"target_type": {"type": "string"}, "target_id": {"type": "number"}, "file": {"type": "string"}, "caption": {"type": "string"}}}, "required": ["target_type", "target_id", "file"]}, func=send_image, interruptible=True),
             Tool(schema={"name": "recall_message", "description": "撤回自己刚发的消息。", "inputSchema": {"type": "object", "properties": {"message_id": {"type": "number"}}, "required": ["message_id"]}}, func=recall_message),
             Tool(schema={"name": "get_message_detail", "description": "查一条消息的详情（谁发的/内容/时间）。", "inputSchema": {"type": "object", "properties": {"message_id": {"type": "number"}}, "required": ["message_id"]}}, func=get_message_detail),
             Tool(schema={"name": "read_forward", "description": "读一条合并转发消息的完整内容（信封里显示 [合并转发] 的那种）。message_id 从 read_chat_log 的句柄获取；内部自动解引用转发 ID。", "inputSchema": {"type": "object", "properties": {"message_id": {"type": "number", "description": "那条 [合并转发] 消息的 message_id"}}, "required": ["message_id"]}}, func=read_forward),
