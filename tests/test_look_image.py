@@ -161,3 +161,31 @@ def test_allow_cidrs_fake_ip_exemption():
         kw.assert_public_http("http://192.168.1.1/x.png", nets)
     # 空配置 → 空豁免
     assert kw.parse_allow_cidrs("") == []
+
+
+async def test_look_image_canonical_question_hits_cache(tmp_path):
+    """标准问句（图里写了什么/这是什么梗）视同通用描述：已有描述时零 vision 直接回缓存。"""
+    _, store, llm, tool = _setup(tmp_path)
+    p = _write_png(tmp_path / "a.png")
+    await _call(tool, image=str(p))  # 通用描述一次
+    # 标准问句（含标点变体）→ 缓存命中，不再调 vision
+    for q in ("图里写了什么", "这是什么梗？", "  图里写了什么。 "):
+        r = await _call(tool, image=str(p), question=q)
+        assert r["ok"] is True and "看过" in r["note"]
+    assert len(llm.vision_calls) == 1
+    # 非标准的具体问题照旧重新看图
+    r = await _call(tool, image=str(p), question="图里有几个人")
+    assert len(llm.vision_calls) == 2 and "几个人" in llm.vision_calls[1][0]
+
+
+async def test_look_image_canonical_question_seeds_then_cached(tmp_path):
+    """标准问句首看：结果存为描述，之后同问句与不带问句都走缓存。"""
+    _, store, llm, tool = _setup(tmp_path)
+    p = _write_png(tmp_path / "a.png")
+    r = await _call(tool, image=str(p), question="图里写了什么")
+    assert r["ok"] is True and "写了什么" in llm.vision_calls[0][0]
+    assert "直接回缓存" in r["note"]  # 首看归档提示
+    # 同问句再问 + 不带问句再看：都命中缓存
+    await _call(tool, image=str(p), question="图里写了什么？")
+    await _call(tool, image=str(p))
+    assert len(llm.vision_calls) == 1

@@ -148,6 +148,13 @@ def _err_receipt(msg: str) -> str:
 
 _MEDIA_EXT = {"image/jpeg": "jpg", "image/png": "png", "image/gif": "gif", "image/webp": "webp", "image/bmp": "bmp"}
 _DESC_MAX = 1500  # 描述入库/回执截断字符
+_CANONICAL_QS = {"图里写了什么", "这是什么梗"}  # 标准问句（工具描述里教的那两个）
+
+
+def _is_canonical_question(q: str) -> bool:
+    """标准问句判定（容忍标点/空白变体）：视同通用描述——可存可缓存。"""
+    n = re.sub(r"[\s？?。.！!，,、]", "", q)
+    return n in _CANONICAL_QS
 
 
 def _sniff_image(data: bytes) -> str:
@@ -233,8 +240,10 @@ def make_look_image_tool(llm, store: Store, cfg) -> Tool:
             return _err_receipt(str(e))
         h = hashlib.sha256(data).hexdigest()
         row = store.find_image(h)
-        # 缓存命中（不问新问题）：零 vision 成本，直接回描述
-        if row and row["description"] and not question:
+        # 缓存命中（不问新问题，或标准问句——那两个问句语义上就是要图的解释）：
+        # 零 vision 成本，直接回描述
+        canonical = _is_canonical_question(question)
+        if row and row["description"] and (not question or canonical):
             store.touch_image(h)
             seen = clock.format_rel(row["first_seen"], tz_name=cfg.timezone)
             return _ok_receipt(detail=row["description"], hash=h, note=f"这张图你 {seen} 看过，直接回缓存描述（未重复识别）")
@@ -257,24 +266,24 @@ def make_look_image_tool(llm, store: Store, cfg) -> Tool:
         answer = (resp.content or "").strip()[:_DESC_MAX]
         if not answer:
             return _err_receipt("看图失败：模型未返回内容")
-        if question and row and row["description"]:
-            store.touch_image(h)  # 已有通用描述：细节问答不覆盖（问的是细节，不是图的解释），只刷新计数
+        if question and not canonical and row and row["description"]:
+            store.touch_image(h)  # 已有通用描述：具体细节问答不覆盖（问的是细节，不是图的解释），只刷新计数
         else:
-            # 无问题=通用描述；带问题但该图还没有描述：问答本身就是解释，存为首个描述
-            # （缓存的意义是免于重复 vision——不留空等一次“无问题”的观看）
+            # 无问题/标准问句=图的解释（无描述时存为首个描述）；
+            # 标准问句在已有描述时本就走缓存命中，不会到这里
             store.record_image(h, fname, len(data), answer)
-        note = "已回答；这张图已有通用描述，未覆盖" if question and row and row["description"] else "已归档原图与描述：同图再看（不问新问题）直接回缓存"
+        note = "已回答；这张图已有通用描述，未覆盖" if question and not canonical and row and row["description"] else "已归档原图与描述：同图再看（含标准问句）直接回缓存"
         return _ok_receipt(detail=answer, hash=h, note=note)
 
     return Tool(
         schema={
             "name": "look_image",
-            "description": "看一张图，返回内容的描述；可带 question 提具体问题（图里写了什么/这是什么梗）。输入支持图片 URL、data:URI、base64://、本地路径——任何来源的图都能看。同一张图（内容相同）只识别一次，之后直接回缓存；原图自动归档，URL 过期也能回看。",
+            "description": "看一张图，返回内容的描述；可带 question 提具体问题（图里写了什么/这是什么梗）。输入支持图片 URL、data:URI、base64://、本地路径——任何来源的图都能看。同一张图（内容相同）只识别一次，之后直接回缓存；标准问句（图里写了什么/这是什么梗）视同通用描述，同图再问也走缓存，其他具体问题每次重新看。原图自动归档，URL 过期也能回看。",
             "inputSchema": {
                 "type": "object",
                 "properties": {
                     "image": {"type": "string", "description": "图片：URL / data:URI / base64:// 前缀 / 本地路径"},
-                    "question": {"type": "string", "description": "想问这张图什么（不填=通用描述；该图还没有描述时，问答结果会存为它的首个描述）"},
+                    "question": {"type": "string", "description": "想问这张图什么。不填=通用描述；「图里写了什么」「这是什么梗」是标准问句——结果存为该图描述，同图再问直接回缓存；其他具体问题（如图里有几个人）每次都会重新看图"},
                 },
                 "required": ["image"],
             },
