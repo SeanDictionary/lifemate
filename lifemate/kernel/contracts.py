@@ -123,6 +123,7 @@ TOOL_RESULT = "tool_result"  # 一次工具回执（含执行语义）
 REST = "rest"  # 进入休息（收敛/显式/强制/中止）
 SESSION_ROTATED = "session_rotated"  # 会话轮换完成
 COMPACTED = "compacted"  # 上下文压缩完成
+PERSONA_CHANGED = "persona_changed"  # 人格文件变更（identity.md 热更新，运行中生效）
 QUEUE_DROP = "queue_drop"  # 排队信封被丢弃（rotate/abort）
 ERROR = "error"
 

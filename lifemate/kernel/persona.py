@@ -9,6 +9,7 @@
 
 from __future__ import annotations
 
+import hashlib
 import logging
 import re
 from pathlib import Path
@@ -37,14 +38,36 @@ class Persona:
         self._soul_dir = Path(soul_dir)
         self._skills_dir = Path(skills_dir)
         self._skills: dict[str, _Skill] | None = None
+        self._identity_hash: str | None = None  # identity.md 内容指纹（变更观测）
 
     # ── 身份 ─────────────────────────────────────────────
-    def identity(self) -> str:
-        path = self._soul_dir / "identity.md"
+    def _read_identity(self) -> str:
         try:
-            return path.read_text(encoding="utf-8").strip() or _DEFAULT_IDENTITY
+            return (self._soul_dir / "identity.md").read_text(encoding="utf-8").strip() or _DEFAULT_IDENTITY
         except OSError:
             return _DEFAULT_IDENTITY
+
+    def identity(self) -> str:
+        return self._read_identity()
+
+    def identity_change(self) -> dict[str, str | int] | None:
+        """检测 identity.md 内容变更（人格热更新观测）。
+
+        对比上次内容指纹：变更时记日志并返回 {old_hash, new_hash, chars}，
+        无变更返回 None。首次调用建立基线不算变更（重启后的首次对比
+        由 boot 事件的 persona_hash 承担）。文件缺失/清空回落默认人格，
+        同样纳入变更观测。"""
+        text = self._read_identity()
+        h = hashlib.sha256(text.encode("utf-8")).hexdigest()[:12]
+        if self._identity_hash is None:
+            self._identity_hash = h
+            return None
+        if h == self._identity_hash:
+            return None
+        old = self._identity_hash
+        self._identity_hash = h
+        log.info("人格变更：identity.md 已更新（hash %s → %s，%d 字符），下一轮思考起生效", old, h, len(text))
+        return {"old_hash": old, "new_hash": h, "chars": len(text)}
 
     # ── skills ───────────────────────────────────────────
     def skills(self) -> dict[str, _Skill]:

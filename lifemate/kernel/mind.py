@@ -27,7 +27,7 @@ from typing import Any
 
 from ..utils import clock
 from .compaction import Compactor
-from .contracts import AMBIENT, ASSISTANT_MSG, COMPACTED, DIRECT, ERROR, QUEUE_DROP, REST, SEED, SESSION_ROTATED, TOOL_CALL, TOOL_RESULT, USER_MSG, WAKE, Envelope, EventCallback, MindEvent, PluginPack, Tool
+from .contracts import AMBIENT, ASSISTANT_MSG, COMPACTED, DIRECT, ERROR, PERSONA_CHANGED, QUEUE_DROP, REST, SEED, SESSION_ROTATED, TOOL_CALL, TOOL_RESULT, USER_MSG, WAKE, Envelope, EventCallback, MindEvent, PluginPack, Tool
 from .llm import ContentFiltered, LLMClient, LLMResponse, is_retryable
 from .persona import Persona
 from .session import Session
@@ -479,6 +479,9 @@ class SelfKernel:
         self._emit(ASSISTANT_MSG, rid=self._rid, content=resp.content, thinking=resp.thinking, tool_calls=[{"name": c.name, "arguments": c.arguments[:500]} for c in resp.tool_calls], model=resp.model, stop_reason=resp.stop_reason, prompt_tokens=resp.prompt_tokens, completion_tokens=resp.completion_tokens, latency_ms=resp.latency_ms)
 
     def _build_messages(self) -> list[dict[str, Any]]:
+        change = self._persona.identity_change()
+        if change:
+            self._emit(PERSONA_CHANGED, **change)
         return [{"role": "system", "content": self._persona.system_prompt()}] + self._session.build_request()
 
     async def _maybe_compact(self) -> None:

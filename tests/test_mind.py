@@ -724,3 +724,54 @@ async def test_sleep_review_gap_clamps(tmp_path):
     tool_msgs = [m["content"] for m in k._session.messages if m.get("role") == "tool"]
     assert "睡前自省" in tool_msgs[0]
     assert "睡前自省" not in tool_msgs[1] and ("醒来" in tool_msgs[1] or "叫醒" in tool_msgs[1])
+
+
+# ── 人格变更观测（identity.md 热更新）──────────────────────────
+
+
+def test_identity_change_detects_update(tmp_path):
+    soul = tmp_path / "soul"
+    soul.mkdir()
+    (soul / "identity.md").write_text("你是一条鱼", encoding="utf-8")
+    p = Persona(soul, tmp_path / "skills")
+
+    assert p.identity_change() is None  # 首次建立基线，不算变更
+    assert p.identity_change() is None  # 内容未变
+
+    (soul / "identity.md").write_text("你是大肥鱼", encoding="utf-8")
+    ch = p.identity_change()
+    assert ch is not None and ch["old_hash"] != ch["new_hash"]
+    assert p.identity_change() is None  # 稳定后不再重复报
+
+
+def test_identity_change_missing_file_falls_back(tmp_path):
+    soul = tmp_path / "soul"
+    soul.mkdir()
+    (soul / "identity.md").write_text("你是大肥鱼", encoding="utf-8")
+    p = Persona(soul, tmp_path / "skills")
+    assert p.identity_change() is None
+
+    (soul / "identity.md").unlink()  # 文件丢失 → 回落默认人格，也算变更
+    ch = p.identity_change()
+    assert ch is not None and ch["chars"] == len("你是一个数字生命。诚实、自然、简洁。")
+
+
+def test_build_messages_emits_persona_changed(tmp_path):
+    soul = tmp_path / "soul"
+    soul.mkdir()
+    (soul / "identity.md").write_text("你是大肥鱼", encoding="utf-8")
+    llm = FakeLLM([text_reply("嗯")])
+    k = make_kernel(tmp_path, llm, persona=Persona(soul, tmp_path / "skills"))
+    evs = events_of(k)
+
+    k._build_messages()  # 基线建立，无事件
+    assert all(t != "persona_changed" for t, _ in evs)
+
+    (soul / "identity.md").write_text("你是一条更大的肥鱼", encoding="utf-8")
+    msgs = k._build_messages()
+    assert msgs[0]["role"] == "system" and "更大的肥鱼" in msgs[0]["content"]  # 新人格当轮生效
+    changed = [d for t, d in evs if t == "persona_changed"]
+    assert len(changed) == 1 and changed[0]["old_hash"] != changed[0]["new_hash"]
+
+    k._build_messages()  # 稳定后不再重复发
+    assert len([1 for t, _ in evs if t == "persona_changed"]) == 1

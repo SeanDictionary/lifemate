@@ -16,7 +16,7 @@ from collections.abc import Callable
 from pathlib import Path
 from typing import Any
 
-from ..kernel.contracts import ASSISTANT_MSG, COMPACTED, ERROR, QUEUE_DROP, REST, SESSION_ROTATED, TOOL_RESULT, USER_MSG, WAKE, MindEvent
+from ..kernel.contracts import ASSISTANT_MSG, COMPACTED, ERROR, PERSONA_CHANGED, QUEUE_DROP, REST, SESSION_ROTATED, TOOL_RESULT, USER_MSG, WAKE, MindEvent
 
 log = logging.getLogger("utils.recorder")
 
@@ -125,6 +125,8 @@ class Recorder:
             self._write("compact", rid=rid, dropped=d.get("dropped"), kept=d.get("kept"), summary_chars=d.get("summary_chars"), prompt_tokens=d.get("prompt_tokens", 0), completion_tokens=d.get("completion_tokens", 0))
         elif ev.type == QUEUE_DROP:
             self._write("queue_drop", reason=d.get("reason"), count=len(d.get("texts", [])), texts=d.get("texts", []))
+        elif ev.type == PERSONA_CHANGED:
+            self._write("persona_changed", old=d.get("old_hash"), new=d.get("new_hash"), chars=d.get("chars"))
         elif ev.type == ERROR:
             self._write("error", rid=rid, where=d.get("error", ""), error=str(d)[:500])
         # TOOL_CALL 事件不落行：执行语义已并入 TOOL_RESULT 行
@@ -235,4 +237,6 @@ def row_digest(row: dict[str, Any]) -> str:
         return f"🗜️ 压缩 丢{row.get('dropped', 0)} 保{row.get('kept', 0)}"
     if typ == "rotate":
         return "🔄 会话轮换"
+    if typ == "persona_changed":
+        return f"🐟 人格变更 {row.get('old', '?')} → {row.get('new', '?')}"
     return f"· {typ}"
