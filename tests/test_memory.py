@@ -243,3 +243,57 @@ def test_all_reminders_and_curiosity_for_panel(tmp_path):
     all_c = s.all_curiosity()
     assert len(all_c) == 1 and all_c[0]["status"] == "done" and "还行" in all_c[0]["result"]
     assert s.pending_curiosity() == []
+
+
+def test_search_images_keyword_hash_recent(tmp_path):
+    s = _store(tmp_path)
+    # h1 猫（新）、h2 猫表情包（旧）、h3 截图、h4 无描述
+    s.record_image("a" * 64, "a.png", 100, "一只橘猫趴在键盘上")
+    s.record_image("b" * 64, "b.png", 200, "猫猫表情包：一只猫在敲键盘")
+    s.record_image("c" * 64, "c.png", 300, "聊天截图")
+    s.record_image("d" * 64, "d.png", 400, "")
+    s._exec("UPDATE images SET last_seen = ? WHERE hash = ?", (time.time() - 3600, "b" * 64))
+    s._exec("UPDATE images SET last_seen = ? WHERE hash = ?", (time.time() - 1800, "a" * 64))
+    s._exec("UPDATE images SET last_seen = ? WHERE hash = ?", (time.time() - 7200, "c" * 64))
+
+    # 关键词：描述模糊匹配，常用在前（a 比 b 新）
+    rows = s.search_images("猫")
+    assert [r["hash"] for r in rows] == ["a" * 64, "b" * 64]
+    # LIKE 通配符按字面匹配：查询含 % 不误命中
+    assert s.search_images("%") == []
+    # hash 精确
+    rows = s.search_images("C" * 64)  # 大写也归一
+    assert len(rows) == 1 and rows[0]["hash"] == "c" * 64
+    assert s.search_images("f" * 64) == []
+    # 空查询=最近看过（无描述的也可见，按 last_seen 倒序）
+    rows = s.search_images("")
+    assert [r["hash"] for r in rows] == ["d" * 64, "a" * 64, "b" * 64, "c" * 64]
+
+
+async def test_find_image_tool_returns_path_and_receipt(tmp_path):
+    s = _store(tmp_path)
+    s.record_image("a" * 64, "a.png", 2048, "一只橘猫趴在键盘上")
+
+    class _Cfg:
+        data_dir = str(tmp_path)
+        timezone = ""
+
+    tools = {t.name: t for t in build_memory_tools(s, _Cfg())}
+    r = json.loads(await tools["find_image"].func({"query": "猫"}))
+    assert r["ok"] and len(r["content"]) == 1
+    row = r["content"][0]
+    assert row["file"] == str(tmp_path / "images" / "a.png")
+    assert "橘猫" in row["description"] and row["size_kb"] == 2
+    assert "file 是本机路径" in r["note"]
+
+    # 查不到给引导；空档案与空结果语义分开
+    r = json.loads(await tools["find_image"].func({"query": "不存在的词"}))
+    assert r["ok"] and r["content"] == [] and "换个关键词" in r["note"]
+    s2 = _store(tmp_path / "empty.db")
+    tools2 = {t.name: t for t in build_memory_tools(s2, _Cfg())}
+    r = json.loads(await tools2["find_image"].func({}))
+    assert "图片档案还是空的" in r["note"]
+
+    # query 留空=最近的图（cfg 缺省时路径仍可拼出）
+    r = json.loads(await tools["find_image"].func({}))
+    assert r["content"][0]["file"].endswith("a.png")

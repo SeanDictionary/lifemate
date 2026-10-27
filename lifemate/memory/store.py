@@ -266,6 +266,24 @@ class Store:
         rows = self._exec("SELECT hash, size, first_seen, last_seen, hit_count, description FROM images ORDER BY last_seen DESC LIMIT ?", (n,)).fetchall()
         return [dict(r) for r in rows]
 
+    def search_images(self, query: str, limit: int = 8) -> list[dict[str, Any]]:
+        """按描述关键词搜图（query 为 64 位内容 hash 时精确匹配；空=最近看过）。
+
+        归档图的检索通道（find_image 工具）：描述是 look_image 存下的内容描述，
+        语义上就是"按图的内容找图"。按 last_seen 倒序（常用的在前）。"""
+        q = (query or "").strip()
+        cols = "hash, path, size, first_seen, last_seen, hit_count, description"
+        if not q:
+            rows = self._exec(f"SELECT {cols} FROM images ORDER BY last_seen DESC LIMIT ?", (limit,)).fetchall()
+            return [dict(r) for r in rows]
+        if len(q) == 64 and all(c in "0123456789abcdef" for c in q.lower()):
+            row = self.find_image(q.lower())
+            return [row] if row else []
+        # LIKE 转义：用户关键词里的 %/_ 按字面匹配
+        esc = q.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
+        rows = self._exec(f"SELECT {cols} FROM images WHERE description LIKE ? ESCAPE '\\' ORDER BY last_seen DESC LIMIT ?", (f"%{esc}%", limit)).fetchall()
+        return [dict(r) for r in rows]
+
     # ── 观测辅助 ────────────────────────────────────────
     def stats(self) -> dict[str, Any]:
         out: dict[str, Any] = {}

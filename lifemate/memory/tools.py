@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import json
 import time
+from pathlib import Path
 
 from ..kernel.contracts import Tool
 from ..utils import clock
@@ -133,6 +134,27 @@ def build_memory_tools(store: Store, cfg=None) -> list[Tool]:
         if row is None:
             return _err("还没有重建包")
         return json.dumps({"ok": True, "content": row["content"], "written": clock.format_ts(row["ts"], tz_name=_tz())}, ensure_ascii=False)
+
+    async def find_image(args: dict) -> str:
+        """翻自己的图片档案：归档的图按描述找回，返回可直接使用的本机路径。"""
+        query = str(args.get("query") or "").strip()
+        rows = store.search_images(query, limit=max(1, min(int(args.get("n") or 8), 20)))
+        if not rows:
+            if query:
+                return _ok(content=[], note=f"没找到描述含「{query}」的图；换个关键词，或 query 留空看最近的图")
+            return _ok(content=[], note="图片档案还是空的——看过的图会自动归档（look_image）")
+        content = []
+        for r in rows:
+            content.append(
+                {
+                    "file": str(Path(getattr(cfg, "data_dir", "") or "") / "images" / r["path"]),
+                    "hash": r["hash"],
+                    "description": r["description"] or "（未描述）",
+                    "size_kb": round(r["size"] / 1024),
+                    "seen": f"看过 {r['hit_count']} 次，最近 {clock.format_rel(r['last_seen'], tz_name=_tz())}",
+                }
+            )
+        return _ok(content=content, note="file 是本机路径，可直接交给支持本地路径的图片发送工具；想确认内容可再 look_image（同图直接回缓存）")
 
     tools.extend(
         [
@@ -316,6 +338,20 @@ def build_memory_tools(store: Store, cfg=None) -> list[Tool]:
                     "inputSchema": {"type": "object", "properties": {}},
                 },
                 func=latest_rebuild_packet,
+            ),
+            Tool(
+                schema={
+                    "name": "find_image",
+                    "description": "翻自己的图片档案：看过的图都自动归档并带内容描述。按描述关键词找（如「猫」「梗图」「截图」），返回图片的本机文件路径——想当表情包发、想再看一眼都行；发给谁、怎么发由发送类工具决定。query 留空=最近看过的图，也可填 look_image 回执里的图 hash 精确找。",
+                    "inputSchema": {
+                        "type": "object",
+                        "properties": {
+                            "query": {"type": "string", "description": "描述关键词（可空=最近看过）或图 hash"},
+                            "n": {"type": "number", "description": "条数，默认 8"},
+                        },
+                    },
+                },
+                func=find_image,
             ),
         ]
     )
